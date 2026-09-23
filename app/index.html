@@ -1,1 +1,72 @@
-<!doctype html><title>Automix</title>
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Automix</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <span class="brand">Automix</span>
+      <button class="btn" id="btn-folder">Ordner wählen</button>
+      <span class="folder" id="folder">Kein Ordner geladen</span>
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><i></i></div>
+        <span></span>
+      </div>
+      <div class="spacer"></div>
+      <label class="switch" title="Übergänge automatisch planen und fahren">
+        <input type="checkbox" id="automix" checked /><i></i><span>Automix</span>
+      </label>
+      <div class="master">
+        <span class="lbl">Master</span>
+        <div class="slider h" id="master-vol" style="width: 120px"></div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <section class="deck" data-deck="0"></section>
+      <section class="mixer">
+        <div class="strips">
+          <div class="strip" data-deck="0"></div>
+          <div class="strip" data-deck="1"></div>
+        </div>
+        <div class="xfader">
+          <span class="lbl">A</span>
+          <div class="slider h" id="xfader"></div>
+          <span class="lbl">B</span>
+        </div>
+      </section>
+      <section class="deck" data-deck="1"></section>
+    </main>
+
+    <section class="transition">
+      <div class="tr-info">
+        <div class="lbl" id="tr-title">Nächster Übergang</div>
+        <div class="name" id="tr-name">–</div>
+        <div class="reason" id="tr-reason"></div>
+      </div>
+      <div class="tr-timeline"><canvas id="tr-canvas"></canvas></div>
+      <div class="tr-actions">
+        <span class="tr-count" id="tr-count"></span>
+        <select class="sel" id="tr-type"></select>
+        <button class="btn" id="btn-mixnow">Jetzt mixen</button>
+      </div>
+    </section>
+
+    <section class="queue">
+      <div class="queue-head">
+        <h2>Queue</h2>
+        <span class="info" id="queue-info"></span>
+        <div class="spacer"></div>
+        <button class="btn" id="btn-reorder" title="Noch nicht gespielte Tracks neu sortieren (Tempo, Tonart, Energie-Verlauf)">KI-Reihenfolge</button>
+        <button class="btn primary" id="btn-start" disabled>Start</button>
+      </div>
+      <div class="qlist" id="queue"></div>
+      <div class="removed" id="removed" hidden></div>
+    </section>
+  </div>
+</body>
+</html>

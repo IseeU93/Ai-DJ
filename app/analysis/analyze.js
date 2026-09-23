@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 3;
+export const ANALYSIS_VERSION = 4;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -263,7 +263,7 @@ function spectralFeatures(mid, side, sr) {
   const vLo = Math.round(350 / binHz);
   const vHi = Math.round(4000 / binHz);
   const nb = vHi - vLo + 1;
-  const cLo = Math.max(1, Math.round(55 / binHz));
+  const cLo = Math.max(1, Math.round(180 / binHz)); // Kick/Sub-Bereich raus – verfälscht sonst die Tonart
   const cHi = Math.round(2000 / binHz);
   const pc = new Int8Array(SPEC_N / 2 + 1).fill(-1);
   for (let k = cLo; k <= cHi; k++) {
@@ -278,14 +278,20 @@ function spectralFeatures(mid, side, sr) {
   });
 
   const pow = new Float64Array(SPEC_N / 2 + 1);
+  // Letzte zwei Frames für "stabile" Energie (Minimum über 3 Frames): gehaltene Töne bleiben,
+  // Drums/Transienten fallen raus. Chroma gehört daher zum vorigen Frame (t - 1).
+  const prev1 = new Float64Array(SPEC_N / 2 + 1);
+  const prev2 = new Float64Array(SPEC_N / 2 + 1);
   stft(mid, SPEC_N, SPEC_HOP, (t, mag) => {
     let total = 1e-9;
     for (let k = 1; k < mag.length; k++) {
       const p = mag[k] * mag[k];
       pow[k] = p;
       total += p;
-      if (pc[k] >= 0) chroma[t * 12 + pc[k]] += Math.sqrt(mag[k]);
+      if (pc[k] >= 0 && t >= 2) chroma[(t - 1) * 12 + pc[k]] += Math.min(p, prev1[k], prev2[k]);
     }
+    prev2.set(prev1);
+    prev1.set(pow);
     // Stimme ~ zentrierte (Mitte >> Seite), tonale Peaks im Bereich 350–4000 Hz.
     // Rauschen (Hi-Hats) hat keine Peaks, breite Pads/Synths haben viel Seitenanteil.
     let centered = 0;
@@ -300,6 +306,16 @@ function spectralFeatures(mid, side, sr) {
     }
     vocal[t] = centered;
     totals[t] = total;
+    // Frame-Chroma normieren (Wurzel der Frame-Energie als Gewicht), damit laute Passagen nicht alles bestimmen
+    if (t >= 2) {
+      const f = (t - 1) * 12;
+      let cs = 0;
+      for (let i = 0; i < 12; i++) cs += chroma[f + i];
+      if (cs > 0) {
+        const g = Math.sqrt(cs) / cs;
+        for (let i = 0; i < 12; i++) chroma[f + i] *= g;
+      }
+    }
   });
   // auf die Lautheit des Tracks normieren (nicht pro Frame – sonst dominieren leise Breakdowns)
   const ref = percentile(totals, 0.9) || 1;

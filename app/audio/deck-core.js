@@ -234,6 +234,17 @@ export class DeckCore {
     this.pendingStop = null;
   }
 
+  /** Position ändern: gestoppt sofort, laufend als Sprung knapp hinter dem Lesekopf. */
+  seek(real) {
+    if (!this.playing) {
+      this._resetTo(Math.round(real));
+      return;
+    }
+    const v = Math.ceil(this.currentVirtual()) + this.N + this.S + 64;
+    this.cancelSegmentsAfter(v - 1);
+    this.addSegment(v, real, 0);
+  }
+
   setKeylock(on) {
     if (on === this.keylock) return;
     const v = this.currentVirtual();
