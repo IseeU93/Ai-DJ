@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.aidj_analysis_cache.json
+*.wav
+!samples/**/*.wav
