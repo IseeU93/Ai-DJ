@@ -548,24 +548,71 @@ function renderRemoved() {
 
 // ------------------------------------------------------------------ Ordner laden
 
-async function loadFolder(path) {
-  if (loadingFolder) return;
-  loadingFolder = true;
-  $('#folder').textContent = path;
-  $('#folder').title = path;
-  const prog = $('#progress');
-  const setProgress = (done, total, name) => {
-    prog.hidden = false;
-    $('i', prog).style.width = `${(done / total) * 100}%`;
-    $('span', prog).textContent = `Analyse ${done}/${total}${name ? ` · ${name}` : ''}`;
+const ROOT_PLAYLIST = '__root__';
+const ALL_PLAYLISTS = '__all__';
+let folderFiles = [];
+let folderRoot = '';
+
+/** Unterordner (erste Ebene) eines Pfads relativ zum gewählten Oberordner. */
+function playlistOf(path) {
+  const rel = path.slice(folderRoot.length).replace(/^[\\/]+/, '');
+  const parts = rel.split(/[\\/]/);
+  return parts.length > 1 ? parts[0] : ROOT_PLAYLIST;
+}
+
+function renderPlaylists(selected) {
+  const sel = $('#playlist');
+  const counts = new Map();
+  for (const f of folderFiles) counts.set(playlistOf(f.path), (counts.get(playlistOf(f.path)) || 0) + 1);
+  const names = [...counts.keys()].filter((n) => n !== ROOT_PLAYLIST).sort((a, b) => a.localeCompare(b, 'de'));
+  sel.innerHTML = '';
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    sel.appendChild(o);
   };
+  add(ALL_PLAYLISTS, `Alle (${folderFiles.length})`);
+  for (const n of names) add(n, `${n} (${counts.get(n)})`);
+  if (counts.has(ROOT_PLAYLIST)) add(ROOT_PLAYLIST, `Ohne Unterordner (${counts.get(ROOT_PLAYLIST)})`);
+  sel.hidden = names.length === 0;
+  sel.value = [...sel.options].some((o) => o.value === selected) ? selected : ALL_PLAYLISTS;
+  return sel.value;
+}
+
+/** Oberordner wählen: Dateien scannen, Unterordner als Playlists anbieten. */
+async function loadFolder(path, playlist = loadSettings().playlist) {
+  if (loadingFolder) return;
   try {
     const files = await scanFolder(path);
     if (!files.length) {
       toast('In diesem Ordner wurden keine Audiodateien gefunden.');
       return;
     }
+    folderRoot = path;
+    folderFiles = files;
+    $('#folder').textContent = path;
+    $('#folder').title = path;
     saveSettings({ folder: path });
+    await loadPlaylist(renderPlaylists(playlist));
+  } catch (err) {
+    toast(`Ordner konnte nicht geladen werden: ${err.message || err}`);
+  }
+}
+
+/** Playlist (Unterordner) analysieren und als Queue übernehmen. */
+async function loadPlaylist(name) {
+  if (loadingFolder) return;
+  loadingFolder = true;
+  saveSettings({ playlist: name });
+  const files = name === ALL_PLAYLISTS ? folderFiles : folderFiles.filter((f) => playlistOf(f.path) === name);
+  const prog = $('#progress');
+  const setProgress = (done, total, fname) => {
+    prog.hidden = false;
+    $('i', prog).style.width = `${(done / total) * 100}%`;
+    $('span', prog).textContent = `Analyse ${done}/${total}${fname ? ` · ${fname}` : ''}`;
+  };
+  try {
     renderQueue();
     setProgress(0, files.length);
     const found = [];
@@ -579,10 +626,14 @@ async function loadFolder(path) {
       },
     });
     if (failed) toast(`${failed} Datei(en) konnten nicht gelesen werden (Format/Codec).`);
+    // Laufende Tracks bleiben beim Playlist-Wechsel erhalten, damit die Musik nicht abreißt
+    for (const d of engine.decks) {
+      if (d.track && d.status.playing && !found.some((t) => t.id === d.track.id)) found.unshift(d.track);
+    }
     conductor.setLibrary(found);
     if (conductor.autopilot && !engine.decks[conductor.master].status.playing) conductor.start();
   } catch (err) {
-    toast(`Ordner konnte nicht geladen werden: ${err.message || err}`);
+    toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
   } finally {
     loadingFolder = false;
     prog.hidden = true;
@@ -604,9 +655,10 @@ async function boot() {
   new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
+  $('#playlist').onchange = (e) => loadPlaylist(e.target.value);
   $('#btn-folder').onclick = async () => {
     const path = await pickFolder();
-    if (path) loadFolder(path);
+    if (path) loadFolder(path, ALL_PLAYLISTS);
   };
   $('#btn-start').onclick = () => conductor.togglePlay(conductor.master);
   $('#btn-reorder').onclick = () => conductor.reorderAI();

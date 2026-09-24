@@ -25,12 +25,19 @@ createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/__scan') {
       const files = [];
-      for (const name of (await readdir(music)).sort()) {
-        if (!AUDIO.has(extname(name).toLowerCase())) continue;
-        const p = join(music, name);
-        const s = await stat(p);
-        files.push({ path: p, name, size: s.size, modified: Math.floor(s.mtimeMs / 1000) });
-      }
+      const walk = async (dir, depth) => {
+        for (const name of (await readdir(dir)).sort()) {
+          const p = join(dir, name);
+          const s = await stat(p);
+          if (s.isDirectory()) {
+            if (depth < 4) await walk(p, depth + 1);
+            continue;
+          }
+          if (!AUDIO.has(extname(name).toLowerCase())) continue;
+          files.push({ path: p, name, size: s.size, modified: Math.floor(s.mtimeMs / 1000) });
+        }
+      };
+      await walk(music, 0);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(files));
     }
