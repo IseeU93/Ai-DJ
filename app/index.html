@@ -7,6 +7,7 @@
   <script type="module" src="main.js"></script>
 </head>
 <body>
+ <div class="shell" id="shell" data-laser="off" data-side="right">
   <div class="app">
     <header class="topbar">
       <span class="brand">Automix</span>
@@ -20,6 +21,7 @@
         <span></span>
       </div>
       <div class="spacer"></div>
+      <button class="btn" id="btn-laser" title="Lasershow einblenden – synchron zur Musik, gesteuert aus der Track-Analyse (Taste L)">Lasershow</button>
       <label class="switch" title="Übergänge automatisch planen und fahren – deine Queue-Reihenfolge bleibt">
         <input type="checkbox" id="automix" checked /><i></i><span>Automix</span>
       </label>
@@ -96,5 +98,46 @@
       <div class="removed" id="removed" hidden></div>
     </section>
   </div>
+
+  <div class="splitter" id="lz-split" title="Ziehen: Aufteilung ändern · Doppelklick: zurücksetzen"></div>
+  <section class="laserpane" id="laserpane" hidden>
+    <div class="lz-head">
+      <b>Lasershow</b>
+      <span class="lz-status" id="lz-status"></span>
+      <div class="spacer"></div>
+      <div class="seg" id="lz-mode">
+        <button data-mode="split" title="Mixer und Laser nebeneinander">Geteilt</button>
+        <button data-mode="full" title="Nur Laser (Esc zurück)">Vollbild</button>
+      </div>
+      <button class="btn small" id="lz-swap" title="Laser links/rechts">⇄</button>
+      <button class="btn small" id="lz-beamer" title="Eigenes Fenster für Beamer/2. Monitor (dort Doppelklick = Vollbild)">Beamer-Fenster</button>
+      <button class="btn small" id="lz-close" title="Lasershow ausblenden">×</button>
+    </div>
+    <div class="lz-view">
+      <canvas id="lz-canvas"></canvas>
+      <div class="lz-overlay" id="lz-overlay">
+        <span class="lz-now" id="lz-now"></span>
+        <button class="btn small" id="lz-mixnow">Jetzt mixen</button>
+        <button class="btn small" id="lz-exitfull">Mixer zeigen</button>
+      </div>
+    </div>
+    <div class="lz-controls">
+      <label class="switch" title="Choreograph wählt Effekte, Farben, Strobe und Blackouts passend zur Musik"><input type="checkbox" id="lz-auto" /><i></i><span>Autopilot</span></label>
+      <label class="switch" title="Beatgrid, Builds und Drops aus der MP3-Analyse statt live geraten – Szenenwechsel exakt auf der Eins, Blackout genau vor dem Drop"><input type="checkbox" id="lz-sync" /><i></i><span>Track-Sync</span></label>
+      <label class="switch" title="Farben aus der Tonart des laufenden Tracks"><input type="checkbox" id="lz-keycol" /><i></i><span>Tonart-Farben</span></label>
+      <label class="switch" title="Strobe/Blitze erlauben"><input type="checkbox" id="lz-strobe" /><i></i><span>Strobe</span></label>
+      <select class="sel" id="lz-intensity" title="Wie heftig die Show eskaliert – Auto richtet sich nach der Musikrichtung des Tracks">
+        <option value="auto">Intensität: Auto (Genre)</option>
+        <option value="0.2">Intensität: Niedrig</option>
+        <option value="0.45">Intensität: Mittel</option>
+        <option value="0.7">Intensität: Hoch</option>
+        <option value="1">Intensität: Vollgas</option>
+      </select>
+      <select class="sel" id="lz-effect" title="Effekt (nur ohne Autopilot)"></select>
+      <select class="sel" id="lz-palette" title="Farbe (nur ohne Autopilot)"></select>
+      <button class="btn small" id="lz-blackout" title="Laser sofort aus (B)">Blackout</button>
+    </div>
+  </section>
+ </div>
 </body>
 </html>

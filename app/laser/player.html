@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Laser Show – Player</title>
+  <meta name="description" content="Laser Show Beamer Player – Vollbild-Visualisierung für den 2. Monitor.">
+  <link rel="stylesheet" href="src/style/player.css">
+</head>
+<body>
+
+  <!-- Laser-Canvas (Hauptrendering) -->
+  <canvas id="laser-canvas"></canvas>
+
+  <!-- Warte-Overlay -->
+  <div id="waiting-overlay">
+    <div class="waiting-logo">
+      <div class="waiting-hex"></div>
+      <div class="waiting-title">Laser Show</div>
+    </div>
+    <div class="waiting-msg">
+      Warte auf Verbindung vom Control Panel…<br>
+      <small style="font-size:11px;opacity:0.6">Öffne zuerst das Control Panel und klicke „Player öffnen"</small>
+    </div>
+    <div class="waiting-dots">
+      <div class="waiting-dot"></div>
+      <div class="waiting-dot"></div>
+      <div class="waiting-dot"></div>
+    </div>
+  </div>
+
+  <!-- Status-Leiste (kurz sichtbar nach Verbindung) -->
+  <div id="status-bar">
+    <div class="sb-dot"></div>
+    <div class="sb-text" id="sb-text">LASER SHOW AKTIV</div>
+    <div class="sb-fps" id="sb-fps">60 FPS</div>
+  </div>
+
+  <aside id="player-ready-panel" aria-live="polite">
+    <div class="pr-title">PLAYER READY <span id="pr-status">WAITING</span></div>
+    <div><span>App</span><strong id="pr-app-version">-</strong></div>
+    <div><span>Scanner</span><strong id="pr-scanner-version">-</strong></div>
+    <div><span>Sync / Runtime</span><strong id="pr-schema">-</strong></div>
+    <div><span>Aktiv / manuell</span><strong id="pr-effects">-</strong></div>
+    <div><span>Quelle / Phase</span><strong id="pr-source">-</strong></div>
+    <div><span>Sequence / Generation</span><strong id="pr-sequence">-</strong></div>
+    <div><span>Clock-Delta</span><strong id="pr-clock">-</strong></div>
+    <div><span>Snapshots</span><strong id="pr-snapshots">-</strong></div>
+    <div><span>Qualitaet</span><strong id="pr-quality">-</strong></div>
+    <div><span>Instance</span><strong id="pr-instance">-</strong></div>
+    <div><span>Visibility</span><strong id="pr-visibility">-</strong></div>
+    <div><span>Canvas / CSS / DPR</span><strong id="pr-resolution">-</strong></div>
+    <div><span>Catch-up Drops</span><strong id="pr-catch-up">-</strong></div>
+    <div class="pr-hint">D blendet dieses Panel ein/aus</div>
+  </aside>
+
+  <aside id="player-performance-panel" aria-live="polite">
+    <div class="pp-title">NATIVER PLAYER-PERFORMANCE-TEST</div>
+    <label>Renderauflösung
+      <select id="pp-resolution">
+        <option value="native">Native Fenstergröße</option>
+        <option value="1080p">1920 × 1080</option>
+        <option value="2160p">3840 × 2160</option>
+      </select>
+    </label>
+    <label>Dauer
+      <select id="pp-duration">
+        <option value="60">60 Sekunden</option>
+        <option value="900">15 Minuten</option>
+      </select>
+    </label>
+    <label>Erwartete Displayfrequenz
+      <select id="pp-display-fps">
+        <option value="60">60 Hz</option>
+        <option value="30">30 Hz</option>
+      </select>
+    </label>
+    <div class="pp-actions">
+      <button id="pp-start">Test starten</button>
+      <button id="pp-export" disabled>JSON exportieren</button>
+    </div>
+    <div id="pp-status">Bereit. Der Test läuft vollständig im sichtbaren Player.</div>
+    <pre id="pp-result">Noch kein Ergebnis.</pre>
+  </aside>
+
+  <!-- Vollbild-Hinweis -->
+  <div id="fs-hint">Klick → Vollbild &nbsp;|&nbsp; ESC → Verlassen</div>
+
+<script type="module" src="src/player/PlayerBootstrap.js"></script>
+
+</body>
+</html>

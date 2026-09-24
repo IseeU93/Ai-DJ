@@ -321,3 +321,71 @@ select.sel:disabled { opacity: 0.5; }
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a2c31; border: 3px solid var(--bg); border-radius: 5px; }
+
+/* ------------------------------------------------------------ Lasershow */
+
+.shell { display: flex; height: 100%; }
+.shell > .app { flex: 1 1 0; min-width: 0; }
+.shell[data-side="left"] { flex-direction: row-reverse; }
+.splitter { display: none; }
+.shell[data-laser="split"] .splitter { display: block; flex: 0 0 5px; cursor: col-resize; background: var(--line); }
+.shell[data-laser="split"] .splitter:hover, .shell .splitter.drag { background: var(--line-2); }
+.shell[data-laser="split"] .laserpane { flex: 0 0 var(--lz-w, 42%); }
+.shell[data-laser="full"] > .app { display: none; }
+.shell[data-laser="full"] .laserpane { flex: 1 1 auto; }
+
+.laserpane { display: flex; flex-direction: column; min-width: 0; background: #000; }
+.lz-head, .lz-controls { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); }
+.lz-head { border-bottom: 1px solid var(--line); min-height: 41px; flex-wrap: wrap; row-gap: 6px; }
+.lz-head b { white-space: nowrap; }
+.lz-controls { border-top: 1px solid var(--line); flex-wrap: wrap; row-gap: 6px; }
+.lz-controls .switch span { font-size: 12px; }
+.lz-controls select.sel { max-width: 190px; }
+.lz-controls select.sel.dim { opacity: 0.55; }
+.lz-status { color: var(--muted); font: 11.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lz-status .hot { color: var(--warn); }
+.lz-view { position: relative; flex: 1 1 auto; min-height: 0; }
+.lz-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.lz-overlay {
+  position: absolute; left: 10px; bottom: 10px; display: none; align-items: center; gap: 8px;
+  padding: 5px 8px; background: rgba(14, 15, 17, 0.72); border: 1px solid var(--line); border-radius: 3px;
+  opacity: 0.35; transition: opacity 0.2s;
+}
+.lz-overlay:hover { opacity: 1; }
+.shell[data-laser="full"] .lz-overlay { display: flex; }
+.lz-now { color: var(--muted); font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg { display: flex; }
+.seg button { height: 24px; padding: 0 9px; border: 1px solid var(--line-2); background: var(--panel-2); font-size: 12px; cursor: pointer; }
+.seg button + button { border-left: 0; }
+.seg button:first-child { border-radius: 3px 0 0 3px; }
+.seg button:last-child { border-radius: 0 3px 3px 0; }
+.seg button.on { background: var(--text); color: #111; border-color: var(--text); }
+#btn-laser.on { border-color: var(--text); background: #2a2b30; }
+#lz-blackout.on { background: #5a2a22; border-color: var(--warn); }
+
+/* Mixer schmaler, wenn die Lasershow daneben läuft */
+.shell > .app { grid-template-columns: minmax(0, 1fr); container-type: inline-size; }
+.topbar { min-width: 0; overflow: hidden; }
+.topbar .folder { flex: 0 1 auto; min-width: 40px; }
+@container (max-width: 1100px) {
+  .topbar { gap: 8px; }
+  .deck-controls, .gridtools { flex-wrap: wrap; row-gap: 4px; }
+  .qlist { overflow-x: auto; }
+  .qrow { min-width: 970px; }
+  .master .slider.h { width: 80px !important; }
+  .topbar .folder { max-width: 160px; }
+  .master .lbl { display: none; }
+  .transition { grid-template-columns: 250px minmax(0, 1fr) auto; }
+}
+@container (max-width: 900px) {
+  .brand { display: none; }
+  .topbar .switch span { font-size: 12px; }
+  .topbar #btn-folder { display: none; }
+  .topbar .folder { display: none; }
+  .stage { grid-template-columns: minmax(0, 1fr) 200px minmax(0, 1fr); }
+  .deck { padding: 8px 10px 10px; }
+  .deck-head { gap: 8px; }
+  .stat b { font-size: 14px; }
+  .transition { grid-template-columns: minmax(0, 1fr) auto; }
+  .transition .tr-timeline { grid-column: 1 / -1; grid-row: 2; }
+}

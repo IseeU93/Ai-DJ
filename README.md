@@ -34,6 +34,22 @@ npm run dev
 - **Beatgrid-Korrektur** pro Deck (±5 ms, „1 hier“, ×2/÷2), Hot Cues, Autopilot, Reshuffle,
   „Zum Übergang“ zum schnellen Testen.
 
+## Lasershow
+
+Button **Lasershow** (oder Taste `L`) blendet die Beamer-Lasershow neben dem Mixer ein – geteilt
+(Breite per Trennlinie ziehen, `⇄` wechselt die Seite) oder als Vollbild (`Esc` zurück).
+**Beamer-Fenster** öffnet ein eigenes Fenster für den 2. Monitor/Beamer (dort Doppelklick = Vollbild).
+
+Die Show hört am Mixer-Ausgang mit (Kicks, Snares, Spektrum), die Struktur kommt aber aus der
+MP3-Analyse: Takt und Schlag exakt aus dem Beatgrid, Szenenwechsel auf Phrasengrenzen, Spannung im
+Build bis zum Drop, Blackout genau vor dem Drop, Farben aus der Tonart, Intensität nach Musikrichtung.
+Bei Übergängen wechselt die Show mit dem Bass-Wechsel auf den neuen Track. Der Master-Regler dimmt die
+Show nicht. Effekt/Farbe lassen sich auch von Hand wählen (Autopilot aus), `B` = Blackout.
+
+Die Lasershow-Dateien unter `app/laser/src` stammen aus dem Beamer-Lasershow-Projekt; nach Änderungen
+dort mit `npm run sync:laser` neu übernehmen (Pfad per `LASERSHOW_DIR`). Die Anbindung an den Mixer
+liegt in `app/laser/dj`.
+
 ## Entwicklung
 
 ```bash

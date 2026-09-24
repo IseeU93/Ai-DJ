@@ -865,6 +865,10 @@ async function boot() {
 
   renderQueue();
   requestAnimationFrame(frame);
+  // Lasershow getrennt laden: ein Fehler dort darf den Mixer nie mitreißen
+  import('./ui/laserpane.js')
+    .then(({ initLaserPane }) => initLaserPane({ engine, conductor }))
+    .catch((err) => console.error('Lasershow', err));
 
   const { folder, autopilot } = loadSettings();
   if (autopilot) {

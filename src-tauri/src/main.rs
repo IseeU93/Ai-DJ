@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::ipc::Response;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus"];
 const MAX_DEPTH: usize = 4;
@@ -84,9 +85,29 @@ async fn pick_folder() -> Option<String> {
         .map(|f| f.path().to_string_lossy().into_owned())
 }
 
+/// Eigenes Fenster für den Beamer / 2. Monitor mit der Lasershow (Daten kommen per BroadcastChannel
+/// aus dem Hauptfenster). Existiert es schon, wird es nur nach vorn geholt.
+/// Muss async sein: ein Fenster in einem synchronen Command zu bauen, friert unter Windows ein
+/// (weißes Fenster, das sich nicht schließen lässt).
+#[tauri::command]
+async fn show_laser_window(app: tauri::AppHandle) -> Result<(), String> {
+    let win = match app.get_webview_window("laser") {
+        Some(win) => win,
+        None => WebviewWindowBuilder::new(&app, "laser", WebviewUrl::App("laser/player.html".into()))
+            .title("Automix - Lasershow")
+            .inner_size(1280.0, 720.0)
+            .resizable(true)
+            .build()
+            .map_err(|e| format!("Laser-Fenster konnte nicht erstellt werden: {e}"))?,
+    };
+    win.show().map_err(|e| e.to_string())?;
+    win.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![scan_folder, read_file, pick_folder])
+        .invoke_handler(tauri::generate_handler![scan_folder, read_file, pick_folder, show_laser_window])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der App");
 }
