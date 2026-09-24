@@ -33,11 +33,11 @@ export function detectGenre(a) {
  *  vocal    – wie stark Gesang geschützt wird
  */
 export const PROFILES = {
-  edm: { lengths: [32, 16, 8], swap: 0.25, vocal: 1, styles: { blend: 0.2, filter: 0.1, loop: 0.1, vocal: 0, handoff: -0.2, cut: -0.4, echo: -0.3 } },
-  pop: { lengths: [16, 8], swap: 0.5, vocal: 1.6, styles: { blend: 0.1, filter: 0.15, vocal: 0.15, handoff: 0.35, loop: -0.4, cut: -0.1, echo: -0.3 } },
-  hardstyle: { lengths: [8, 4], swap: 0.25, vocal: 1.2, styles: { blend: 0.1, filter: 0, loop: -0.3, vocal: -0.5, cut: 0.35, echo: -0.2 } },
-  uptempo: { lengths: [8, 4], swap: 0.25, vocal: 1, styles: { blend: 0, filter: -0.1, loop: -0.4, vocal: -0.6, cut: 0.5, echo: -0.2 } },
-  rap: { lengths: [8, 4], swap: 0.5, vocal: 2, styles: { blend: -0.1, filter: 0.1, handoff: 0.5, loop: -0.5, vocal: -0.4, cut: 0.45, echo: -0.2 } },
+  edm: { lengths: [32, 16, 8], swap: 0.25, vocal: 1, styles: { chorus: -0.6, blend: 0.2, filter: 0.1, loop: 0.1, vocal: 0, handoff: -0.2, cut: -0.4, echo: -0.3 } },
+  pop: { lengths: [16, 8], swap: 0.5, vocal: 1.6, shortForm: true, styles: { chorus: 0.6, blend: 0, filter: 0.1, vocal: -0.4, handoff: 0.2, loop: -0.4, cut: -0.1, echo: -0.3 } },
+  hardstyle: { lengths: [8, 4], swap: 0.25, vocal: 1.2, styles: { chorus: -0.8, blend: 0.1, filter: 0, loop: -0.3, vocal: -0.5, cut: 0.35, echo: -0.2 } },
+  uptempo: { lengths: [8, 4], swap: 0.25, vocal: 1, styles: { chorus: -0.8, blend: 0, filter: -0.1, loop: -0.4, vocal: -0.6, cut: 0.5, echo: -0.2 } },
+  rap: { lengths: [8, 4], swap: 0.5, vocal: 2, shortForm: true, styles: { chorus: 0.6, blend: -0.1, filter: 0.1, handoff: 0.4, loop: -0.5, vocal: -0.4, cut: 0.3, echo: -0.2 } },
 };
 
 /** Profil für einen Übergang zwischen zwei Richtungen (das vorsichtigere gewinnt). */
@@ -58,6 +58,7 @@ export function combineProfiles(gOut, gIn) {
     lengths: [32, 16, 8, 4].filter((x) => x <= maxL && x >= Math.min(maxL, Math.max(Math.min(...a.lengths), Math.min(...b.lengths)))),
     swap: Math.max(a.swap, b.swap),
     vocal: Math.max(a.vocal, b.vocal),
+    shortForm: !!a.shortForm, // wie der alte Track gebaut ist, bestimmt, wo man aussteigt
     styles,
   };
 }

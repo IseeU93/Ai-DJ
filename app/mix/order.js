@@ -81,9 +81,22 @@ export function transitionCost(a, b) {
   const introVocal = B.points?.vocalFirst !== null && B.points?.vocalFirst !== undefined
     && B.points.vocalFirst < (B.points?.dropBar ?? 0);
   const vocalCost = introVocal && tailClean < 8 ? 0.2 : 0;
-  const genreCost = a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0;
+  const genreCost = genreDistance(a.genre, b.genre);
   return tempo + 0.8 * key + 0.3 * energy + introCost + tailCost + vocalCost + genreCost;
 }
+
+// Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
+const GENRE_DIST = {
+  'pop|rap': 0.15, 'edm|pop': 0.25, 'edm|rap': 0.35, 'edm|hardstyle': 0.3, 'hardstyle|uptempo': 0.25,
+  'edm|uptempo': 0.6, 'hardstyle|pop': 0.6, 'hardstyle|rap': 0.6, 'pop|uptempo': 0.9, 'rap|uptempo': 0.9,
+};
+export function genreDistance(x, y) {
+  if (!x || !y || x === y) return 0;
+  return GENRE_DIST[[x, y].sort().join('|')] ?? 0.5;
+}
+
+// Hauptkünstler: "A feat. B", "A x B", "A & B", "A, B" -> "a"
+const norm = (s) => String(s || '').toLowerCase().replace(/\s+(feat\.?|ft\.?|x)\s.*$|\s*[&,].*$/, '').trim();
 
 /** Einfacher, reproduzierbarer Zufall (für Reshuffle-Varianten). */
 function rng(seed) {
@@ -113,9 +126,16 @@ export function assignEnergy(tracks) {
   }
 }
 
-/** Ziel-Energie an Position p (0..1): ruhiger Einstieg, Peak bei ~70 %, leichtes Ausklingen. */
-export function targetEnergy(p) {
-  return p < 0.7 ? 0.2 + 0.75 * (p / 0.7) : 0.95 - 0.35 * ((p - 0.7) / 0.3);
+/**
+ * Ziel-Energie an Position p (0..1) bei n Tracks: ruhiger Einstieg, Hauptpeak bei ~75 %, leichtes
+ * Ausklingen – und darüber Wellen (etwa alle 6–8 Tracks ein kleiner Höhepunkt und etwas Luft),
+ * wie DJs ein Set aufbauen, statt stur immer nur lauter zu werden.
+ */
+export function targetEnergy(p, n = 0) {
+  const arc = p < 0.75 ? 0.25 + 0.7 * (p / 0.75) : 0.95 - 0.35 * ((p - 0.75) / 0.25);
+  const waves = n >= 12 ? Math.max(1, Math.round(n / 7)) : 0;
+  const wave = waves ? 0.1 * Math.sin(2 * Math.PI * waves * p) : 0;
+  return Math.max(0, Math.min(1, arc + wave));
 }
 
 const ARC_WEIGHT = 1.2;
@@ -124,9 +144,20 @@ function totalCost(order, fixedPrefix, costCache) {
   const n = order.length;
   let c = 0;
   for (let i = 0; i < n - 1; i++) c += costCache(order[i], order[i + 1]);
-  for (let i = fixedPrefix; i < n; i++) {
-    const p = n > 1 ? i / (n - 1) : 0;
-    c += ARC_WEIGHT * (order[i].energy - targetEnergy(p)) ** 2;
+  for (let i = Math.max(0, fixedPrefix - 2); i < n; i++) {
+    if (i >= fixedPrefix) {
+      const p = n > 1 ? i / (n - 1) : 0;
+      c += ARC_WEIGHT * (order[i].energy - targetEnergy(p, n)) ** 2;
+    }
+    const x = order[i];
+    const y = order[i + 1];
+    const z = order[i + 2];
+    // gleicher Künstler direkt hintereinander (oder mit nur einem Track dazwischen)
+    const ax = norm(x.artist);
+    if (ax && y && norm(y.artist) === ax) c += 0.6;
+    if (ax && z && norm(z.artist) === ax) c += 0.2;
+    // Genre-Pingpong (Pop -> Hardstyle -> Pop): lieber Blöcke spielen
+    if (x.genre && y && z && y.genre !== x.genre && z.genre === x.genre) c += 0.3;
   }
   return c;
 }
@@ -165,7 +196,7 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
     const prev = order[order.length - 1];
     const p = total > 1 ? order.length / (total - 1) : 0;
     const ranked = remaining
-      .map((t, i) => ({ i, s: cost(prev, t) + ARC_WEIGHT * (t.energy - targetEnergy(p)) ** 2 }))
+      .map((t, i) => ({ i, s: cost(prev, t) + ARC_WEIGHT * (t.energy - targetEnergy(p, total)) ** 2 + (norm(t.artist) && norm(t.artist) === norm(prev.artist) ? 0.6 : 0) }))
       .sort((x, y) => x.s - y.s);
     // Variante: unter den (fast) gleich guten Nachfolgern zufällig wählen
     let pick = ranked[0];
@@ -183,10 +214,14 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
     let current = totalCost(order, fixed.length, cost);
     let improved = true;
     let rounds = 0;
-    while (improved && rounds++ < (rand ? 2 : 30)) {
+    // Zeitbudget: der Knopf soll sofort reagieren, auch bei großen Playlists
+    const deadline = (globalThis.performance?.now() ?? Date.now()) + (n > 60 ? 900 : 400);
+    const late = () => (globalThis.performance?.now() ?? Date.now()) > deadline;
+    const W = n > 60 ? 24 : n; // Züge nur in der Nähe (ein Track wandert selten ans andere Ende)
+    while (improved && rounds++ < 30 && !late()) {
       improved = false;
-      for (let i = lock; i < n - 1; i++) {
-        for (let j = i + 1; j < n; j++) {
+      for (let i = lock; i < n - 1 && !late(); i++) {
+        for (let j = i + 1; j < Math.min(n, i + W); j++) {
           reverse(order, i, j);
           const c = totalCost(order, fixed.length, cost);
           if (c < current - 1e-9) {
@@ -197,8 +232,8 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
           }
         }
       }
-      for (let i = lock; i < n; i++) {
-        for (let j = lock; j < n; j++) {
+      for (let i = lock; i < n && !late(); i++) {
+        for (let j = Math.max(lock, i - W); j < Math.min(n, i + W); j++) {
           if (i === j) continue;
           const [t] = order.splice(i, 1);
           order.splice(j, 0, t);

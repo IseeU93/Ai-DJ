@@ -452,3 +452,71 @@ test('Nicht w채hrend kr채ftigem Gesang wegmischen und keinen sp채teren Refrain �
     assert.ok(plan.outBar >= (a.points.vocalLast ?? 0) - 1, `${type}: 체berspringt Gesang (Mix ab ${plan.outBar}, Gesang bis ${a.points.vocalLast})`);
   }
 });
+
+// Pop-Song wie "Blank Space": kurzes Intro, Gesang fast durchgehend, Refrains, Bridge, kurzes Outro
+const POP = [
+  { bars: 4, kick: true, pad: true },
+  { bars: 16, kick: true, bass: true, vocal: true },
+  { bars: 8, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 16, kick: true, bass: true, vocal: true },
+  { bars: 8, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 8, pad: true, vocal: true },
+  { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 4, kick: true, pad: true },
+];
+function popTrack(id, bpm, root) {
+  const k = `pop-${bpm}-${root}`;
+  if (!cache.has(k)) {
+    const s = synthSong({ bpm, root, sections: POP, offset: 0.2, seed: root });
+    cache.set(k, analyzeTrack(s.L, s.R, s.sr));
+  }
+  return { id, analysis: cache.get(k), energy: 0.5, genre: 'pop' };
+}
+
+test('Pop: Refrain-Wechsel nach ~2/3 des Songs, neuer Song von vorn, nie zwei Stimmen', () => {
+  const out = popTrack('p1', 96, 57);
+  const inc = popTrack('p2', 98, 60);
+  const plan = planTransition({ out, inc });
+  const E = out.analysis.points.lastBar + 1;
+  assert.equal(plan.type, 'chorus', `gew채hlt: ${plan.type}`);
+  const swap = plan.outBar + plan.bars;
+  assert.ok(swap / E > 0.55 && swap / E < 0.88, `Wechsel bei Takt ${swap} von ${E}`);
+  assert.equal(plan.inBar, inc.analysis.points.startBar ?? 0, 'neuer Song startet nicht am Anfang');
+  // neuer Gesang bleibt stumm, solange der alte Track noch voll da ist
+  const vocalOn = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0);
+  const outGone = plan.steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to === 0);
+  assert.ok(vocalOn.at >= outGone.at, 'zwei Stimmen gleichzeitig');
+});
+
+test('Set-Reihenfolge: gleicher K체nstler nicht direkt hintereinander, keine Genre-Pingpongs', () => {
+  const base = track('x', 128).analysis;
+  const mk = (id, artist, genre, energy) => ({ id, artist, genre, energy, analysis: base });
+  const list = [
+    mk(1, 'Taylor Swift', 'pop', 0.3), mk(2, 'Taylor Swift', 'pop', 0.35), mk(3, 'Taylor Swift feat. X', 'pop', 0.4),
+    mk(4, 'Dua Lipa', 'pop', 0.5), mk(5, 'Ed Sheeran', 'pop', 0.45), mk(6, 'Angerfist', 'uptempo', 0.95),
+    mk(7, 'Dr. Peacock', 'uptempo', 0.9), mk(8, 'Harris', 'pop', 0.55), mk(9, 'Weeknd', 'pop', 0.6),
+  ];
+  const order = buildSetOrder(list);
+  for (let i = 0; i + 1 < order.length; i++) {
+    const a = order[i].artist.split(' feat')[0];
+    assert.notEqual(a, order[i + 1].artist.split(' feat')[0], `K체nstler doppelt bei ${i}`);
+  }
+  const genres = order.map((t) => t.genre);
+  const switches = genres.filter((g, i) => i && g !== genres[i - 1]).length;
+  assert.ok(switches <= 2, `Genre-Wechsel: ${genres.join(' ')}`);
+});
+
+test('Set-Reihenfolge bleibt auch bei 150 Tracks schnell', () => {
+  const base = track('x', 128).analysis;
+  const list = Array.from({ length: 150 }, (_, i) => ({
+    id: i, artist: `A${i % 40}`, genre: ['pop', 'edm', 'rap'][i % 3], energy: (i * 37 % 100) / 100,
+    analysis: { ...base, bpm: 100 + (i * 13) % 40, key: { camelot: `${(i % 12) + 1}${i % 2 ? 'A' : 'B'}` } },
+  }));
+  const t0 = performance.now();
+  buildSetOrder(list);
+  buildSetOrder(list, [], 3);
+  const ms = performance.now() - t0;
+  assert.ok(ms < 8000, `${ms.toFixed(0)} ms`);
+});

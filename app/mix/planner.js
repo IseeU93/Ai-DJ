@@ -7,6 +7,7 @@ import { GENRES, combineProfiles, detectGenre } from './genre.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
+  chorus: 'Refrain-Wechsel',
   handoff: 'Vocal-Übergabe',
   loop: 'Loop-Mix',
   vocal: 'Lyrics-Wechsel',
@@ -330,7 +331,8 @@ function choosePoints(ctx, lengths, allowFull = false) {
         // … und keinen späteren Gesangsteil überspringen
         let skippedVocal = 0;
         for (let bar = outEnd; bar < E; bar++) if (va.vocalSmooth(bar) >= 0.5) skippedVocal++;
-        sc -= skippedVocal * 0.08;
+        // (bei Pop/Rap ist es normal, nach dem 2. Refrain zu gehen – dort nur leicht)
+        sc -= ctx.profile?.shortForm ? Math.min(0.4, skippedVocal * 0.012) : skippedVocal * 0.08;
         if (va.label(outBar - 1) !== labStart) {
           sc += 0.35;
           if (labStart === 'break' || labStart === 'outro' || labStart === 'build') {
@@ -349,7 +351,8 @@ function choosePoints(ctx, lengths, allowFull = false) {
         // übersprungene Hauptteile des alten Tracks
         let skippedMain = 0;
         for (let bar = outEnd; bar < E; bar++) if (va.label(bar) === 'main') skippedMain++;
-        if (swapDrop === undefined) sc -= skippedMain * 0.035;
+        if (ctx.profile?.shortForm) sc -= Math.min(0.4, skippedMain * 0.01);
+        else if (swapDrop === undefined) sc -= skippedMain * 0.035;
         else sc -= Math.max(0, skippedMain - 16) * 0.035; // beim Drop-Swap ersetzt der neue Drop den alten
         sc -= Math.max(0, E - outEnd) * 0.001;
         // Nicht ein langes, ereignisloses Ende ausspielen: nach dem letzten Hauptteil/Gesang
@@ -758,6 +761,75 @@ function composeEcho(ctx) {
 }
 
 /**
+ * Refrain-Wechsel (Pop/Rap, wie im Open-Format-DJing üblich): Der alte Track spielt bis zum Ende
+ * eines Refrains – nach gut der Hälfte des Songs, nicht bis zum letzten Ton. Der neue Track startet
+ * an seinem Anfang, sein Intro läuft ohne Bass leise unter den letzten Takten des Refrains. Genau
+ * auf der Phrasengrenze nach dem Refrain wird umgeschaltet (Bass-Wechsel, kurzer Echo-Schweif auf
+ * dem Beat), und die erste Strophe des neuen Tracks übernimmt. Nie zwei Stimmen gleichzeitig.
+ */
+function chorusExit(ctx) {
+  const { va } = ctx;
+  const E = va.end;
+  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(E * 0.45, 4);
+  let best = null;
+  for (let bar = from; bar <= E - 4; bar += 4) {
+    if (!va.isPhraseStart(bar) && bar % 8 !== (va.a.phraseOffset ?? 0) % 8) continue;
+    const before = va.mean(va.vocalSmooth, bar - 8, bar);
+    const eBefore = va.mean(va.energy, bar - 8, bar);
+    const eAfter = va.mean(va.energy, bar, bar + 8);
+    let sc = 0;
+    sc += before >= 0.5 ? 0.6 : before * 0.6; // davor wurde gesungen (Refrain/Hook)
+    sc += Math.max(-0.3, Math.min(0.6, (eBefore - eAfter) * 0.2)); // danach wird es ruhiger (Strophe/Bridge)
+    sc += eBefore > -3 ? 0.3 : 0; // der Teil davor war ein lauter Höhepunkt
+    if (va.label(bar) !== va.label(bar - 1)) sc += 0.2;
+    // Gesangszeile läuft genau über die Grenze -> Zeile würde abgeschnitten
+    if (va.vocalSmooth(bar - 1) >= 0.6 && va.vocalSmooth(bar) >= 0.6 && va.vocal(bar) > va.vocal(bar - 1) + 0.15) sc -= 0.3;
+    const frac = bar / E;
+    sc -= Math.abs(frac - 0.72) * (ctx.earliestBar !== null ? 0.4 : 1.6); // DJ-typisch: ~2/3–3/4 des Songs
+    if (frac > 0.9) sc -= 0.8;
+    if (!best || sc > best.sc) best = { bar, sc };
+  }
+  return best;
+}
+
+function composeChorus(ctx) {
+  const { va, vb, b, m } = ctx;
+  const exit = chorusExit(ctx);
+  if (!exit) return null;
+  // Intro des neuen Tracks bis zu seiner ersten Stimme (bzw. seinem Einstieg), höchstens 8 Takte
+  const start = b.points.startBar ?? 0;
+  // erste Stimme oder erster Hauptteil – was zuerst kommt (Gesangserkennung kann spät anschlagen)
+  const first = Math.min(b.points.vocalFirst ?? Infinity, b.points.dropBar ?? Infinity, start + 16);
+  const introBars = Math.max(0, Math.floor((first - start) / m));
+  const pre = ctx.instant ? 0 : Math.min(8, introBars >= 4 ? 4 * Math.floor(Math.min(introBars, 8) / 4) : introBars >= 2 ? introBars : 0);
+  ctx.outBar = exit.bar - pre;
+  ctx.inBar = start; // der neue Song beginnt immer an seinem Anfang, nie mittendrin
+  const steps = [];
+  if (pre > 0) {
+    steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1));
+    steps.push(act(0, 'in', 'play'));
+    steps.push(p(0, 'in', 'fader', 0.65, Math.max(1, pre - 0.5)));
+    // alter Refrain wird zum Ende etwas schlanker, damit das neue Intro Platz hat
+    steps.push(p(Math.max(0, pre - 2), 'out', 'low', -8, 2));
+  } else {
+    steps.push(p(0, 'in', 'fader', 1), act(0, 'in', 'play'));
+  }
+  // Umschalten genau auf der Eins nach dem Refrain
+  steps.push(p(pre - 0.25, 'out', 'echo', 0.35, 0.25));
+  steps.push(p(pre, 'out', 'fader', 0, 0.5), p(pre, 'out', 'low', KILL, 0.1));
+  steps.push(p(pre, 'in', 'low', 0, 0.1), p(pre, 'in', 'vocal', 0, 0.1), p(pre, 'in', 'fader', 1, 0.1));
+  steps.push(p(pre + 1, 'out', 'echo', 0), act(pre + 1.5, 'out', 'stop'));
+  ctx.notes.unshift(
+    `Ausstieg nach dem Refrain (Takt ${exit.bar} von ${va.end}), nicht erst am Songende`,
+    pre > 0
+      ? `neuer Track startet am Anfang, sein Intro läuft ${pre} Takte ohne Bass unter dem Refrain`
+      : 'neuer Track startet direkt mit seiner ersten Zeile',
+    'auf der Eins: Bass-Wechsel + kurzer Echo-Schweif, die neue Strophe übernimmt',
+  );
+  return { L: pre + 1.5, steps };
+}
+
+/**
  * Vocal-Übergabe (Wortspiel-Technik): die letzte Zeile des alten Tracks läuft fast a cappella über
  * den Beat des neuen – genau wenn sie endet, setzt die erste Zeile des neuen Tracks ein.
  */
@@ -804,6 +876,7 @@ function composeHandoff(ctx) {
 }
 
 const COMPOSERS = {
+  chorus: composeChorus,
   handoff: composeHandoff,
   blend: composeBlend,
   loop: composeLoop,
@@ -840,6 +913,9 @@ function scoreStyles(ctx) {
     const outLines = va.vocalRuns(4).some((r) => r.to >= va.end * 0.5);
     const inLines = vb.vocalRuns(4).length > 0;
     if (outLines && inLines) c.handoff = 1.25 + (keyDist <= 0.35 ? 0.2 : -0.4);
+    // Refrain-Wechsel: bei Songs mit durchgehendem Gesang (Pop/Rap) der natürliche DJ-Weg
+    const vocalHeavy = va.mean(va.vocalSmooth, Math.floor(va.end * 0.4), va.end) >= 0.45;
+    if (outVocal) c.chorus = 0.9 + (vocalHeavy ? 0.5 : 0) + (outClean < 8 ? 0.3 : 0);
   } else {
     c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
     c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
@@ -926,7 +1002,8 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   let { L, steps } = result;
   // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
   // zwei Tracks im Drop klingen immer nach Unfall.
-  if (chosen !== 'cut' && chosen !== 'echo') {
+  // (Refrain-Wechsel schaltet selbst genau auf der Eins um – sein Echo-Schweif darf ausklingen)
+  if (chosen !== 'cut' && chosen !== 'echo' && chosen !== 'chorus') {
     const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
     if (nextDrop !== undefined) {
       // Hat der neue Track vor dem Drop einen Build-up, muss der alte schon davor weg sein
