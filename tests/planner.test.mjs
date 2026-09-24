@@ -59,8 +59,8 @@ test('Instrumentale Intros/Outros -> sauberer Blend bevorzugt', () => {
   assert.equal(plan.type, 'blend', `gewählt: ${plan.type}`);
 });
 
-test('Lyrics-Wechsel bei zwei Gesangs-Tracks, wenn gerade schon geblendet wurde', () => {
-  const plan = planTransition({ out: track('a', 128), inc: track('b', 128, 64), history: ['blend'] });
+test('Lyrics-Wechsel bei zwei Gesangs-Tracks, wenn schon zweimal geblendet wurde', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('b', 128, 64), history: ['blend', 'blend'] });
   assert.equal(plan.type, 'vocal', `gewählt: ${plan.type}`);
   const vocalSteps = plan.steps.filter((s) => s.param === 'vocal');
   assert.ok(vocalSteps.length >= 6);
@@ -93,11 +93,27 @@ test('Loop-Mix mit Energie-Anstieg endet mit kurzem Loop-Roll in den Drop', () =
   assert.deepEqual(loops.slice(1), [1, 0.5, 0.25]);
 });
 
-test('Jetzt mixen: Einstieg auf nächster 4-Takt-Grenze', () => {
+test('Frühester Takt: beste Stelle ab dort, auf dem 4-Takt-Raster', () => {
   const out = track('a', 128);
   const plan = planTransition({ out, inc: track('b', 126), type: 'blend', earliestBar: 20.3 });
   assert.equal((plan.outBar - out.analysis.phraseOffset) % 4, 0);
-  assert.ok(plan.outBar >= 20.3 && plan.outBar < 25);
+  assert.ok(plan.outBar >= 20.3, `outBar ${plan.outBar}`);
+});
+
+test('Mix-Punkt nicht stur am Ende: Drop-Swap, wenn der alte Track noch einen Drop hätte', () => {
+  // alter Track: Break (Takt 40-47) und danach letzter Drop bei 48, der neue hat 16 Takte Intro
+  const sections = [
+    { bars: 16, kick: true },
+    { bars: 24, kick: true, bass: true, pad: true },
+    { bars: 8, pad: true },
+    { bars: 16, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  const out = trackWith('d', 128, sections);
+  const plan = planTransition({ out, inc: track('b', 128), type: 'blend' });
+  const lastDrop = out.analysis.points.drops.at(-1);
+  assert.ok(plan.outBar + plan.bars <= lastDrop, `Mix endet bei ${plan.outBar + plan.bars}, alter Drop bei ${lastDrop}: ${plan.notes.join(' | ')}`);
+  assert.ok(plan.notes.some((n) => n.includes('Drop-Swap') || n.includes('Break')), plan.notes.join(' | '));
 });
 
 test('Set-Reihenfolge: ruhiger Start, harmonische Nachbarn', () => {

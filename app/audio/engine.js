@@ -339,12 +339,18 @@ export class Deck {
   /** Automation: von v0 (bei t0) nach v1 (bei t1); t1 <= t0 = Sprung. */
   ramp(name, t0, v0, t1, v1) {
     if (name === 'filter') return this._rampFilter(t0, v0, t1, v1);
+    // Weiche S-Kurve (smoothstep) aus kurzen linearen Stücken: kein abruptes Anfahren/Abstoppen
+    const n = Math.max(2, Math.min(16, Math.round((t1 - t0) / 0.06)));
     for (const [param, map] of this.params[name]) {
       if (t1 <= t0 + 1e-4) {
         param.setValueAtTime(map(v1), t0);
-      } else {
-        param.setValueAtTime(map(v0), t0);
-        param.linearRampToValueAtTime(map(v1), t1);
+        continue;
+      }
+      param.setValueAtTime(map(v0), t0);
+      for (let k = 1; k <= n; k++) {
+        const x = k / n;
+        const e = x * x * (3 - 2 * x);
+        param.linearRampToValueAtTime(map(v0 + (v1 - v0) * e), t0 + (t1 - t0) * x);
       }
     }
   }
