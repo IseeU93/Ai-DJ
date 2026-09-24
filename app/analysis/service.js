@@ -1,7 +1,7 @@
 // Analysiert eine Dateiliste parallel (Web Worker), mit IndexedDB-Cache.
 import { ANALYSIS_SR, ANALYSIS_VERSION } from './analyze.js';
 import { readFile } from '../lib/tauri.js';
-import { cacheGet, cachePut } from '../lib/store.js';
+import { cacheGet, cachePut, gridOverride } from '../lib/store.js';
 import { readMetadata } from '../lib/metadata.js';
 
 class WorkerPool {
@@ -12,9 +12,9 @@ class WorkerPool {
     this.seq = 0;
   }
 
-  run(L, R, sr) {
+  run(L, R, sr, override = null) {
     return new Promise((resolve, reject) => {
-      const job = { L, R, sr, resolve, reject };
+      const job = { L, R, sr, override, resolve, reject };
       const w = this.idle.pop();
       if (w) this._start(w, job);
       else this.waiting.push(job);
@@ -31,11 +31,11 @@ class WorkerPool {
       if (next) this._start(worker, next);
       else this.idle.push(worker);
     };
-    worker.postMessage({ id, L: job.L, R: job.R, sr: job.sr }, [job.L.buffer, job.R.buffer]);
+    worker.postMessage({ id, L: job.L, R: job.R, sr: job.sr, override: job.override }, [job.L.buffer, job.R.buffer]);
   }
 }
 
-const cacheKey = (f) => `${f.path}|${f.size}|${f.modified}|v${ANALYSIS_VERSION}`;
+const cacheKey = (f, ov) => `${f.path}|${f.size}|${f.modified}|v${ANALYSIS_VERSION}${ov ? `|${JSON.stringify(ov)}` : ''}`;
 
 async function decodeForAnalysis(bytes) {
   const ctx = new OfflineAudioContext(2, 1, ANALYSIS_SR);
@@ -80,15 +80,15 @@ export class AnalysisService {
     await Promise.all(Array.from({ length: decodeSlots + 1 }, workerLoop));
   }
 
-  async analyzeOne(file) {
-    const key = cacheKey(file);
+  async analyzeOne(file, override = gridOverride(file.path)) {
+    const key = cacheKey(file, override);
     const cached = await cacheGet(key);
     if (cached) return { ...file, id: file.path, ...cached };
 
     const bytes = await readFile(file.path);
     const meta = readMetadata(bytes, file.name);
     const { L, R } = await decodeForAnalysis(bytes);
-    const analysis = await this.pool.run(L, R, ANALYSIS_SR);
+    const analysis = await this.pool.run(L, R, ANALYSIS_SR, override);
     const record = { ...meta, analysis };
     cachePut(key, record);
     return { ...file, id: file.path, ...record };

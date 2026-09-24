@@ -12,7 +12,7 @@ function rng(seed) {
  * sections: [{bars, kick, bass, pad, vocal}]; Akkordwechsel auf jedem Downbeat.
  * Liefert {L, R, sr, firstBeat, bpm}.
  */
-export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sections, seed = 1 }) {
+export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sections, seed = 1, staticChord = false, jitter = 0 }) {
   const beat = 60 / bpm;
   const totalBars = sections.reduce((a, s) => a + s.bars, 0);
   const n = Math.ceil((offset + totalBars * 4 * beat + 1) * sr);
@@ -25,9 +25,9 @@ export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sec
   let bar = 0;
   for (const sec of sections) {
     for (let b = 0; b < sec.bars; b++, bar++) {
-      const chordRoot = root + progression[bar % 4];
+      const chordRoot = root + (staticChord ? 0 : progression[bar % 4]);
       for (let k = 0; k < 4; k++) {
-        const t0 = offset + (bar * 4 + k) * beat;
+        const t0 = offset + (bar * 4 + k) * beat + (jitter ? noise() * 2 * jitter : 0);
         const i0 = Math.round(t0 * sr);
         if (sec.kick) {
           const len = Math.round(0.14 * sr);
@@ -35,6 +35,14 @@ export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sec
             const tt = i / sr;
             const f = 50 + 90 * Math.exp(-tt * 40);
             const v = 0.7 * Math.exp(-tt * 22) * Math.sin(2 * Math.PI * f * tt);
+            L[i0 + i] += v;
+            R[i0 + i] += v;
+          }
+        }
+        if (sec.snare && (k === 1 || k === 3)) {
+          const len = Math.round(0.12 * sr);
+          for (let i = 0; i < len && i0 + i < n; i++) {
+            const v = 0.35 * Math.exp(-i / (0.03 * sr)) * (noise() + 0.5 * Math.sin(2 * Math.PI * 190 * (i / sr)));
             L[i0 + i] += v;
             R[i0 + i] += v;
           }

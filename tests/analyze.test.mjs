@@ -19,7 +19,8 @@ for (const bpm of [124, 128, 140, 95]) {
     const beat = 60 / bpm;
     // Beat-Phase: firstBeat muss auf dem Raster der echten Beats liegen
     const phaseErr = Math.abs((((a.firstBeat - song.firstBeat) % beat) + 1.5 * beat) % beat - beat / 2);
-    assert.ok(phaseErr < 0.012, `phase err ${(phaseErr * 1000).toFixed(1)} ms (first ${a.firstBeat})`);
+    assert.ok(phaseErr < 0.004, `phase err ${(phaseErr * 1000).toFixed(1)} ms (first ${a.firstBeat})`);
+    assert.ok(a.gridConfidence > 0.7, `confidence ${a.gridConfidence}`);
     // Drift über den ganzen Track < 15 ms
     const lastTrue = song.firstBeat + 250 * beat;
     const k = Math.round((lastTrue - a.firstBeat) / a.beatInterval);
@@ -52,3 +53,21 @@ for (const bpm of [124, 128, 140, 95]) {
     assert.match(a.key.camelot, /^8[AB]$/, `key ${a.key.name}`);
   });
 }
+
+test('Taktanfang über Backbeat (Snare auf 2+4) bei stehendem Akkord', () => {
+  const secs = [{ bars: 48, kick: true, snare: true, bass: true, pad: true }];
+  for (const offset of [0.3, 0.3 + 60 / 124, 0.3 + 120 / 124]) {
+    const song = synthSong({ bpm: 124, sections: secs, offset, staticChord: true });
+    const a = analyzeTrack(song.L, song.R, song.sr);
+    const dbTime = a.firstBeat + a.downbeat * a.beatInterval;
+    const bars = (dbTime - offset) / (4 * 60 / 124);
+    assert.ok(Math.abs(bars - Math.round(bars)) < 0.02, `offset ${offset}: downbeat liegt bei ${bars} Takten`);
+  }
+});
+
+test('Unpräzises Timing senkt die Grid-Zuverlässigkeit', () => {
+  const secs = [{ bars: 40, kick: true, snare: true, bass: true }];
+  const tight = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs })).slice(0, 3));
+  const loose = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs, jitter: 0.012 })).slice(0, 3));
+  assert.ok(tight.gridConfidence > loose.gridConfidence + 0.2, `${tight.gridConfidence} vs ${loose.gridConfidence}`);
+});

@@ -41,7 +41,7 @@ export class DeckCore {
     // Übereinstimmung (Suche ±SEEK). Klingt deutlich sauberer als dauerhaft überlappende Grains.
     this.N = Math.round(sampleRate * 0.06); // Sequenzlänge
     this.OV = Math.round(sampleRate * 0.01); // Überblendlänge
-    this.S = Math.round(sampleRate * 0.012) & ~3; // Suchbereich ±
+    this.S = Math.round(sampleRate * 0.005) & ~3; // Suchbereich ± (klein halten: sonst verrutschen Kicks gegen das Raster)
     const cap = this.N * 4;
     this.fifoL = new Float32Array(cap);
     this.fifoR = new Float32Array(cap);
@@ -312,7 +312,7 @@ export class DeckCore {
         e += x * x;
       }
       const d = (off - S) / S;
-      return (c / Math.sqrt(e)) * (1 - 0.2 * d * d); // leichte Bevorzugung der Mitte
+      return (c / Math.sqrt(e)) * (1 - 0.5 * d * d); // Bevorzugung der Mitte = nah am Beat-Raster
     };
 
     let best = S;

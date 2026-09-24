@@ -399,7 +399,7 @@ function composeBlend(ctx) {
   const inDrop = b.points.dropBar;
   const inLead = (inDrop - inStart) / m;
   const steps = [];
-  const lengths = ctx.keyDist <= 0.15 ? [32, 16, 8] : ctx.keyDist <= 0.35 ? [16, 8] : [8];
+  const lengths = (ctx.keyDist <= 0.15 ? [32, 16, 8] : ctx.keyDist <= 0.35 ? [16, 8] : [8]).filter((x) => x <= ctx.maxL);
 
   let L;
   const pt = ctx.instant ? null : choosePoints(ctx, lengths);
@@ -485,7 +485,7 @@ function composeLoop(ctx) {
   }
   ctx.outBar = loop.bar;
   ctx.loopExt = loop;
-  let L = inLead >= 16 && !ctx.instant ? 16 : 8;
+  let L = inLead >= 16 && !ctx.instant && ctx.maxL >= 16 ? 16 : 8;
   ctx.inBar = Math.max(inStart, Math.round(inDrop - L * m));
   const build = ctx.energyUp > 0.08 && inLead >= 8;
 
@@ -595,7 +595,7 @@ function composeFilter(ctx) {
   const inLead = (b.points.dropBar - b.points.startBar) / m;
   const steps = [];
   let L = inLead >= 16 && !ctx.instant ? 16 : 8;
-  const pt = ctx.instant ? null : choosePoints(ctx, [16, 8]);
+  const pt = ctx.instant ? null : choosePoints(ctx, [16, 8].filter((x) => x <= ctx.maxL));
   if (pt) {
     ctx.outBar = pt.outBar;
     ctx.inBar = pt.inBar;
@@ -733,7 +733,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     rel, keyDist, masterBpm,
     energyUp: (inc.energy ?? 0.5) - (out.energy ?? 0.5),
     earliestBar, instant,
-    m: 1, notes: [], loopExt: null,
+    m: 1, notes: [], loopExt: null, maxL: 32,
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
   };
   ctx.m = rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT) ? rel.m : 1;
@@ -753,6 +753,16 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     }
   }
   let note = '';
+  // Unsicheres Beatgrid (z. B. Live-Drums, schwankendes Tempo): lange Beatmatches würden
+  // auseinanderlaufen -> kurz halten oder ohne Beatmatch per Echo wechseln.
+  const conf = Math.min(a.gridConfidence ?? 1, b.gridConfidence ?? 1);
+  ctx.maxL = conf < 0.5 ? 8 : 32;
+  if (!forced && conf < 0.3 && chosen !== 'cut') {
+    chosen = 'echo';
+    note = 'Beatgrid unsicher (schwankendes Tempo) – Echo-Out statt Beatmatch';
+  } else if (conf < 0.5) {
+    ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
+  }
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
     chosen = 'echo';

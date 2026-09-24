@@ -572,6 +572,16 @@ export class Conductor extends EventTarget {
     if (Math.abs(jump) > sr * 0.002) d.segment(Math.round(d.virtualAt(t)), d.realAt(t) + jump, 0);
   }
 
+  /** Neue Analyse (z. B. nach Grid-Korrektur) übernehmen – auch für geladene Decks. */
+  updateAnalysis(id, analysis) {
+    const t = this.track(id);
+    if (!t) return;
+    t.analysis = analysis;
+    if (this.plan && !this.plan.committed && (this.plan.inId === id || this.plan.outId === id)) this.plan = null;
+    this.emit('queue');
+    this.emit('plan');
+  }
+
   // ------------------------------------------------------------------ Hot Cues
 
   /** 8 Cue-Slots pro Track: automatisch aus der Analyse (Start, Drops, Break, Outro) + eigene. */

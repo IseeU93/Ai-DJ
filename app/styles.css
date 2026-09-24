@@ -144,6 +144,11 @@ button, select, input { font: inherit; color: inherit; }
 .loopbtn.active { border-color: var(--c); color: var(--c); }
 .toggle.on { border-color: var(--c); color: var(--c); }
 
+.gridtools { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.gridtools .lbl { margin-right: 4px; }
+.gridtools .btn.small { height: 22px; padding: 0 7px; font-size: 11.5px; }
+.gridconf { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: 6px; min-width: 64px; }
+.gridconf.warn { color: var(--warn); }
 .pads { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }
 .pad {
   height: 26px; padding: 0 6px; border: 1px solid var(--line-2); border-left: 3px solid var(--pc, var(--line-2));

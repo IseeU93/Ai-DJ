@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 7;
+export const ANALYSIS_VERSION = 8;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -365,7 +365,57 @@ function estimateKey(chroma, frames) {
 
 // ---------------------------------------------------------------- Hauptfunktion
 
-export function analyzeTrack(L, R, sr) {
+/** Hüllkurve |x|, geglättet (Einpol-Tiefpass, tau in Sekunden). */
+function envelope(x, sr, tau) {
+  const a = Math.exp(-1 / (tau * sr));
+  const e = new Float32Array(x.length);
+  let v = 0;
+  for (let i = 0; i < x.length; i++) {
+    const ax = Math.abs(x[i]);
+    v = ax > v ? ax : a * v + (1 - a) * ax;
+    e[i] = v;
+  }
+  return e;
+}
+
+/**
+ * Verfeinert die Beat-Phase sample-genau an den echten Anschlägen (Kick, sonst Gesamtsignal):
+ * pro Beat wird der steilste Anstieg der Hüllkurve gesucht; der Median der Abweichungen
+ * korrigiert das Raster. Streuung und Drift ergeben die Zuverlässigkeit des Grids.
+ */
+function refinePhase(sig, sr, firstBeat, beatInterval, duration) {
+  const env = envelope(sig, sr, 0.004);
+  const win = Math.min(0.045, beatInterval * 0.2);
+  const offs = [];
+  for (let t = firstBeat; t < duration - win; t += beatInterval) {
+    const i0 = Math.max(1, Math.floor((t - win) * sr));
+    const i1 = Math.min(env.length - 1, Math.floor((t + win) * sr));
+    let best = -1;
+    let bestD = 0;
+    const step = Math.max(1, Math.round(sr / 4000)); // 0,25-ms-Raster reicht
+    for (let i = i0 + step; i < i1; i += step) {
+      const d = env[i] - env[i - step];
+      if (d > bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best > 0) offs.push({ t, off: best / sr - t, s: bestD });
+  }
+  if (offs.length < 16) return { shift: 0, jitterMs: 20, driftMs: 0 };
+  const strong = offs.filter((o) => o.s >= percentile(offs.map((x) => x.s), 0.5));
+  const med = (arr) => percentile(arr, 0.5);
+  const shift = med(strong.map((o) => o.off));
+  const jitter = med(strong.map((o) => Math.abs(o.off - shift)));
+  const third = Math.floor(strong.length / 3);
+  const drift = third >= 4 ? med(strong.slice(-third).map((o) => o.off)) - med(strong.slice(0, third).map((o) => o.off)) : 0;
+  return { shift, jitterMs: jitter * 1000, driftMs: drift * 1000 };
+}
+
+/**
+ * @param override optional { bpmFactor, shiftSec, downbeatSec } – manuelle Grid-Korrektur
+ */
+export function analyzeTrack(L, R, sr, override = null) {
   const n = L.length;
   const mid = new Float32Array(n);
   const side = new Float32Array(n);
@@ -381,16 +431,25 @@ export function analyzeTrack(L, R, sr) {
   const grid = fitGrid(env, fr, bpmCoarse);
   const P = grid.P;
   const phase = resolveHalfBeat(low, P, grid.phase);
-  const beatInterval = (P * ONSET_HOP) / sr;
+  let beatInterval = (P * ONSET_HOP) / sr;
+  if (override?.bpmFactor) beatInterval /= override.bpmFactor;
   const bpm = 60 / beatInterval;
   let firstBeat = (phase * ONSET_HOP) / sr + ONSET_CALIB_S;
-  firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
-  const beatCount = Math.floor((duration - firstBeat) / beatInterval) + 1;
-  const beatTime = (k) => firstBeat + k * beatInterval;
 
-  // --- Filterbänder (Energie, Wellenform)
+  // --- Filterbänder (Energie, Wellenform, Anschläge)
   const lowSig = filter(mid, biquad('lp', 150, sr));
   const highSig = filter(mid, biquad('hp', 3000, sr));
+
+  // Phase sample-genau an den Kick-Anschlägen ausrichten (ohne Kick: Gesamtsignal)
+  const kickShare = rmsRange(lowSig, 0, n) / (rmsRange(mid, 0, n) + 1e-12);
+  const refine = refinePhase(kickShare > 0.15 ? lowSig : mid, sr, ((firstBeat % beatInterval) + beatInterval) % beatInterval, beatInterval, duration);
+  firstBeat += refine.shift;
+  if (override?.shiftSec) firstBeat += override.shiftSec;
+  firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
+  const gridConfidence = Math.max(0, Math.min(1, 1 - (refine.jitterMs * 1.5 + Math.abs(refine.driftMs)) / 30));
+  const beatCount = Math.floor((duration - firstBeat) / beatInterval) + 1;
+  const beatTime = (k) => firstBeat + k * beatInterval;
+  const highEnv = envelope(highSig, sr, 0.01);
 
   // --- Spektral-Features
   const spec = spectralFeatures(mid, side, sr);
@@ -406,6 +465,7 @@ export function analyzeTrack(L, R, sr) {
   const beatChroma = [];
   const beatLow = [];
   const beatEnergy = [];
+  const beatSnare = [];
   for (let k = 0; k < beatCount; k++) {
     const t0 = beatTime(k);
     const [f0, f1] = frameRange(t0, t0 + beatInterval);
@@ -418,8 +478,15 @@ export function analyzeTrack(L, R, sr) {
     for (let t = of - 3; t <= of + 3; t++) if (t >= 0 && t < low.length) lm = Math.max(lm, low[t]);
     beatLow.push(lm);
     beatEnergy.push(db(rmsRange(mid, t0 * sr, (t0 + beatInterval) * sr)));
+    // Snare-Anschlag (Höhen-Hüllkurve steigt direkt am Beat)
+    const i = Math.round(t0 * sr);
+    const pre = highEnv[Math.max(0, i - Math.round(0.03 * sr))] || 0;
+    let post = 0;
+    for (let j = i; j < Math.min(highEnv.length, i + Math.round(0.04 * sr)); j += 16) post = Math.max(post, highEnv[j]);
+    beatSnare.push(Math.max(0, post - pre));
   }
   const zLow = zscore(beatLow);
+  const zSnare = zscore(beatSnare);
   const phaseScore = [0, 0, 0, 0];
   for (let k = 1; k < beatCount; k++) {
     let dot = 0;
@@ -427,8 +494,17 @@ export function analyzeTrack(L, R, sr) {
     const change = 1 - dot;
     const jump = Math.max(0, beatEnergy[k] - beatEnergy[k - 1]) / 6;
     phaseScore[k % 4] += change * 2 + 0.4 * zLow[k] + jump;
+    // Backbeat: Snare auf 2 und 4 -> der Schlag davor/danach ist die "1" bzw. "3"
+    phaseScore[(k + 3) % 4] += 0.35 * zSnare[k]; // k ist Zählzeit 2 -> k-1 ist die 1
+    phaseScore[(k + 1) % 4] += 0.35 * zSnare[k]; // k ist Zählzeit 4 -> k+1 ist die 1
+    phaseScore[k % 4] -= 0.3 * zSnare[k]; // Snare selbst ist selten auf der 1
+    phaseScore[(k + 2) % 4] -= 0.3 * zSnare[k];
   }
-  const downbeat = phaseScore.indexOf(Math.max(...phaseScore));
+  let downbeat = phaseScore.indexOf(Math.max(...phaseScore));
+  if (override?.downbeatSec !== undefined && override?.downbeatSec !== null) {
+    const k = Math.round((override.downbeatSec - firstBeat) / beatInterval);
+    downbeat = ((k % 4) + 4) % 4;
+  }
 
   // --- Takte
   const bars = [];
@@ -663,6 +739,8 @@ export function analyzeTrack(L, R, sr) {
     bpm,
     beatInterval,
     firstBeat,
+    gridConfidence,
+    gridOverride: override || null,
     beatCount,
     downbeat,
     barCount,

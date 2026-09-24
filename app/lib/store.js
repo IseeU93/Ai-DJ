@@ -29,6 +29,28 @@ async function tx(mode, fn) {
 export const cacheGet = (key) => tx('readonly', (s) => s.get(key)).catch(() => undefined);
 export const cachePut = (key, value) => tx('readwrite', (s) => s.put(value, key)).catch(() => {});
 
+const GRID = 'automix.grid';
+
+/** Manuelle Beatgrid-Korrektur pro Datei ({ bpmFactor, shiftSec, downbeatSec }) oder null. */
+export function gridOverride(path) {
+  try {
+    return (JSON.parse(localStorage.getItem(GRID)) || {})[path] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setGridOverride(path, ov) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GRID)) || {};
+    if (ov) all[path] = ov;
+    else delete all[path];
+    localStorage.setItem(GRID, JSON.stringify(all));
+  } catch {
+    /* egal */
+  }
+}
+
 const SETTINGS = 'automix.settings';
 
 export function loadSettings() {

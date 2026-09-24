@@ -7,7 +7,7 @@ import { Knob, Slider } from './ui/controls.js';
 import { DeckWaveform, drawOverview } from './ui/waveform.js';
 import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
-import { loadSettings, saveSettings } from './lib/store.js';
+import { loadSettings, saveSettings, gridOverride, setGridOverride } from './lib/store.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -77,7 +77,17 @@ function buildDeck(i) {
       ${LOOPS.map(([b, l]) => `<button class="btn loopbtn" data-bars="${b}" title="${b} Takt(e)">${l}</button>`).join('')}
       <button class="btn loopbtn exit" title="Loop verlassen">Exit</button>
     </div>
-    <div class="pads" title="Hot Cues: Klick springt im Takt · leeres Pad setzt einen Cue · Rechtsklick löscht"></div>`;
+    <div class="pads" title="Hot Cues: Klick springt im Takt · leeres Pad setzt einen Cue · Rechtsklick löscht"></div>
+    <div class="gridtools">
+      <span class="lbl">Beatgrid</span>
+      <span class="gridconf"></span>
+      <button class="btn small" data-grid="left" title="Grid 5 ms früher">◀</button>
+      <button class="btn small" data-grid="right" title="Grid 5 ms später">▶</button>
+      <button class="btn small" data-grid="one" title="Aktueller Beat ist die „1“ (Taktanfang)">1 hier</button>
+      <button class="btn small" data-grid="half" title="Halbes Tempo">÷2</button>
+      <button class="btn small" data-grid="double" title="Doppeltes Tempo">×2</button>
+      <button class="btn small" data-grid="reset" title="Automatisches Grid wiederherstellen">Auto</button>
+    </div>`;
   const ui = {
     root,
     title: $('.t', root),
@@ -93,8 +103,10 @@ function buildDeck(i) {
     wave: new DeckWaveform($('.wave', root), COLORS[i]),
     overview: $('.overview', root),
     pads: $('.pads', root),
+    gridconf: $('.gridconf', root),
     lastTrack: undefined,
   };
+  root.querySelectorAll('[data-grid]').forEach((btn) => (btn.onclick = () => editGrid(i, btn.dataset.grid)));
   for (let slot = 0; slot < 8; slot++) {
     const pad = document.createElement('button');
     pad.className = 'pad free';
@@ -184,6 +196,34 @@ function planMarks(i) {
   return null;
 }
 
+/** Beatgrid von Hand korrigieren und den Track mit der Korrektur neu analysieren. */
+async function editGrid(i, action) {
+  const d = engine.decks[i];
+  const t = d.track;
+  if (!t) return;
+  const a = t.analysis;
+  const ov = { ...(gridOverride(t.path) || {}) };
+  if (action === 'left') ov.shiftSec = (ov.shiftSec || 0) - 0.005;
+  else if (action === 'right') ov.shiftSec = (ov.shiftSec || 0) + 0.005;
+  else if (action === 'double') ov.bpmFactor = (ov.bpmFactor || 1) * 2;
+  else if (action === 'half') ov.bpmFactor = (ov.bpmFactor || 1) / 2;
+  else if (action === 'one') {
+    const sec = d.realAt(engine.now - (engine.ctx.outputLatency || 0)) / engine.sr;
+    const k = Math.round((sec - a.firstBeat) / a.beatInterval);
+    ov.downbeatSec = a.firstBeat + k * a.beatInterval;
+  }
+  const next = action === 'reset' ? null : ov;
+  setGridOverride(t.path, next);
+  toast('Beatgrid wird neu berechnet …');
+  try {
+    const fresh = await analysis.analyzeOne(t, next);
+    conductor.updateAnalysis(t.id, fresh.analysis);
+    toast(`Beatgrid aktualisiert: ${fresh.analysis.bpm.toFixed(2)} BPM`);
+  } catch (err) {
+    toast(`Neuberechnung fehlgeschlagen: ${err.message || err}`);
+  }
+}
+
 function renderPads(i) {
   const ui = decksUi[i];
   const track = engine.decks[i].track;
@@ -209,6 +249,15 @@ function updateDeck(i, now) {
     ui.lastTrack = track;
     ui.title.textContent = track ? track.title : 'Leer';
     keyChip(ui.key, track?.analysis.key.camelot);
+    renderPads(i);
+    ui.gridAnalysis = null;
+  }
+  if (track && ui.gridAnalysis !== track.analysis) {
+    ui.gridAnalysis = track.analysis;
+    const c = track.analysis.gridConfidence ?? 1;
+    ui.gridconf.textContent = `${Math.round(c * 100)} %${track.analysis.gridOverride ? ' · manuell' : ''}`;
+    ui.gridconf.className = `gridconf ${c < 0.5 ? 'warn' : ''}`;
+    ui.gridconf.title = c < 0.5 ? 'Tempo schwankt oder Beats sind unklar – Übergänge werden kurz gehalten. Grid ggf. von Hand korrigieren.' : 'Zuverlässigkeit des Beatgrids';
     renderPads(i);
   }
   const loading = conductor.loading[i];
