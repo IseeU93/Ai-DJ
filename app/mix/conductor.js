@@ -192,6 +192,83 @@ export class Conductor extends EventTarget {
     return true;
   }
 
+  // ------------------------------------------------------------------ Bibliothek
+
+  /** Tracks aus einem anderen Ordner bekannt machen (ohne die Queue zu ändern). */
+  addTracks(list) {
+    let added = false;
+    for (const t of list) {
+      if (!this.tracks.has(t.id)) {
+        this.tracks.set(t.id, t);
+        added = true;
+      }
+      const known = this.tracks.get(t.id);
+      known.genreAuto = detectGenre(known.analysis);
+      known.genreManual = this.resolveGenre?.(known) || null;
+      known.genre = known.genreManual || known.genreAuto;
+    }
+    if (added) assignEnergy([...this.tracks.values()]);
+    return list.map((t) => this.tracks.get(t.id));
+  }
+
+  /** Als Nächstes spielen (Hot-Queue). */
+  queueNext(track) {
+    const [t] = this.addTracks([track]);
+    const i = this.queue.indexOf(t.id);
+    if (i >= 0 && i < this.editableFrom) return;
+    if (i >= 0) this.queue.splice(i, 1);
+    this.removed = this.removed.filter((x) => x !== t.id);
+    this.queue.splice(this.editableFrom, 0, t.id);
+    this.invalidatePlan();
+    this.emit('queue');
+  }
+
+  /** Hinten an die Queue anhängen. */
+  queueAppend(track) {
+    const [t] = this.addTracks([track]);
+    if (this.queue.includes(t.id)) return;
+    this.removed = this.removed.filter((x) => x !== t.id);
+    this.queue.push(t.id);
+    this.invalidatePlan();
+    this.emit('queue');
+  }
+
+  /**
+   * Nach dem aktuellen Track mit einer anderen Playlist weitermachen (KI-sortiert).
+   * startTrack optional: dieser Track kommt als Nächstes.
+   */
+  switchPlaylist(list, startTrack = null) {
+    const tracks = this.addTracks(list);
+    const keep = this.queue.slice(0, this.editableFrom);
+    const fixed = keep.map((id) => this.track(id));
+    if (startTrack) {
+      const [s] = this.addTracks([startTrack]);
+      if (!keep.includes(s.id)) fixed.push(s);
+    }
+    const pool = tracks.filter((t) => !fixed.includes(t));
+    this.queue = buildSetOrder([...fixed, ...pool], fixed).map((t) => t.id);
+    this.removed = [];
+    this.invalidatePlan();
+    this.emit('queue');
+  }
+
+  /**
+   * Track als Nächstes einmixen – nicht hektisch: der Planer sucht innerhalb der nächsten
+   * ~32 Takte die beste Stelle (mit Teaser und vollem Übergang), statt sofort zu schneiden.
+   */
+  mixSoon(track, playlist = null) {
+    if (playlist) this.switchPlaylist(playlist, track);
+    else this.queueNext(track);
+    if (!this.masterDeck.status.playing) {
+      this.start();
+      return;
+    }
+    if (this.plan?.committed) return; // läuft schon ein Übergang: danach geht es weiter
+    this.soonWindow = true;
+    this.plan = null;
+    this.emit('plan');
+  }
+
   /** Track aus der Queue sofort reinmixen. */
   mixInto(index) {
     if (index < this.editableFrom) return;
@@ -378,6 +455,7 @@ export class Conductor extends EventTarget {
     const leadBars = 2 + (LEAD_SECONDS * rate) / barTrackSec; // Platz für Schritte vor T0
 
     const instant = this.forceSoon;
+    const soon = !instant && this.soonWindow;
     const opts = {
       out,
       inc,
@@ -387,7 +465,8 @@ export class Conductor extends EventTarget {
       flavorHistory: this.flavorHistory || [],
       outKeyShift: md.keyShift || 0,
       wordplay: this.wordplayFor(out, inc),
-      earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : null,
+      earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : soon ? nowBar + leadBars + 1 : null,
+      latestBar: soon ? nowBar + leadBars + 32 : null,
       instant,
     };
     let plan = planTransition(opts);
@@ -484,6 +563,7 @@ export class Conductor extends EventTarget {
     this.decks[p.outDeck].setNow('fader', 0);
     this.plan = null;
     this.forceSoon = false;
+    this.soonWindow = false;
     if (this.autopilot) {
       this.recycleIfNeeded();
       this.reorderAI();

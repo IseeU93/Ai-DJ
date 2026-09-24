@@ -49,8 +49,11 @@ export function combineProfiles(gOut, gIn) {
   for (const k of new Set([...Object.keys(a.styles), ...Object.keys(b.styles)])) {
     styles[k] = ((a.styles[k] ?? 0) + (b.styles[k] ?? 0)) / 2;
   }
-  // Richtungswechsel (z. B. Pop -> Hardstyle): lieber klarer, kurzer Wechsel
-  if (gOut !== gIn) styles.cut = (styles.cut ?? 0) + 0.15;
+  // Richtungswechsel (z. B. Pop -> Hardstyle): weich per Filter überleiten statt hart schneiden
+  if (gOut !== gIn) {
+    styles.filter = (styles.filter ?? 0) + 0.3;
+    styles.cut = (styles.cut ?? 0) - 0.2;
+  }
   return {
     lengths: [32, 16, 8, 4].filter((x) => x <= maxL && x >= Math.min(maxL, Math.max(Math.min(...a.lengths), Math.min(...b.lengths)))),
     swap: Math.max(a.swap, b.swap),

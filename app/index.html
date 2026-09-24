@@ -10,6 +10,7 @@
   <div class="app">
     <header class="topbar">
       <span class="brand">Automix</span>
+      <button class="btn" id="btn-library" title="Bibliothek: Ordner durchstöbern, Tracks einreihen oder sofort reinmixen – ohne die laufende Musik zu ändern">Bibliothek</button>
       <button class="btn" id="btn-folder" title="Oberordner wählen – Unterordner erscheinen als Playlists">Ordner wählen</button>
       <span class="folder" id="folder">Kein Ordner geladen</span>
       <select class="sel" id="playlist" title="Unterordner als Playlist" hidden></select>
@@ -69,6 +70,25 @@
         <button class="btn" id="btn-mixnow">Jetzt mixen</button>
       </div>
     </section>
+
+    <div class="libwin" id="libwin" hidden>
+      <div class="libwin-head">
+        <b>Bibliothek</b>
+        <span class="folder" id="lib-root"></span>
+        <button class="btn small" id="lib-open">Anderer Ordner …</button>
+        <div class="spacer"></div>
+        <button class="btn small" id="lib-take" title="Nach dem aktuellen Track mit dieser Playlist weitermachen (KI-sortiert)">Playlist übernehmen</button>
+        <button class="btn small" id="lib-close" title="Schließen">×</button>
+      </div>
+      <div class="libwin-body">
+        <div class="lib-folders" id="lib-folders"></div>
+        <div class="lib-tracks">
+          <div class="lib-status" id="lib-status"></div>
+          <input class="lib-search" id="lib-search" placeholder="Suchen …" />
+          <div id="lib-list"></div>
+        </div>
+      </div>
+    </div>
 
     <section class="queue">
       <div class="queue-head">
