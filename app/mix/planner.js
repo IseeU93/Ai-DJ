@@ -496,7 +496,15 @@ function composeBlend(ctx) {
   // in umgekehrter Reihenfolge ab. Lautstärke- und EQ-Fahrten laufen in weichen Kurven.
   steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'mid', clash ? -12 : -8), p(0, 'in', 'high', -12));
   steps.push(act(0, 'in', 'play'));
-  steps.push(p(0, 'in', 'fader', inDrums > 0.4 ? 0.75 : 0.85, Math.max(1, q)));
+  // Lautstärke angleichen: leises Intro unter lautem Outro nicht untergehen lassen, lautes Intro
+  // nicht hineinplatzen lassen (Energie-Werte sind schon lautheitsnormiert)
+  const eOut = va.mean(va.energy, outBarAt(ctx, 0), outBarAt(ctx, 0) + Math.max(1, L / 2));
+  const eIn = vb.mean(vb.energy, ctx.inBar, ctx.inBar + Math.max(1, (L * m) / 2));
+  const levelDiff = Math.max(-9, Math.min(9, eOut - eIn));
+  const base = inDrums > 0.4 ? 0.75 : 0.85;
+  const inTarget = Math.max(0.4, Math.min(1, base * 10 ** (levelDiff / 20)));
+  if (Math.abs(levelDiff) >= 3) ctx.notes.push(`Einblend-Pegel angeglichen (neues Intro ${levelDiff > 0 ? 'leiser' : 'lauter'} als das alte Outro)`);
+  steps.push(p(0, 'in', 'fader', inTarget, Math.max(1, q)));
   steps.push(p(q * 0.5, 'in', 'high', -2, q));
   steps.push(p(q, 'out', 'high', -4, q));
   const midStart = Math.max(q * 1.5, sw - q);
@@ -880,6 +888,10 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   // auseinanderlaufen -> kurz halten oder ohne Beatmatch per Echo wechseln.
   const conf = Math.min(a.gridConfidence ?? 1, b.gridConfidence ?? 1);
   ctx.maxL = Math.min(ctx.maxL, conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32);
+  // Starke Tempo-Anpassung: Keylock arbeitet hörbarer -> Überlappung kürzer halten
+  const stretch = Math.abs((ctx.m * masterBpm) / b.bpm - 1);
+  if (stretch > 0.06) ctx.maxL = Math.min(ctx.maxL, 8);
+  else if (stretch > 0.04) ctx.maxL = Math.min(ctx.maxL, 16);
   if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
@@ -913,7 +925,8 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   }
   const inRate = beatmatch ? (ctx.m * masterBpm) / b.bpm : 1;
   if (beatmatch && Math.abs(inRate - 1) > 0.001) {
-    steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: 16 }));
+    // danach unmerklich zurück aufs Originaltempo (länger bei größerer Abweichung)
+    steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: Math.abs(inRate - 1) > 0.03 ? 32 : 16 }));
   }
   if (!instant && TEASE_STYLES.has(chosen)) steps = addTeaser(ctx, steps);
   const cleaned = instant ? steps.filter((s) => s.at >= 0) : steps;

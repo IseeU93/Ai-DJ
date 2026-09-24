@@ -418,3 +418,16 @@ test('Nie im Build-up mixen – weder im alten noch über den Build-up des neuen
     }
   }
 });
+
+test('Einblend-Pegel folgt der Lautheit: leises Intro unter lautem Outro wird lauter eingeblendet', () => {
+  const loudOutro = [{ bars: 16, kick: true }, { bars: 32, kick: true, bass: true, pad: true }, { bars: 16, kick: true, bass: true, pad: true, snare: true }];
+  const quietIntro = [{ bars: 16, pad: true }, { bars: 32, kick: true, bass: true, pad: true }, { bars: 16, kick: true }];
+  const plan = planTransition({ out: trackWith('lo2', 128, loudOutro), inc: trackWith('qi', 128, quietIntro), type: 'blend' });
+  const fadeIn = plan.steps.find((s) => s.deck === 'in' && s.param === 'fader' && s.dur && s.to > 0.3);
+  assert.ok(fadeIn.to >= 0.85, `Einblend-Pegel ${fadeIn.to}`);
+});
+
+test('Starke Tempo-Anpassung hält die Überlappung kurz', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('d', 120), type: 'blend' });
+  assert.ok(plan.bars <= 8, `bars ${plan.bars}`);
+});
