@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 10;
+export const ANALYSIS_VERSION = 11;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -142,8 +142,10 @@ function resolveHalfBeat(lowEnv, P, phase) {
   return b > a * 1.25 ? phase + P / 2 : phase;
 }
 
+const BPM_MAX = 300; // Uptempo/Terror geht bis ~300
+
 function estimateTempo(env, fr) {
-  const minLag = Math.floor((fr * 60) / 210);
+  const minLag = Math.floor((fr * 60) / BPM_MAX);
   const maxLag = Math.ceil((fr * 60) / 60);
   const n = env.length;
   const acf = new Float64Array(maxLag * 2 + 2);
@@ -173,6 +175,21 @@ function estimateTempo(env, fr) {
   while (bpm < 78) bpm *= 2;
   while (bpm >= 185) bpm /= 2;
   return bpm;
+}
+
+/**
+ * Doppeltes Tempo? Bei Uptempo/Hardcore (200–300 BPM) landet die Autokorrelation gern auf der halben
+ * Geschwindigkeit. Verräterisch: dann sitzt auf jedem "Offbeat" eine genauso kräftige Bassdrum wie
+ * auf dem Beat. Bei normalem 4/4 ist dort höchstens eine Hi-Hat, im Bassband also fast nichts.
+ */
+function offbeatKickRatio(lowEnv, P, phase) {
+  const score = (ph) => {
+    let s = 0;
+    for (let t = ph; t < lowEnv.length; t += P) s += Math.max(interp(lowEnv, t - 1), interp(lowEnv, t), interp(lowEnv, t + 1));
+    return s;
+  };
+  const on = score(phase);
+  return on > 0 ? score(phase + P / 2) / on : 0;
 }
 
 function interp(env, t) {
@@ -413,7 +430,7 @@ function refinePhase(sig, sr, firstBeat, beatInterval, duration) {
 }
 
 /**
- * @param override optional { bpmFactor, shiftSec, downbeatSec } – manuelle Grid-Korrektur
+ * @param override optional { bpmFactor, shiftSec, downbeatSec, bpm (getappt), bpmMin (Uptempo-Playlist) }
  */
 export function analyzeTrack(L, R, sr, override = null) {
   const n = L.length;
@@ -427,10 +444,16 @@ export function analyzeTrack(L, R, sr, override = null) {
 
   // --- Beatgrid
   const { env, low, fr } = onsetEnvelope(mid, sr);
-  const bpmCoarse = estimateTempo(env, fr);
-  const grid = fitGrid(env, fr, bpmCoarse);
+  // Tempo: getappt > geschätzt; Uptempo-Playlists falten ins Uptempo-Tempo
+  let bpmCoarse = override?.bpm > 0 ? override.bpm : estimateTempo(env, fr);
+  if (override?.bpmMin > 0 && !(override?.bpm > 0)) while (bpmCoarse < override.bpmMin && bpmCoarse * 2 <= BPM_MAX) bpmCoarse *= 2;
+  let grid = fitGrid(env, fr, bpmCoarse);
+  let phase = resolveHalfBeat(low, grid.P, grid.phase);
+  if (!(override?.bpm > 0) && (60 * fr) / grid.P * 2 <= BPM_MAX && offbeatKickRatio(low, grid.P, phase) >= 0.8) {
+    grid = fitGrid(env, fr, ((60 * fr) / grid.P) * 2);
+    phase = resolveHalfBeat(low, grid.P, grid.phase);
+  }
   const P = grid.P;
-  const phase = resolveHalfBeat(low, P, grid.phase);
   let beatInterval = (P * ONSET_HOP) / sr;
   if (override?.bpmFactor) beatInterval /= override.bpmFactor;
   const bpm = 60 / beatInterval;

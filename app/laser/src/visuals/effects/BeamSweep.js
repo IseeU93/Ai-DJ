@@ -55,7 +55,9 @@ export class BeamSweep {
 
     const colors = getPaletteColors(palette, customColor);
     const beatsPerSecond = (Number(bpm) > 0 ? bpm : 128) / 60;
-    const rushBase = clamp(bs.speed ?? 1, 0.2, 3);
+    const rushBase = clamp(bs.speed ?? 1, 0.2, 10);
+    // Über 3 = "harter" Modus für Hardstyle/Uptempo-Kicks: der Balken peitscht in ~2 Schlägen
+    // über den ganzen Schirm. Bis 3 bleibt alles wie bisher (ruhiger Scanner).
 
     // ── Beat-Synchronisation: ein Durchlauf startet auf dem Beat -
     // aber jetzt mit Spawn-Gate. Ein Durchlauf braucht (durch das
@@ -65,12 +67,12 @@ export class BeamSweep {
     // wie ein ruhiger Scanner zu wirken. Deshalb: solange schon
     // maxConcurrent Durchläufe unterwegs sind, wird kein neuer
     // gestartet (kein Abschneiden - reine Spawn-Bremse).
-    const maxConcurrent = 2;
+    const maxConcurrent = rushBase > 3 ? 3 : 2;
     if (isBeat) {
       if (this._sweeps.length < maxConcurrent) this._spawnSweep(colors, W, H, bs);
       this._spawnAcc = 0;
     } else {
-      this._spawnAcc += dt * beatsPerSecond * rushBase * 0.4;
+      this._spawnAcc += dt * beatsPerSecond * Math.min(rushBase, 3) * 0.4;
       if (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
         if (this._sweeps.length < maxConcurrent) this._spawnSweep(colors, W, H, bs);
@@ -81,7 +83,8 @@ export class BeamSweep {
     // Sprint über den ganzen Bildschirm) und jetzt am echten Takt
     // orientiert statt an einer festen Basisgeschwindigkeit - soll
     // sich "wie ein Scanner" bewegen, nicht wie ein Warp-Sprung.
-    const speedPxPerSec = Math.hypot(W, H) * beatsPerSecond * (0.045 + rushBase * 0.045);
+    const perBeat = rushBase <= 3 ? 0.045 + rushBase * 0.045 : 0.18 + (rushBase - 3) * 0.06;
+    const speedPxPerSec = Math.hypot(W, H) * beatsPerSecond * perBeat;
     const thickness = clamp(bs.thickness ?? 2, 0.5, 6) * (config.thicknessMul || 1);
     const halfLen = Math.hypot(W, H); // lang genug für jede Orientierung
 

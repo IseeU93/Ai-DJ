@@ -12,7 +12,7 @@ function rng(seed) {
  * sections: [{bars, kick, bass, pad, vocal}]; Akkordwechsel auf jedem Downbeat.
  * Liefert {L, R, sr, firstBeat, bpm}.
  */
-export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sections, seed = 1, staticChord = false, jitter = 0 }) {
+export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sections, seed = 1, staticChord = false, jitter = 0, offbeatBass = false }) {
   const beat = 60 / bpm;
   const totalBars = sections.reduce((a, s) => a + s.bars, 0);
   const n = Math.ceil((offset + totalBars * 4 * beat + 1) * sr);
@@ -29,6 +29,17 @@ export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sec
       for (let k = 0; k < 4; k++) {
         const t0 = offset + (bar * 4 + k) * beat + (jitter ? noise() * 2 * jitter : 0);
         const i0 = Math.round(t0 * sr);
+        if (offbeatBass && sec.kick) {
+          // House-typischer Offbeat-Bass: kurzer tiefer Stoß zwischen den Kicks
+          const j0 = i0 + Math.round((beat / 2) * sr);
+          const len = Math.round(0.12 * sr);
+          for (let i = 0; i < len && j0 + i < n; i++) {
+            const tt = i / sr;
+            const v = 0.45 * Math.exp(-tt * 18) * Math.sin(2 * Math.PI * 55 * tt) * Math.min(1, i / 40);
+            L[j0 + i] += v;
+            R[j0 + i] += v;
+          }
+        }
         if (sec.kick) {
           const len = Math.round(0.14 * sr);
           for (let i = 0; i < len && i0 + i < n; i++) {

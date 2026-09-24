@@ -65,6 +65,7 @@ function buildDeck(i) {
       <span class="deck-id">${NAMES[i]}</span>
       <div class="deck-title"><div class="t">Leer</div><div class="a deck-state"></div></div>
       <span class="key">–</span>
+      <button class="btn small tap" title="Tempo tappen: mind. 4× im Takt klicken (oder Taste T/Z für Deck A/B). Korrigiert das Beatgrid dieses Tracks.">Tap</button>
       <div class="stat"><b class="bpm">–</b><small class="rate">&nbsp;</small></div>
       <div class="stat" style="min-width:64px"><b class="remain">–:––</b><small class="elapsed">&nbsp;</small></div>
     </div>
@@ -110,6 +111,7 @@ function buildDeck(i) {
     lastTrack: undefined,
   };
   root.querySelectorAll('[data-grid]').forEach((btn) => (btn.onclick = () => editGrid(i, btn.dataset.grid)));
+  $('.tap', root).onclick = () => tapTempo(i);
   for (let slot = 0; slot < 8; slot++) {
     const pad = document.createElement('button');
     pad.className = 'pad free';
@@ -200,7 +202,7 @@ function planMarks(i) {
 }
 
 /** Beatgrid von Hand korrigieren und den Track mit der Korrektur neu analysieren. */
-async function editGrid(i, action) {
+async function editGrid(i, action, value = null) {
   const d = engine.decks[i];
   const t = d.track;
   if (!t) return;
@@ -208,8 +210,12 @@ async function editGrid(i, action) {
   const ov = { ...(gridOverride(t.path) || {}) };
   if (action === 'left') ov.shiftSec = (ov.shiftSec || 0) - 0.005;
   else if (action === 'right') ov.shiftSec = (ov.shiftSec || 0) + 0.005;
-  else if (action === 'double') ov.bpmFactor = (ov.bpmFactor || 1) * 2;
-  else if (action === 'half') ov.bpmFactor = (ov.bpmFactor || 1) / 2;
+  else if (action === 'double') ov.bpm > 0 ? (ov.bpm *= 2) : (ov.bpmFactor = (ov.bpmFactor || 1) * 2);
+  else if (action === 'half') ov.bpm > 0 ? (ov.bpm /= 2) : (ov.bpmFactor = (ov.bpmFactor || 1) / 2);
+  else if (action === 'tap') {
+    ov.bpm = value;
+    delete ov.bpmFactor;
+  }
   else if (action === 'one') {
     const sec = d.realAt(engine.now - (engine.ctx.outputLatency || 0)) / engine.sr;
     const k = Math.round((sec - a.firstBeat) / a.beatInterval);
@@ -225,6 +231,38 @@ async function editGrid(i, action) {
   } catch (err) {
     toast(`Neuberechnung fehlgeschlagen: ${err.message || err}`);
   }
+}
+
+// Tap-Tempo pro Deck: Abstände der letzten Klicks mitteln, nach kurzer Pause übernehmen
+const taps = [[], []];
+const tapTimers = [0, 0];
+function tapTempo(i) {
+  const d = engine.decks[i];
+  if (!d.track) return;
+  const now = performance.now();
+  const list = taps[i];
+  if (list.length && now - list[list.length - 1] > 2000) list.length = 0;
+  list.push(now);
+  if (list.length > 16) list.shift();
+  clearTimeout(tapTimers[i]);
+  if (list.length < 4) {
+    tapTimers[i] = setTimeout(() => {
+      list.length = 0;
+      $('.tap', decksUi[i].root).textContent = 'Tap';
+    }, 2000);
+    $('.tap', decksUi[i].root).textContent = `${list.length}/4`;
+    return;
+  }
+  const gaps = list.slice(1).map((t, k) => t - list[k]).sort((a, b) => a - b);
+  const gap = gaps[Math.floor(gaps.length / 2)];
+  const heard = 60000 / gap; // so schnell wie es gerade klingt
+  const bpm = heard / (d.status.rate || 1); // Tempo des Tracks selbst
+  $('.tap', decksUi[i].root).textContent = heard.toFixed(1);
+  tapTimers[i] = setTimeout(() => {
+    list.length = 0;
+    $('.tap', decksUi[i].root).textContent = 'Tap';
+    if (bpm >= 40 && bpm <= 320) editGrid(i, 'tap', bpm);
+  }, 1500);
 }
 
 function renderPads(i) {
@@ -461,6 +499,7 @@ function renderQueue() {
     gsel.onchange = () => {
       setGenreOverride(t.path, gsel.value === 'auto' ? null : gsel.value);
       conductor.applyGenres(resolveGenre);
+      refreshUptempo();
     };
     $('.genre', row).appendChild(gsel);
 
@@ -567,6 +606,25 @@ const playlistKey = () => `${folderRoot}|${currentPlaylist}`;
 function resolveGenre(t) {
   const all = genreOverrides();
   return all[t.path] || all[playlistKey()] || null;
+}
+
+// Uptempo gesetzt (Track oder ganze Playlist) heißt: das Tempo liegt sicher im Uptempo-Bereich.
+// Nur dort – bei anderen Richtungen kann ein Track durchaus halb so schnell sein.
+analysis.hintFor = (f) => (resolveGenre(f) === 'uptempo' ? { bpmMin: 170 } : null);
+
+/** Nach Genre-Änderung: Tracks mit falsch halbiertem Uptempo-Tempo neu analysieren. */
+async function refreshUptempo() {
+  const todo = [...conductor.tracks.values()].filter((t) => t.analysis && resolveGenre(t) === 'uptempo' && t.analysis.bpm < 170);
+  if (!todo.length) return;
+  toast(`Uptempo: ${todo.length} Track(s) werden mit Uptempo-Tempo neu analysiert …`);
+  for (const t of todo) {
+    try {
+      const fresh = await analysis.analyzeOne(t);
+      conductor.updateAnalysis(t.id, fresh.analysis);
+    } catch (err) {
+      console.error(err);
+    }
+  }
 }
 
 const ROOT_PLAYLIST = '__root__';
@@ -816,6 +874,7 @@ async function boot() {
   pg.onchange = () => {
     setGenreOverride(playlistKey(), pg.value === 'auto' ? null : pg.value);
     conductor.applyGenres(resolveGenre);
+    refreshUptempo();
   };
   $('#btn-folder').onclick = async () => {
     const path = await pickFolder();
@@ -857,6 +916,10 @@ async function boot() {
 
   document.addEventListener('pointerdown', () => engine.resume());
   document.addEventListener('keydown', (e) => {
+    if ((e.key === 't' || e.key === 'z') && !(e.target instanceof HTMLSelectElement) && !(e.target instanceof HTMLInputElement)) {
+      tapTempo(e.key === 't' ? 0 : 1);
+      return;
+    }
     if (e.code === 'Space' && !(e.target instanceof HTMLSelectElement) && !(e.target instanceof HTMLInputElement)) {
       e.preventDefault();
       conductor.togglePlay(conductor.master);

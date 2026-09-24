@@ -51,6 +51,7 @@ export class AnalysisService {
   constructor() {
     const cores = navigator.hardwareConcurrency || 4;
     this.pool = new WorkerPool(Math.max(1, Math.min(3, cores - 1)));
+    this.hintFor = null; // (file) => Zusatz-Hinweis für die Analyse, z.B. { bpmMin } bei Uptempo-Playlists
   }
 
   /**
@@ -81,6 +82,8 @@ export class AnalysisService {
   }
 
   async analyzeOne(file, override = gridOverride(file.path)) {
+    const hint = this.hintFor?.(file);
+    if (hint && !(override?.bpm > 0)) override = { ...hint, ...(override || {}) };
     const key = cacheKey(file, override);
     const cached = await cacheGet(key);
     if (cached) return { ...file, id: file.path, ...cached };

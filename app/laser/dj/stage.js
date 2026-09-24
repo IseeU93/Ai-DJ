@@ -19,6 +19,9 @@ import { AutoPunctuation } from '../src/show/AutoPunctuation.js';
 import { insightAt, boundariesBetween, keyPalette, GENRE_ESCALATION } from './insight.js';
 
 const STORE = 'automix.laser';
+const SLOW = new Set(['liquidSky', 'snake', 'lissajous', 'waveform']);
+const AGGRESSIVE = new Set(['chaosBlades', 'hotBeams', 'spiral', 'scanner']);
+const UPTEMPO_CALM = ['tunnel', 'lsdTunnel', 'spiral', 'hotBeams'];
 const LOW_KILLED = -15; // dB: Bass dieses Decks ist rausgedreht -> der andere trägt den Groove
 
 /** Die Analyse-Pipeline der Lasershow, aber an einem vorhandenen Knoten statt an einem Mikrofon. */
@@ -403,6 +406,7 @@ export class LaserStage extends EventTarget {
     cfg._overlayEffects = d.overlayEffects || (d.overlayEffect ? [d.overlayEffect] : []);
     cfg._overlayOpacity = d.overlayOpacity;
     cfg._aggression = d.aggression;
+    this.hardPassage(cfg, d, data, st);
     // Tonart-Farben: Grundfarbe aus der Tonart des Tracks, pro Phrase eine Nuance weiter. Im Drop
     // behält der Choreograph seine Kontrastfarben (Weiß/Regenbogen), damit der Drop knallt.
     const pal = this.settings.keyColors && st ? keyPalette(st.track.analysis.key) : null;
@@ -417,6 +421,51 @@ export class LaserStage extends EventTarget {
       this.sig = sig;
       this.appliedAt = now;
       this.apply();
+    }
+  }
+
+  /**
+   * Harte Passagen (Hardstyle/Uptempo-Kicks, knallende Drops): der aggressive Balken (Beam Sweep)
+   * übernimmt und peitscht im Takt über den Schirm. Langsame, schwebende Effekte (Liquid Sky,
+   * Snake, Lissajous, Wellenform) passen zu harten Kicks nicht und fliegen raus – bei Uptempo auch
+   * außerhalb der Drops.
+   */
+  hardPassage(cfg, d, data, st) {
+    const genre = st?.track.genre;
+    const hardGenre = genre === 'uptempo' || genre === 'hardstyle';
+    const ins = st?.ins;
+    const kicks = (ins?.drums ?? 0) >= 0.5 || (data.energy?.kickDensity ?? 0) > 0.12;
+    const loud = ins ? ins.phase === 'drop' || (hardGenre && ins.phase === 'verse') : data.energy?.phase === 'drop';
+    const hard = loud && kicks && (hardGenre || (ins?.level ?? data.energy?.level ?? 0) > 0.8);
+    const bs = cfg.beamSweep;
+    if (hard) {
+      if (d.primaryEffect !== 'beamSweep' && AGGRESSIVE.has(d.primaryEffect) && !cfg._overlayEffects.includes(d.primaryEffect)) {
+        cfg._overlayEffects = [d.primaryEffect, ...cfg._overlayEffects].slice(0, 2); // wilde Wahl als Zusatz behalten
+      }
+      cfg._overlayEffects = cfg._overlayEffects.filter((e) => e !== 'beamSweep' && !SLOW.has(e));
+      cfg._overlayEffect = cfg._overlayEffects[0] || null;
+      cfg.effect = 'beamSweep';
+      bs.speed = genre === 'uptempo' ? 9 : hardGenre ? 7 : 5;
+      bs.count = genre === 'uptempo' ? 2 : 1;
+      bs.thickness = 3;
+      bs.orientation = 'auto';
+      cfg.speed = Math.max(cfg.speed, genre === 'uptempo' ? 1.8 : 1.4);
+      cfg.trailLength = Math.min(cfg.trailLength, 0.15);
+      this.hard = true;
+      return;
+    }
+    if (this.hard) {
+      bs.speed = DEFAULT_CONFIG.beamSweep.speed;
+      bs.count = DEFAULT_CONFIG.beamSweep.count;
+      bs.thickness = DEFAULT_CONFIG.beamSweep.thickness;
+      this.hard = false;
+    }
+    if (genre === 'uptempo') {
+      // auch in ruhigeren Teilen: nichts Schwebendes, dafür schneller
+      if (SLOW.has(cfg.effect)) cfg.effect = UPTEMPO_CALM[Math.max(0, ins?.phraseIndex ?? 0) % UPTEMPO_CALM.length];
+      cfg._overlayEffects = cfg._overlayEffects.filter((e) => !SLOW.has(e));
+      cfg._overlayEffect = cfg._overlayEffects[0] || null;
+      cfg.speed = Math.max(cfg.speed, 1.4);
     }
   }
 
