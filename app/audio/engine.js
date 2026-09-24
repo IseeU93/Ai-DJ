@@ -107,6 +107,10 @@ export class Deck {
       outputChannelCount: [2],
     });
     this.node.port.onmessage = (e) => this.onMessage(e.data);
+    // Keylock standardmäßig aus: Tempo-Anpassungen klingen wie am Plattenspieler (minimal höher/
+    // tiefer, aber natürlich). Mit Keylock arbeitet der Time-Stretch hörbar und Key-Sync verschiebt
+    // Stimmen um Halbtöne – das klang bei manchen Songs zu tief.
+    this.setKeylock(false);
 
     this.trim = ctx.createGain();
     this.low = ctx.createBiquadFilter();

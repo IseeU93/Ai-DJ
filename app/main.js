@@ -75,7 +75,7 @@ function buildDeck(i) {
       <button class="btn transport play" title="Play / Pause">${ICON_PLAY}</button>
       <button class="btn cue" title="Zurück zum ersten Takt">Cue</button>
       <button class="btn sync" title="Tempo und Takt an das andere Deck angleichen">Sync</button>
-      <button class="btn toggle keylock on" title="Tonhöhe bei Tempoänderung halten">Keylock</button>
+      <button class="btn toggle keylock" title="Tonhöhe bei Tempoänderung halten (Standard aus: Tempo-Anpassung klingt wie am Plattenspieler; an = Key-Sync möglich)">Keylock</button>
       <span class="sep"></span>
       <span class="lbl">Loop</span>
       ${LOOPS.map(([b, l]) => `<button class="btn loopbtn" data-bars="${b}" title="${b} Takt(e)">${l}</button>`).join('')}

@@ -14,18 +14,24 @@ export const TRICKS = {
 
 const p = (at, param, to, dur = 0) => ({ at, param, to, dur });
 
-function build(kind) {
+function build(kind, intoMain = false) {
   switch (kind) {
     case 'echo':
-      return [p(-0.25, 'echo', 0.45, 0.05), p(0, 'echo', 0, 0.25)];
+      // Echo-Wurf: letzter Schlag wird ins Echo geworfen, der Track selbst taucht kurz ab – so hört
+      // man die Wiederholungen – und ist auf der Eins wieder voll da
+      return [p(-0.25, 'echo', 0.6, 0.03), p(-0.25, 'fader', 0.25, 0.05), p(0, 'fader', 1, 0.02), p(0, 'echo', 0, 0.5)];
     case 'sweep':
-      return [p(-2, 'filter', 0.35, 1.95), p(0, 'filter', 0)];
+      return intoMain
+        ? [p(-4, 'filter', 0.5, 3.95), p(0, 'filter', 0)]
+        : [p(-2, 'filter', 0.4, 1.95), p(0, 'filter', 0)];
     case 'bassCut':
-      return [p(-0.25, 'low', KILL), p(0, 'low', 0)];
+      // ein ganzer Takt ohne Bass, dann knallt er auf der Eins zurück
+      return [p(-1, 'low', KILL, 0.05), p(0, 'low', 0)];
     case 'repeat':
-      return [{ at: -0.5, action: 'loop', bars: 0.125, anchor: -0.5 }, { at: 0, action: 'unloop' }];
+      // Beat-Repeat, dezent: der vorletzte Schlag erklingt einfach zweimal (kein hektisches Stottern)
+      return [{ at: -0.5, action: 'loop', bars: 0.25, anchor: -0.5 }, { at: 0, action: 'unloop' }];
     case 'acapella':
-      return [p(-1, 'low', KILL, 0.25), p(-1, 'filter', 0.4, 0.25), p(0, 'low', 0), p(0, 'filter', 0)];
+      return [p(-1, 'low', KILL, 0.25), p(-1, 'filter', 0.45, 0.25), p(0, 'low', 0), p(0, 'filter', 0)];
     default:
       return null;
   }
@@ -49,7 +55,7 @@ export function planTrick(a, barNow, dice = Math.random(), last = null) {
     echo: 1,
     sweep: prev.label === 'main' || prev.label === 'build' ? 1 : 0.4,
     bassCut: intoMain ? 1.6 : next.label === 'main' ? 0.8 : 0.2,
-    repeat: (a.barDrums?.[next.bar - 1] ?? 0) > 0.4 ? (intoMain ? 1.4 : 0.8) : 0,
+    repeat: (a.barDrums?.[next.bar - 1] ?? 0) > 0.4 ? (intoMain ? 0.6 : 0.3) : 0,
     acapella: vocalEnd >= 0.5 ? 1.1 : 0,
   };
   if (last && w[last]) w[last] *= 0.2;
@@ -62,5 +68,5 @@ export function planTrick(a, barNow, dice = Math.random(), last = null) {
       break;
     }
   }
-  return { bar: next.bar, kind, name: TRICKS[kind], steps: build(kind) };
+  return { bar: next.bar, kind, name: TRICKS[kind], steps: build(kind, intoMain) };
 }

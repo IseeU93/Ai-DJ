@@ -352,7 +352,7 @@ test('Vocal-Übergabe: letzte Zeile des alten, dann erste Zeile des neuen', () =
   assert.ok(hand && outFade && Math.abs(hand.at - outFade.at) < 0.01, 'Übergabe nicht gleichzeitig');
 });
 
-test('Teaser: neuer Track startet einen Takt vorher leise, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
+test('Teaser: neuer Track startet zwei Takte vorher hörbar, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
   const longIntro = [
     { bars: 24, kick: true },
     { bars: 32, kick: true, bass: true, pad: true },
@@ -360,11 +360,11 @@ test('Teaser: neuer Track startet einen Takt vorher leise, ohne Bass und Gesang,
   ];
   const plan = planTransition({ out: track('a', 128), inc: trackWith('li', 127, longIntro), type: 'blend' });
   const play = plan.steps.find((s) => s.action === 'play');
-  assert.equal(play.at, -1);
-  assert.equal(play.barOffset, -plan.m);
+  assert.equal(play.at, -2);
+  assert.equal(play.barOffset, -2 * plan.m);
   const faders = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader');
   assert.ok(faders.every((s) => !(s.at === 0 && !s.dur && s.to === 0)), 'Fader fällt bei Takt 0 auf 0');
-  assert.ok(plan.steps.some((s) => s.at === -1 && s.param === 'low' && s.to < -20));
+  assert.ok(plan.steps.some((s) => s.at === -2 && s.param === 'low' && s.to < -20));
 });
 
 test('Langes ereignisloses Outro wird nicht komplett ausgespielt', () => {
@@ -382,7 +382,7 @@ test('Teaser ohne Vorlauf-Material: erster Takt wird leise angeteasert', () => {
   const plan = planTransition({ out: track('a', 128), inc: track('b', 127), type: 'blend' });
   if (plan.inBar - plan.m >= 0) return; // hier gibt es doch Vorlauf
   const f = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader' && s.dur);
-  assert.ok(f.some((s) => s.at === 0 && s.to <= 0.3), 'kein leiser erster Takt');
+  assert.ok(f.some((s) => s.at === 0 && s.to <= 0.45), 'kein leiser erster Takt');
 });
 
 test('Nie im Build-up mixen – weder im alten noch über den Build-up des neuen', () => {
@@ -423,7 +423,7 @@ test('Einblend-Pegel folgt der Lautheit: leises Intro unter lautem Outro wird la
   const loudOutro = [{ bars: 16, kick: true }, { bars: 32, kick: true, bass: true, pad: true }, { bars: 16, kick: true, bass: true, pad: true, snare: true }];
   const quietIntro = [{ bars: 16, pad: true }, { bars: 32, kick: true, bass: true, pad: true }, { bars: 16, kick: true }];
   const plan = planTransition({ out: trackWith('lo2', 128, loudOutro), inc: trackWith('qi', 128, quietIntro), type: 'blend' });
-  const fadeIn = plan.steps.find((s) => s.deck === 'in' && s.param === 'fader' && s.dur && s.to > 0.3);
+  const fadeIn = plan.steps.find((s) => s.deck === 'in' && s.param === 'fader' && s.dur && s.at >= 0 && s.to > 0.45);
   assert.ok(fadeIn.to >= 0.85, `Einblend-Pegel ${fadeIn.to}`);
 });
 
@@ -532,7 +532,8 @@ test('Freie Techniken: Mashup, Mashup andersrum, Loop-Roll liefern echte Pläne'
   }
   const roll = planTransition({ out, inc, type: 'roll' });
   const loops = roll.steps.filter((s) => s.action === 'loop').map((s) => s.bars);
-  assert.deepEqual(loops, [0.25, 0.125, 0.0625], 'Roll wird nicht schneller');
+  assert.deepEqual(loops, [0.25, 0.125, 0.0625, 0.03125], 'Roll wird nicht schneller');
+  assert.ok(roll.steps.filter((s) => s.action === 'loop').every((s) => s.anchor === 0), 'Roll springt zwischen Positionen');
   const mash = planTransition({ out, inc, type: 'mashup' });
   assert.ok(mash.steps.some((s) => s.deck === 'out' && s.param === 'low' && s.to <= -20), 'alter Beat nicht weggefiltert');
   assert.ok(mash.steps.some((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 1), 'neue Stimme nicht stumm');
@@ -561,4 +562,20 @@ test('Freestyle: Hin und her wechselt den Groove mehrmals, Tricks lösen sich au
     const last = t.steps[t.steps.length - 1];
     assert.equal(last.at, 0, 'Trick endet nicht auf der Eins');
   }
+});
+
+test('Ab "jetzt" geplant: Ausstieg am nächsten Phrasenende, nie mitten im Abschnitt', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const off = out.analysis.phraseOffset || 0;
+  const isPhrase = (bar) => (((bar - off) % 8) + 8) % 8 === 0;
+  for (const type of ['blend', 'cut', 'echo', 'filter']) {
+    const plan = planTransition({ out, inc, type, earliestBar: 21.3 });
+    const exit = type === 'cut' || type === 'echo' ? plan.outBar : plan.outBar;
+    assert.ok(exit >= 21.3, `${type}: vor "jetzt" (${exit})`);
+    assert.ok(isPhrase(Math.round(exit)) || exit % 4 === 0, `${type}: Ausstieg bei Takt ${exit} mitten in der Phrase`);
+  }
+  // "Jetzt mixen": nächstes Phrasenende, wenn es höchstens 2 Takte weg ist
+  const soon = planTransition({ out, inc, type: 'cut', earliestBar: 30.5, instant: true });
+  assert.ok(isPhrase(soon.outBar), `Jetzt mixen: Takt ${soon.outBar}`);
 });

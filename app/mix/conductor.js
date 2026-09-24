@@ -513,6 +513,7 @@ export class Conductor extends EventTarget {
       latestBar: soon ? nowBar + leadBars + 32 : null,
       instant,
       freestyle: this.freestyle,
+      keylock: od.keylock,
     };
     let plan = planTransition(opts);
     if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
