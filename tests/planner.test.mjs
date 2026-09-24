@@ -71,13 +71,26 @@ test('Abwechslung: gleicher Typ wird nicht dreimal hintereinander gewählt', () 
   assert.notEqual(plan.type, 'vocal');
 });
 
-test('Loop-Roll: Loops werden kürzer, Drop auf Takt 8', () => {
+test('Loop-Mix: loopt eine gesangsfreie Groove-Stelle, Drop des neuen Tracks am Ende', () => {
   const out = track('a', 128);
   const inc = track('b', 127);
   const plan = planTransition({ out, inc, type: 'loop' });
+  const loops = plan.steps.filter((s) => s.action === 'loop');
+  assert.ok([4, 8].includes(loops[0].bars), `loop ${loops[0].bars}`);
+  const a = out.analysis;
+  const lb = plan.outBar + loops[0].anchor;
+  const voc = Array.from(a.vocals).slice(lb, lb + loops[0].bars);
+  assert.ok(Math.max(...voc) < 0.5, `Gesang im Loop ${voc}`);
+  assert.equal(plan.inBar + plan.bars * plan.m, inc.analysis.points.dropBar);
+  assert.ok(plan.notes.length >= 2);
+});
+
+test('Loop-Mix mit Energie-Anstieg endet mit kurzem Loop-Roll in den Drop', () => {
+  const out = { ...track('a', 128), energy: 0.3 };
+  const inc = { ...track('b', 127), energy: 0.8 };
+  const plan = planTransition({ out, inc, type: 'loop' });
   const loops = plan.steps.filter((s) => s.action === 'loop').map((s) => s.bars);
-  assert.deepEqual(loops, [4, 2, 1, 0.5, 0.25, 0.125]);
-  assert.equal(plan.inBar + 8 * plan.m, inc.analysis.points.dropBar);
+  assert.deepEqual(loops.slice(1), [1, 0.5, 0.25]);
 });
 
 test('Jetzt mixen: Einstieg auf nächster 4-Takt-Grenze', () => {
@@ -130,4 +143,61 @@ test('Erzwungener Blend bei 12 % Tempo-Unterschied wird trotzdem angeglichen', (
   const plan = planTransition({ out: track('a', 128), inc: track('d', 113), type: 'blend' });
   assert.equal(plan.type, 'blend');
   assert.equal(plan.beatmatch, true);
+});
+
+const SHORT_OUTRO = [
+  { bars: 16, kick: true },
+  { bars: 32, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 4, kick: true },
+];
+
+function trackWith(id, bpm, sections, root = 57) {
+  const s = synthSong({ bpm, root, sections, offset: 0.2 });
+  return { id, analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5 };
+}
+
+test('Blend verlängert ein zu kurzes Outro per Loop auf gesangsfreien Takten', () => {
+  const out = trackWith('s', 128, SHORT_OUTRO);
+  const plan = planTransition({ out, inc: track('b', 128), type: 'blend' });
+  const loop = plan.steps.find((s) => s.action === 'loop');
+  assert.ok(loop, 'kein Loop');
+  assert.ok(plan.notes.some((n) => n.includes('Loop')), plan.notes.join(' | '));
+});
+
+test('Gesang wird abgesenkt, wenn sich zwei Stimmen überlagern würden', () => {
+  const vocalIntro = [
+    { bars: 16, kick: true, vocal: true },
+    { bars: 16, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  // Normalfall: der Planer steigt erst nach dem Gesang des alten Tracks ein -> kein Konflikt
+  const out = trackWith('s', 128, SHORT_OUTRO);
+  const inc = trackWith('v', 128, vocalIntro, 64);
+  const clean = planTransition({ out, inc, type: 'blend' });
+  assert.ok(clean.outBar >= out.analysis.points.vocalLast, `outBar ${clean.outBar}`);
+  // "Jetzt mixen" mitten im Gesang: Stimme des neuen Tracks wird abgesenkt
+  const now = planTransition({ out, inc, type: 'blend', earliestBar: 20, instant: true });
+  assert.ok(now.steps.some((s) => s.param === 'vocal' && s.to === 1), now.notes.join(' | '));
+});
+
+test('Jetzt mixen (sofort): Einstieg auf dem nächsten Takt, keine Vorlauf-Schritte', () => {
+  const out = track('a', 128);
+  for (const type of ['blend', 'loop', 'cut', 'echo', 'filter']) {
+    const plan = planTransition({ out, inc: track('b', 126), type, earliestBar: 30.2, instant: true });
+    assert.equal(plan.outBar, 31, `${type}: outBar ${plan.outBar}`);
+    assert.ok(plan.steps.every((s) => s.at >= 0), type);
+  }
+});
+
+test('Übergang passt sich der Intro-Länge des neuen Tracks an', () => {
+  const shortIntro = [
+    { bars: 8, kick: true },
+    { bars: 32, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  const out = track('a', 128);
+  const long = planTransition({ out, inc: track('b', 128), type: 'blend' });
+  const short = planTransition({ out, inc: trackWith('i', 128, shortIntro), type: 'blend' });
+  assert.equal(long.bars, 16);
+  assert.equal(short.bars, 8);
 });

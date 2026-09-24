@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 5;
+export const ANALYSIS_VERSION = 6;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -453,9 +453,15 @@ export function analyzeTrack(L, R, sr) {
       for (let t = c - 1; t <= c + 1; t++) if (t >= 0 && t < env.length) m = Math.max(m, env[t]);
       pattern[k] = m;
     }
+    // Bassline = tiefe Frequenzen ZWISCHEN den Kicks (die Kick selbst ist kurz, eine Bassline klingt weiter)
+    let sub = 0;
+    for (let k = 0; k < 4; k++) {
+      const bt = t0 + k * beatInterval;
+      sub += rmsRange(lowSig, (bt + Math.min(0.15, beatInterval * 0.3)) * sr, (bt + beatInterval) * sr) / 4;
+    }
     bars.push({
       rms: db(rmsRange(mid, t0 * sr, t1 * sr)),
-      low: db(rmsRange(lowSig, t0 * sr, t1 * sr)),
+      low: db(sub),
       high: db(rmsRange(highSig, t0 * sr, t1 * sr)),
       vocalRaw: v / Math.max(1, f1 - f0),
       chroma: Array.from(chroma, (x) => x / cn),
