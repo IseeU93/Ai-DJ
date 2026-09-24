@@ -258,9 +258,13 @@ function extendWithLoop(ctx, steps, L) {
   return L;
 }
 
-/** Läuft im Bereich [b0, b1) ein voller Hauptteil (Drop mit Drums und Energie)? */
+/**
+ * Sperrzone: läuft im Bereich [b0, b1) ein voller Hauptteil (Drop mit Drums und Energie)
+ * oder ein Build-up? Dort wird nie gemixt – das zerstört den Hype.
+ */
 function fullEnergyInside(v, b0, b1) {
   for (let b = Math.max(0, b0); b < b1; b++) {
+    if (v.label(b) === 'build') return true;
     if (v.label(b) === 'main' && v.drums(b) >= 0.55 && v.energy(b) > -4) return true;
   }
   return false;
@@ -898,7 +902,11 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   if (chosen !== 'cut' && chosen !== 'echo') {
     const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
     if (nextDrop !== undefined) {
-      const tDrop = (nextDrop - ctx.inBar) / ctx.m;
+      // Hat der neue Track vor dem Drop einen Build-up, muss der alte schon davor weg sein
+      const build = b.phrases.find((ph) => ph.label === 'build' && ph.bar + ph.bars === nextDrop && ph.bar > ctx.inBar);
+      const limitBar = build && (build.bar - ctx.inBar) / ctx.m >= 4 ? build.bar : nextDrop;
+      if (limitBar !== nextDrop) ctx.notes.push('alter Track ist weg, bevor der Build-up des neuen beginnt');
+      const tDrop = (limitBar - ctx.inBar) / ctx.m;
       steps = clampOutBefore(steps, tDrop);
       if (L > tDrop) L = tDrop;
     }

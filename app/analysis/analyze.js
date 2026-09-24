@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 9;
+export const ANALYSIS_VERSION = 10;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -661,14 +661,19 @@ export function analyzeTrack(L, R, sr, override = null) {
   } else {
     phrases.forEach((p) => (p.label = 'main'));
   }
-  // Build-up: Phrase direkt vor einem Hauptteil, in der Energie/Drums zum Ende hin ansteigen
+  // Build-up: Phrase direkt vor einem Hauptteil (ohne volle Bassline), die entweder in sich
+  // ansteigt oder als Stufe lauter/rhythmischer ist als der Teil davor
   phrases.forEach((p, i) => {
     const next = phrases[i + 1];
-    if (!next || next.label !== 'main' || p.label === 'main' || p.label === 'intro' || p.bars < 4) return;
+    const prev = phrases[i - 1];
+    if (!next || next.label !== 'main' || p.label === 'main' || p.bars < 4 || i === 0) return;
     const h = Math.max(1, Math.floor(p.bars / 2));
     const rise = avg(barEnergy, p.bar + p.bars - h, h) - avg(barEnergy, p.bar, h);
     const drumRise = avg(drums, p.bar + p.bars - h, h) - avg(drums, p.bar, h);
-    if (rise > 1.5 || drumRise > 0.12) p.label = 'build';
+    const stepUp = prev && prev.label !== 'main'
+      && (p.energy - prev.energy > 1.5 || p.drums - prev.drums > 0.15);
+    const noBassline = p.bass < next.bass - 6;
+    if ((rise > 1.5 || drumRise > 0.12 || stepUp) && noBassline) p.label = 'build';
   });
   // Drops: Beginn jedes Hauptteil-Blocks
   const drops = [];
