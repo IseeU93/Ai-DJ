@@ -346,7 +346,7 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   const exit = { fade: 0.9 };
   exit.lpOut = 0.8 + (ctx.energyUp < -0.05 ? 0.5 : 0);
   exit.hpOut = 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0);
-  exit.echoOut = 0.75 + (ctx.energyUp > 0.15 ? 0.3 : 0) + (va.mean(va.drums, ctx.outBar + L - 2, ctx.outBar + L) > 0.5 ? 0.15 : 0);
+  if (ctx.energyUp > 0.25) exit.echoOut = 0.45;
   const tailLoop = bestLoop(va, Math.max(0, ctx.outBar + Math.floor(fadeFrom) - 4), ctx.outBar + Math.floor(fadeFrom), 1);
   if (!ctx.loopExt && tailLoop && loopable(va, { bar: tailLoop.bar, len: 1 }) && L - fadeFrom >= 1) exit.loopOut = 0.7;
 
@@ -381,7 +381,7 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
     steps.push(p(fadeFrom - 0.5, 'out', 'filter', 0.6, fl));
     ctx.notes.push('alter Track wird per Hochpass ausgedünnt');
   } else if (ex === 'echoOut') {
-    steps.push(p(Math.max(fadeFrom, L - 0.75), 'out', 'echo', 0.6, 0.25), p(L - 0.25, 'out', 'echo', 0, 0.25));
+    steps.push(p(Math.max(fadeFrom, L - 0.75), 'out', 'echo', 0.35, 0.25), p(L - 0.25, 'out', 'echo', 0, 0.25));
     ctx.notes.push('Echo-Wurf auf dem letzten Beat des alten Tracks');
   } else if (ex === 'loopOut') {
     const at = Math.max(Math.ceil(fadeFrom), L - 2);
@@ -502,7 +502,7 @@ function composeLoop(ctx) {
     steps.push(act(L - 2, 'out', 'loop', { bars: 1, anchor: 0 }));
     steps.push(act(L - 1, 'out', 'loop', { bars: 0.5, anchor: 0 }));
     steps.push(act(L - 0.5, 'out', 'loop', { bars: 0.25, anchor: 0 }));
-    steps.push(p(L - 0.75, 'out', 'echo', 0.5, 0.5));
+    steps.push(p(L - 0.75, 'out', 'echo', 0.25, 0.5));
     steps.push(p(L - 0.5, 'out', 'fader', 0, 0.5), p(L, 'in', 'low', 0, 0.125), p(L - 1, 'in', 'fader', 1, 1));
     steps.push(p(L, 'out', 'echo', 0));
     steps.push(act(L, 'out', 'stop'));
@@ -636,14 +636,13 @@ function composeCut(ctx) {
   const steps = [p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'fader', 1), p(0, 'out', 'fader', 0)];
   const loud = va.mean(va.energy, ctx.outBar - 2, ctx.outBar) > -5;
   if (!ctx.instant && loud) {
-    steps.push(p(-2, 'out', 'filter', 0.5, 1.75), p(-0.25, 'out', 'echo', 0.7, 0.25));
+    steps.push(p(-2, 'out', 'filter', 0.5, 1.75), p(-0.25, 'out', 'echo', 0.3, 0.25));
     ctx.notes.unshift('2 Takte Hochpass-Aufbau, dann harter Schnitt direkt in den Drop');
   } else if (!ctx.instant) {
-    steps.push(p(-0.25, 'out', 'echo', 0.7, 0.25));
-    ctx.notes.unshift('Echo auf dem letzten Beat, dann direkt in den Drop');
+    steps.push(p(-1, 'out', 'filter', 0.35, 0.9));
+    ctx.notes.unshift('kurzer Hochpass, dann auf dem Takt direkt in den Drop');
   } else {
-    steps.push(p(0, 'out', 'echo', 0.7));
-    ctx.notes.unshift('sofortiger Schnitt in den Drop, Echo-Fahne vom alten Track');
+    ctx.notes.unshift('sofortiger Schnitt auf dem Takt in den Drop');
   }
   steps.push(p(0.25, 'out', 'echo', 0), act(1, 'out', 'stop'));
   return { L: 1, steps };
@@ -659,9 +658,9 @@ function composeEcho(ctx) {
   const start = beatless ? 0.5 : 1;
   const steps = [p(0, 'in', 'fader', 1)];
   if (ctx.instant) {
-    steps.push(p(0, 'out', 'echo', 1), p(0.25, 'out', 'fader', 0, 0.25));
+    steps.push(p(0, 'out', 'echo', 0.5), p(0.25, 'out', 'fader', 0, 0.25));
   } else {
-    steps.push(p(-1, 'out', 'filter', 0.45, 1), p(-0.5, 'out', 'echo', 1, 0.5), p(0, 'out', 'fader', 0, 0.25));
+    steps.push(p(-1, 'out', 'filter', 0.45, 1), p(-0.5, 'out', 'echo', 0.5, 0.5), p(0, 'out', 'fader', 0, 0.25));
   }
   steps.push(p(0.5, 'out', 'echo', 0), act(start, 'in', 'play'), act(1, 'out', 'stop'));
   ctx.notes.unshift(
@@ -703,10 +702,10 @@ function scoreStyles(ctx) {
     if (outVocal && inVocal) c.vocal = 1.5 + (keyDist <= 0.15 ? 0.35 : keyDist <= 0.35 ? 0 : -0.8);
     c.filter = 0.8 + (keyDist >= 0.3 ? 0.35 : 0) + (energyUp < -0.1 ? 0.2 : 0);
     c.cut = 0.2 + (inLead < 4 ? 0.6 : 0) + (keyDist >= 0.6 ? 0.3 : 0);
-    c.echo = 0.1 + (keyDist >= 0.7 ? 0.3 : 0);
+    c.echo = 0.05;
   } else {
-    c.echo = 2;
-    if (rel.diff <= 0.12) c.cut = 0.9;
+    c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
+    c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
   }
   return c;
 }
@@ -762,13 +761,8 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   // Unsicheres Beatgrid (z. B. Live-Drums, schwankendes Tempo): lange Beatmatches würden
   // auseinanderlaufen -> kurz halten oder ohne Beatmatch per Echo wechseln.
   const conf = Math.min(a.gridConfidence ?? 1, b.gridConfidence ?? 1);
-  ctx.maxL = conf < 0.5 ? 8 : 32;
-  if (!forced && conf < 0.3 && chosen !== 'cut') {
-    chosen = 'echo';
-    note = 'Beatgrid unsicher (schwankendes Tempo) – Echo-Out statt Beatmatch';
-  } else if (conf < 0.5) {
-    ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
-  }
+  ctx.maxL = conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32;
+  if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
     chosen = 'echo';
@@ -821,7 +815,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     inRate,
     outBar: ctx.outBar,
     inBar: ctx.inBar,
-    echoBeats: masterBpm > 135 ? 0.5 : 0.75,
+    echoBeats: 1, // Wiederholungen immer genau auf dem Beat
     steps: cleaned,
   };
 }

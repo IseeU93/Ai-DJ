@@ -182,16 +182,16 @@ export class Deck {
     this.echoSend.gain.value = 0;
     this.delay = ctx.createDelay(4);
     this.delay.delayTime.value = 0.35;
-    const fb = g(0.55);
+    const fb = g(0.35);
     const eHp = ctx.createBiquadFilter();
     eHp.type = 'highpass';
     eHp.frequency.value = 300;
     const eLp = ctx.createBiquadFilter();
     eLp.type = 'lowpass';
-    eLp.frequency.value = 5000;
+    eLp.frequency.value = 3500;
     this.lp.connect(this.echoSend).connect(this.delay).connect(eHp).connect(eLp);
     eLp.connect(fb).connect(this.delay);
-    eLp.connect(g(0.8)).connect(engine.bus);
+    eLp.connect(g(0.5)).connect(engine.bus);
 
     this.params = {
       fader: [[this.fader.gain, (v) => v]],

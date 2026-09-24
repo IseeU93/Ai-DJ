@@ -161,14 +161,14 @@ function buildStrip(i) {
   const fx = document.createElement('div');
   fx.className = 'fx';
   fx.innerHTML = `<button class="btn vox" title="Gesang absenken (Stereo-Mitte im Stimmbereich)">VOX</button>
-                  <button class="btn echo" title="Echo (¾ Beat)">ECHO</button>`;
+                  <button class="btn echo" title="Echo (1 Beat)">ECHO</button>`;
   root.appendChild(fx);
   const vox = $('.vox', fx);
   const echo = $('.echo', fx);
   vox.onclick = () => conductor.setParam(i, 'vocal', engine.decks[i].get('vocal') > 0.5 ? 0 : 1);
   echo.onclick = () => {
     const d = engine.decks[i];
-    if (d.track) d.setEchoTime((0.75 * 60) / (d.track.analysis.bpm * (d.status.rate || 1)));
+    if (d.track) d.setEchoTime(60 / (d.track.analysis.bpm * (d.status.rate || 1)));
     conductor.setParam(i, 'echo', d.get('echo') > 0.05 ? 0 : 0.8);
   };
 

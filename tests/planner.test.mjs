@@ -49,7 +49,7 @@ test('Blend: Outro des alten trifft Intro des neuen, Drop landet am Ende', () =>
 
 test('Zu großer Tempo-Sprung -> Echo-Out ohne Beatmatch', () => {
   const plan = planTransition({ out: track('a', 128), inc: track('c', 100) });
-  assert.equal(plan.type, 'echo');
+  assert.equal(plan.type, 'echo', plan.type);
   assert.equal(plan.beatmatch, false);
   assert.equal(plan.inRate, 1);
 });
@@ -258,4 +258,9 @@ test('Key-Sync: Tonart-Clash wird per Halbton-Verschiebung harmonisch', () => {
   assert.equal(ks.semis, -1);
   assert.ok(ks.dist <= 0.1);
   assert.equal(keySync('8A', '9A').semis, 0); // passt schon -> nicht verschieben
+});
+
+test('Mittlerer Tempo-Sprung (12 %) -> sauberer Drop-Cut statt Echo', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('d', 113) });
+  assert.equal(plan.type, 'cut', plan.type);
 });
