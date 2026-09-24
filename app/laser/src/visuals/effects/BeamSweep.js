@@ -67,7 +67,7 @@ export class BeamSweep {
     // wie ein ruhiger Scanner zu wirken. Deshalb: solange schon
     // maxConcurrent Durchläufe unterwegs sind, wird kein neuer
     // gestartet (kein Abschneiden - reine Spawn-Bremse).
-    const maxConcurrent = rushBase > 3 ? 3 : 2;
+    const maxConcurrent = clamp(Math.round(bs.maxConcurrent ?? 2), 1, 4);
     if (isBeat) {
       if (this._sweeps.length < maxConcurrent) this._spawnSweep(colors, W, H, bs);
       this._spawnAcc = 0;

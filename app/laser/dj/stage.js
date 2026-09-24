@@ -434,23 +434,27 @@ export class LaserStage extends EventTarget {
     const genre = st?.track.genre;
     const hardGenre = genre === 'uptempo' || genre === 'hardstyle';
     const ins = st?.ins;
-    const kicks = (ins?.drums ?? 0) >= 0.5 || (data.energy?.kickDensity ?? 0) > 0.12;
-    const loud = ins ? ins.phase === 'drop' || (hardGenre && ins.phase === 'verse') : data.energy?.phase === 'drop';
-    const hard = loud && kicks && (hardGenre || (ins?.level ?? data.energy?.level ?? 0) > 0.8);
+    const kicks = (ins?.drums ?? 0) >= 0.6;
+    // nur im echten Drop/Hauptteil mit kräftigen Kicks – nicht jede Strophe
+    const loud = ins ? ins.phase === 'drop' : data.energy?.phase === 'drop';
+    const hard = loud && kicks && (hardGenre || (ins?.level ?? 0) > 0.85);
     const bs = cfg.beamSweep;
     if (hard) {
-      if (d.primaryEffect !== 'beamSweep' && AGGRESSIVE.has(d.primaryEffect) && !cfg._overlayEffects.includes(d.primaryEffect)) {
-        cfg._overlayEffects = [d.primaryEffect, ...cfg._overlayEffects].slice(0, 2); // wilde Wahl als Zusatz behalten
-      }
-      cfg._overlayEffects = cfg._overlayEffects.filter((e) => e !== 'beamSweep' && !SLOW.has(e));
+      // höchstens eine Zusatzebene, und nichts Schwebendes
+      cfg._overlayEffects = cfg._overlayEffects.filter((e) => e !== 'beamSweep' && !SLOW.has(e)).slice(0, 1);
       cfg._overlayEffect = cfg._overlayEffects[0] || null;
       cfg.effect = 'beamSweep';
-      bs.speed = genre === 'uptempo' ? 9 : hardGenre ? 7 : 5;
-      bs.count = genre === 'uptempo' ? 2 : 1;
+      // Tempo nach Zeit statt nach Schlägen: ein Balken quert den Schirm in ~1,1 s (Uptempo ~0,9 s),
+      // egal ob 150 oder 250 BPM – sonst wird es bei Uptempo hektisch
+      const beatSec = 60 / Math.max(60, data.bpm || 128);
+      const perBeat = beatSec / (genre === 'uptempo' ? 0.9 : 1.1);
+      bs.speed = Math.max(1, Math.min(8, perBeat <= 0.18 ? (perBeat - 0.045) / 0.045 : 3 + (perBeat - 0.18) / 0.06));
+      bs.count = 1;
+      bs.maxConcurrent = 1; // ein Balken nach dem anderen, kein Gewimmel
       bs.thickness = 3;
       bs.orientation = 'auto';
-      cfg.speed = Math.max(cfg.speed, genre === 'uptempo' ? 1.8 : 1.4);
-      cfg.trailLength = Math.min(cfg.trailLength, 0.15);
+      cfg.speed = Math.max(cfg.speed, 1.2);
+      cfg.trailLength = Math.min(cfg.trailLength, 0.2);
       this.hard = true;
       return;
     }
@@ -458,6 +462,7 @@ export class LaserStage extends EventTarget {
       bs.speed = DEFAULT_CONFIG.beamSweep.speed;
       bs.count = DEFAULT_CONFIG.beamSweep.count;
       bs.thickness = DEFAULT_CONFIG.beamSweep.thickness;
+      delete bs.maxConcurrent;
       this.hard = false;
     }
     if (genre === 'uptempo') {
@@ -465,7 +470,7 @@ export class LaserStage extends EventTarget {
       if (SLOW.has(cfg.effect)) cfg.effect = UPTEMPO_CALM[Math.max(0, ins?.phraseIndex ?? 0) % UPTEMPO_CALM.length];
       cfg._overlayEffects = cfg._overlayEffects.filter((e) => !SLOW.has(e));
       cfg._overlayEffect = cfg._overlayEffects[0] || null;
-      cfg.speed = Math.max(cfg.speed, 1.4);
+      cfg.speed = Math.max(cfg.speed, 1.15);
     }
   }
 
