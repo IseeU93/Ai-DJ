@@ -384,6 +384,8 @@ test('Wortspiel-Plan: neues Wort landet genau auf dem Beat nach dem alten Wort',
   assert.ok(Math.abs(hand - (a.firstBeat + 150 * a.beatInterval)) < 1e-6, `Übergabe ${hand}`);
   const inAtHand = barToSec(b, plan.inBar + 4 * plan.m);
   assert.ok(Math.abs(inAtHand - wStartIn) < 1e-6, 'neues Wort nicht auf der Übergabe');
+});
+
 test('Teaser: neuer Track startet einen Takt vorher leise, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
   const longIntro = [
     { bars: 24, kick: true },
