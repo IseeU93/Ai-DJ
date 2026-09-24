@@ -14,6 +14,7 @@ export const TRANSITIONS = {
 
 export const KILL = -26; // dB, EQ-"Kill"
 const VOCAL_MIN = 0.45;
+const FORCED_LIMIT = 0.16; // max. Tempoangleichung, wenn der Nutzer eine Technik erzwingt
 
 // ------------------------------------------------------------------ Helfer
 
@@ -224,8 +225,16 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
       }
     }
   }
-  // Manuell gewählter Typ, der beim Tempo nicht geht -> trotzdem ausführen, aber ohne Beatmatch
-  const beatmatch = rel.diff <= BEATMATCH_LIMIT && chosen !== 'echo';
+  // Manuell gewählte Technik bei großem Tempo-Unterschied: bis ±16 % trotzdem angleichen,
+  // darüber würden zwei nicht synchrone Beats übereinanderlaufen -> Echo-Out statt dessen.
+  const forced = type !== 'auto' && type in TRANSITIONS;
+  let note = '';
+  const needsSync = chosen !== 'echo' && chosen !== 'cut';
+  if (forced && needsSync && rel.diff > FORCED_LIMIT) {
+    note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
+    chosen = 'echo';
+  }
+  const beatmatch = chosen !== 'echo' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
 
   const lengths = { blend: 16, filter: 16, loop: 8, vocal: 16, cut: 1, echo: 2 };
   let L = lengths[chosen];
@@ -289,7 +298,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   steps.sort((x, y) => x.at - y.at);
 
   const end = Math.max(...steps.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0)));
-  const reason = describe(chosen, a, b, rel, keyDist, masterBpm);
+  const reason = (note ? `${note} · ` : '') + describe(chosen, a, b, rel, keyDist, masterBpm);
 
   return {
     type: chosen,

@@ -119,3 +119,15 @@ test('Set-Reihenfolge: laufender Track bleibt vorne', () => {
   const order = buildSetOrder(tracks, [tracks[3]]);
   assert.equal(order[0], tracks[3]);
 });
+
+test('Erzwungener Blend bei großem Tempo-Sprung wird zu Echo-Out', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('c', 100), type: 'blend' });
+  assert.equal(plan.type, 'echo');
+  assert.match(plan.reason, /Echo-Out/);
+});
+
+test('Erzwungener Blend bei 12 % Tempo-Unterschied wird trotzdem angeglichen', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('d', 113), type: 'blend' });
+  assert.equal(plan.type, 'blend');
+  assert.equal(plan.beatmatch, true);
+});

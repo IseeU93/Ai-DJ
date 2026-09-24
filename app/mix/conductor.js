@@ -213,6 +213,14 @@ export class Conductor extends EventTarget {
     }
 
     if (!this.plan) {
+      if (now < this.rampUntil && this.forceSoon && !this.rampFrozen) {
+        // "Jetzt mixen" während der Tempo-Rückfahrt: aktuelles Tempo einfrieren
+        md.cancel({ ratesAfter: now });
+        md.rateAt(now + 0.02, md.status.rate, 0);
+        this.rampUntil = now + 0.1; // kurz warten, bis der Status das feste Tempo meldet
+        this.rampFrozen = true;
+        return;
+      }
       if (now < this.rampUntil || md.status.loopLen > 0 || od.status.playing) return;
       try {
         this.plan = this.makePlan();
@@ -342,6 +350,7 @@ export class Conductor extends EventTarget {
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));
     this.history.push(p.type);
     this.rampUntil = p.rampEnd || 0;
+    this.rampFrozen = false;
     this.decks[p.outDeck].resetParams();
     this.decks[p.outDeck].setNow('fader', 0);
     this.plan = null;
