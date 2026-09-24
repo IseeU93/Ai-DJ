@@ -81,7 +81,8 @@ export function transitionCost(a, b) {
   const introVocal = B.points?.vocalFirst !== null && B.points?.vocalFirst !== undefined
     && B.points.vocalFirst < (B.points?.dropBar ?? 0);
   const vocalCost = introVocal && tailClean < 8 ? 0.2 : 0;
-  return tempo + 0.8 * key + 0.3 * energy + introCost + tailCost + vocalCost;
+  const genreCost = a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0;
+  return tempo + 0.8 * key + 0.3 * energy + introCost + tailCost + vocalCost + genreCost;
 }
 
 /** Einfacher, reproduzierbarer Zufall (für Reshuffle-Varianten). */

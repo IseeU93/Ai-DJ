@@ -3,6 +3,7 @@
 // Ergebnis ist eine deklarative Schrittliste (Takte relativ zu T0), die der Conductor sample-genau
 // ausführt, plus Notizen, warum der Übergang so gebaut wurde.
 import { BEATMATCH_LIMIT, camelotDistance, keySync, shiftCamelot, tempoRelation } from './order.js';
+import { GENRES, combineProfiles, detectGenre } from './genre.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
@@ -280,6 +281,12 @@ function choosePoints(ctx, lengths) {
         const labStart = va.label(outBar);
         // Sektionswechsel im alten Track: hier "atmet" der Song – natürlicher Mix-Punkt
         if (va.isPhraseStart(outBar)) sc += 0.25;
+        // Nicht mitten in einen Drop/vollen Hauptteil reinmixen (volle Energie läuft weiter)
+        if (labStart === 'main' && va.label(outBar - 1) === 'main') {
+          let mainLeft = 0;
+          for (let bar = outBar; bar < Math.min(outEnd, E) && va.label(bar) === 'main'; bar++) mainLeft++;
+          sc -= 0.9 + 0.04 * mainLeft;
+        }
         if (va.label(outBar - 1) !== labStart) {
           sc += 0.35;
           if (labStart === 'break' || labStart === 'outro' || labStart === 'build') {
@@ -317,7 +324,7 @@ function choosePoints(ctx, lengths) {
         for (let t = 0; t < L; t++) {
           if (va.vocalSmooth(outBar + t) >= 0.45 && vb.vocalSmooth(inBar + t * m) >= 0.45) clash++;
         }
-        sc -= clash * 0.05;
+        sc -= clash * 0.05 * (ctx.profile?.vocal ?? 1);
         // Gesangszeilen des alten Tracks nicht abschneiden: Zeile läuft über das Ende hinaus
         // oder fällt in die Ausblendphase (zweite Hälfte) -> stark bestrafen
         if (va.vocalSmooth(outEnd - 1) >= 0.55 && va.vocalSmooth(outEnd) >= 0.55) sc -= 0.8;
@@ -421,7 +428,8 @@ function composeBlend(ctx) {
   const inDrop = b.points.dropBar;
   const inLead = (inDrop - inStart) / m;
   const steps = [];
-  const lengths = (ctx.keyDist <= 0.15 ? [32, 16, 8] : ctx.keyDist <= 0.35 ? [16, 8] : [8]).filter((x) => x <= ctx.maxL);
+  const lengths = (ctx.keyDist <= 0.15 ? [32, 16, 8, 4] : ctx.keyDist <= 0.35 ? [16, 8, 4] : [8, 4])
+    .filter((x) => x <= ctx.maxL && ctx.profile.lengths.includes(x));
 
   let L;
   const pt = ctx.instant ? null : choosePoints(ctx, lengths);
@@ -460,7 +468,7 @@ function composeBlend(ctx) {
   const midStart = Math.max(q * 1.5, sw - q);
   steps.push(p(midStart, 'in', 'mid', clash ? -4 : -1, Math.max(0.5, sw - midStart)));
   // Bass-Swap: kurz (1 Beat bis ½ Takt), damit sich die Bässe nicht vermatschen
-  const swapDur = inDrums > 0.4 ? 0.25 : 0.5;
+  const swapDur = inDrums > 0.4 ? ctx.profile.swap : Math.max(0.5, ctx.profile.swap);
   if (outHasBass) steps.push(p(sw, 'out', 'low', KILL, swapDur));
   steps.push(p(sw, 'in', 'low', 0, swapDur));
   steps.push(p(sw, 'in', 'fader', 1, Math.max(0.5, Math.min(2, q / 2))));
@@ -617,7 +625,7 @@ function composeFilter(ctx) {
   const inLead = (b.points.dropBar - b.points.startBar) / m;
   const steps = [];
   let L = inLead >= 16 && !ctx.instant ? 16 : 8;
-  const pt = ctx.instant ? null : choosePoints(ctx, [16, 8].filter((x) => x <= ctx.maxL));
+  const pt = ctx.instant ? null : choosePoints(ctx, [16, 8, 4].filter((x) => x <= ctx.maxL && ctx.profile.lengths.includes(x)));
   if (pt) {
     ctx.outBar = pt.outBar;
     ctx.inBar = pt.inBar;
@@ -655,7 +663,7 @@ function composeCut(ctx) {
   else ctx.outBar = a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
   ctx.outBar = Math.min(ctx.outBar, va.end - 1);
   ctx.inBar = b.points.dropBar;
-  const steps = [p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'fader', 1), p(0, 'out', 'fader', 0)];
+  const steps = [p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'fader', 1, 0.125), p(0, 'out', 'fader', 0, 0.125)];
   const loud = va.mean(va.energy, ctx.outBar - 2, ctx.outBar) > -5;
   if (!ctx.instant && loud) {
     steps.push(p(-2, 'out', 'filter', 0.5, 1.75), p(-0.25, 'out', 'echo', 0.3, 0.25));
@@ -729,6 +737,7 @@ function scoreStyles(ctx) {
     c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
     c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
   }
+  for (const k of Object.keys(c)) c[k] += ctx.profile.styles[k] ?? 0;
   return c;
 }
 
@@ -758,8 +767,11 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     energyUp: (inc.energy ?? 0.5) - (out.energy ?? 0.5),
     earliestBar, instant,
     m: 1, notes: [], loopExt: null, maxL: 32,
+    genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
   };
+  ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
+  ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
   if (ks.semis) {
     ctx.notes.push(`Key-Sync: neuer Track um ${ks.semis > 0 ? '+' : ''}${ks.semis} Halbton${Math.abs(ks.semis) > 1 ? 'e' : ''} angeglichen (${b.key.camelot} → ${shiftCamelot(b.key.camelot, ks.semis)} passt zu ${outKey})`);
   }
@@ -783,7 +795,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   // Unsicheres Beatgrid (z. B. Live-Drums, schwankendes Tempo): lange Beatmatches würden
   // auseinanderlaufen -> kurz halten oder ohne Beatmatch per Echo wechseln.
   const conf = Math.min(a.gridConfidence ?? 1, b.gridConfidence ?? 1);
-  ctx.maxL = conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32;
+  ctx.maxL = Math.min(ctx.maxL, conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32);
   if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
@@ -819,6 +831,9 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   cleaned.sort((x, y) => x.at - y.at);
   const end = Math.max(...cleaned.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0)));
 
+  if (ctx.genreOut !== ctx.genreIn || ctx.genreOut !== 'edm') {
+    ctx.notes.push(`Stil angepasst: ${GENRES[ctx.genreOut]} → ${GENRES[ctx.genreIn]}`);
+  }
   return {
     type: chosen,
     label: TRANSITIONS[chosen] + (ctx.flavors
@@ -828,6 +843,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     flavors: ctx.flavors || null,
     reason: (note ? `${note} · ` : '') + describe(outKey, shiftCamelot(b.key.camelot, ks.semis), b.bpm, rel, keyDist, masterBpm),
     keyShift: ks.semis,
+    genres: [ctx.genreOut, ctx.genreIn],
     notes: ctx.notes,
     bars: L,
     endBars: end,

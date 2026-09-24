@@ -20,7 +20,7 @@ function track(id, bpm, root = 57) {
     const s = synthSong({ bpm, root, sections: SECTIONS, offset: 0.2 });
     cache.set(k, analyzeTrack(s.L, s.R, s.sr));
   }
-  return { id, analysis: cache.get(k), energy: 0.5 };
+  return { id, analysis: cache.get(k), energy: 0.5, genre: 'edm' };
 }
 
 test('Camelot & Tempo-Beziehungen', () => {
@@ -178,7 +178,7 @@ const SHORT_OUTRO = [
 
 function trackWith(id, bpm, sections, root = 57) {
   const s = synthSong({ bpm, root, sections, offset: 0.2 });
-  return { id, analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5 };
+  return { id, analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5, genre: 'edm' };
 }
 
 test('Blend verlängert ein zu kurzes Outro per Loop auf gesangsfreien Takten', () => {
@@ -292,4 +292,23 @@ test('Leises Ausklingen am Ende: kein Loop, der laut/leise springt, Übergang en
     assert.ok(a.barEnergy[Math.min(a.barCount - 1, lastOutBar - 1)] > -9 || plan.steps.some((x) => x.action === 'loop'),
       `${type}: Übergang reicht in den Fade (bis Takt ${lastOutBar})`);
   }
+});
+
+test('Musikrichtung steuert den Übergang: Hardstyle/Rap kurz, House lang', () => {
+  const out = track('a', 128);
+  const inc = track('b', 128, 64);
+  const house = planTransition({ out, inc, type: 'blend' });
+  const hard = planTransition({ out: { ...out, genre: 'hardstyle' }, inc: { ...inc, genre: 'hardstyle' }, type: 'blend' });
+  const rap = planTransition({ out: { ...out, genre: 'rap' }, inc: { ...inc, genre: 'rap' } });
+  assert.ok(house.bars >= 16, `house ${house.bars}`);
+  assert.ok(hard.bars <= 8, `hardstyle ${hard.bars}`);
+  assert.ok(rap.bars <= 8, `rap ${rap.bars}`);
+  assert.ok(rap.notes.some((n) => n.includes('Rap')));
+});
+
+test('Nie mitten in einen vollen Hauptteil reinmixen', () => {
+  const out = track('a', 128);
+  const plan = planTransition({ out, inc: track('b', 127), type: 'blend' });
+  const lab = (bar) => [...out.analysis.phrases].reverse().find((p) => p.bar <= bar)?.label;
+  assert.ok(!(lab(plan.outBar) === 'main' && lab(plan.outBar - 1) === 'main'), `Einstieg bei Takt ${plan.outBar}`);
 });

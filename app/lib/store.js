@@ -51,6 +51,28 @@ export function setGridOverride(path, ov) {
   }
 }
 
+const GENRE = 'automix.genre';
+
+/** Manuelle Musikrichtung: pro Datei (Schlüssel = Pfad) und pro Playlist (Schlüssel = "ordner|playlist"). */
+export function genreOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem(GENRE)) || {};
+  } catch {
+    return {};
+  }
+}
+
+export function setGenreOverride(key, genre) {
+  try {
+    const all = genreOverrides();
+    if (genre) all[key] = genre;
+    else delete all[key];
+    localStorage.setItem(GENRE, JSON.stringify(all));
+  } catch {
+    /* egal */
+  }
+}
+
 const SETTINGS = 'automix.settings';
 
 export function loadSettings() {

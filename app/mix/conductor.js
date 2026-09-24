@@ -4,6 +4,7 @@ import { planTransition, barToSeconds, secondsToBar } from './planner.js';
 import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
+import { detectGenre } from './genre.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
 const LEAD_SECONDS = 2.5; // Mindestvorlauf für normal geplante Übergänge
@@ -61,8 +62,28 @@ export class Conductor extends EventTarget {
 
   // ------------------------------------------------------------------ Queue
 
-  setLibrary(list) {
+  /**
+   * Effektive Musikrichtung je Track: Track-Override > Playlist-Override > automatisch.
+   * resolve(track) liefert den Override oder null.
+   */
+  applyGenres(resolve) {
+    for (const t of this.tracks.values()) {
+      t.genreAuto = detectGenre(t.analysis);
+      t.genreManual = resolve?.(t) || null;
+      t.genre = t.genreManual || t.genreAuto;
+    }
+    this.invalidatePlan();
+    this.emit('queue');
+  }
+
+  setLibrary(list, resolveGenre) {
     this.tracks = new Map(list.map((t) => [t.id, t]));
+    this.resolveGenre = resolveGenre || this.resolveGenre;
+    for (const t of list) {
+      t.genreAuto = detectGenre(t.analysis);
+      t.genreManual = this.resolveGenre?.(t) || null;
+      t.genre = t.genreManual || t.genreAuto;
+    }
     assignEnergy(list);
     const playing = this.queue.slice(0, this.pos + 1).filter((id) => this.tracks.has(id));
     const fixed = playing.map((id) => this.tracks.get(id));

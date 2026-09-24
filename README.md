@@ -22,6 +22,18 @@ npm run dev
 - **Steuerung**: Play/Cue/Sync/Keylock, Loops ¼–16 Takte, pro Kanal EQ mit Kill, Filter,
   VOX (Gesang absenken), Echo, Fader; Crossfader; „Jetzt mixen“; Leertaste = Play/Pause.
 
+## Weitere Funktionen
+
+- **Playlists**: Oberordner wählen, Unterordner erscheinen als Playlists.
+- **Musikrichtung** (Pop, Rap, House/EDM, Hardstyle, Uptempo): wird automatisch erkannt und bestimmt,
+  wie gemixt wird (Länge, Techniken, Bass-/Kick-Wechsel, Gesangsschutz). Pro Track in der Queue und
+  pro Playlist überschreibbar.
+- **Key-Sync**: passt die Tonart nicht, wird der neue Track um bis zu ±2 Halbtöne angeglichen.
+- **Mix-Punkte** werden gesucht (Sektionswechsel, Drop-Swap, keine abgeschnittenen Gesangszeilen,
+  nie mitten im vollen Drop), Übergänge sind vor dem ersten Drop des neuen Tracks fertig.
+- **Beatgrid-Korrektur** pro Deck (±5 ms, „1 hier“, ×2/÷2), Hot Cues, Autopilot, Reshuffle,
+  „Zum Übergang“ zum schnellen Testen.
+
 ## Entwicklung
 
 ```bash

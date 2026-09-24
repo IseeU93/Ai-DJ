@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 8;
+export const ANALYSIS_VERSION = 9;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -501,6 +501,17 @@ export function analyzeTrack(L, R, sr, override = null) {
     phaseScore[(k + 2) % 4] -= 0.3 * zSnare[k];
   }
   let downbeat = phaseScore.indexOf(Math.max(...phaseScore));
+  // Four-on-the-floor: Anteil der Beats (in kräftigen Passagen) mit deutlichem Kick
+  const strongLow = percentile(beatLow, 0.9) || 1;
+  const loud = percentile(beatEnergy, 0.5);
+  let kicks = 0;
+  let counted = 0;
+  for (let k = 0; k < beatCount; k++) {
+    if (beatEnergy[k] < loud) continue;
+    counted++;
+    if (beatLow[k] >= 0.35 * strongLow) kicks++;
+  }
+  const fourFloor = counted ? kicks / counted : 0.5;
   if (override?.downbeatSec !== undefined && override?.downbeatSec !== null) {
     const k = Math.round((override.downbeatSec - firstBeat) / beatInterval);
     downbeat = ((k % 4) + 4) % 4;
@@ -741,6 +752,7 @@ export function analyzeTrack(L, R, sr, override = null) {
     firstBeat,
     gridConfidence,
     gridOverride: override || null,
+    fourFloor,
     beatCount,
     downbeat,
     barCount,

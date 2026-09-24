@@ -246,7 +246,7 @@ select.sel:disabled { opacity: 0.5; }
 .qlist { overflow-y: auto; min-height: 0; flex: 1; }
 .qrow {
   display: grid;
-  grid-template-columns: 14px 26px minmax(160px, 2.2fr) 64px 46px 64px minmax(120px, 1.4fr) 48px 168px 86px;
+  grid-template-columns: 14px 26px minmax(160px, 2.2fr) 64px 46px 128px minmax(110px, 1.2fr) 48px 168px 86px;
   gap: 10px;
   align-items: center;
   height: 40px;
@@ -277,6 +277,7 @@ select.sel:disabled { opacity: 0.5; }
 .qrow.dragging { opacity: 0.3; }
 .qrow.drop-before { box-shadow: inset 0 2px 0 var(--text); }
 .qrow select.sel { height: 24px; font-size: 12px; width: 100%; }
+.qrow .genre select.sel { color: var(--muted); }
 .qrow .trans-fixed { color: var(--muted); font-size: 12px; }
 
 .removed { padding: 8px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }

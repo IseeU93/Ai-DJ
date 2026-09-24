@@ -7,7 +7,8 @@ import { Knob, Slider } from './ui/controls.js';
 import { DeckWaveform, drawOverview } from './ui/waveform.js';
 import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
-import { loadSettings, saveSettings, gridOverride, setGridOverride } from './lib/store.js';
+import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
+import { GENRES } from './mix/genre.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -417,7 +418,7 @@ function renderQueue() {
 
   const head = document.createElement('div');
   head.className = 'qrow header';
-  head.innerHTML = '<span></span><span>#</span><span>Titel</span><span style="text-align:right">BPM</span><span>Key</span><span>Energie</span><span>Struktur · Gesang</span><span style="text-align:right">Länge</span><span>Übergang davor</span><span></span>';
+  head.innerHTML = '<span></span><span>#</span><span>Titel</span><span style="text-align:right">BPM</span><span>Key</span><span>Richtung</span><span>Struktur · Gesang</span><span style="text-align:right">Länge</span><span>Übergang davor</span><span></span>';
   list.appendChild(head);
 
   const editable = conductor.editableFrom;
@@ -441,7 +442,7 @@ function renderQueue() {
       <div class="ti"><div class="t"></div><div class="a"></div></div>
       <span class="num">${a.bpm.toFixed(1)}</span>
       <span><span class="key"></span></span>
-      <div class="energy"><i style="width:${Math.round((t.energy ?? 0.5) * 100)}%"></i></div>
+      <span class="genre"></span>
       <canvas class="struct"></canvas>
       <span class="num">${fmtTime(a.duration)}</span>
       <span class="trans"></span>
@@ -451,6 +452,17 @@ function renderQueue() {
     row.title = t.path;
     keyChip($('.key', row), a.key.camelot);
     drawStructure($('.struct', row), a);
+    const gsel = document.createElement('select');
+    gsel.className = 'sel';
+    gsel.innerHTML = `<option value="auto">Auto · ${GENRES[t.genreAuto] || '?'}</option>` +
+      Object.entries(GENRES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+    gsel.value = genreOverrides()[t.path] || 'auto';
+    gsel.title = 'Musikrichtung dieses Tracks (bestimmt, wie gemixt wird)';
+    gsel.onchange = () => {
+      setGenreOverride(t.path, gsel.value === 'auto' ? null : gsel.value);
+      conductor.applyGenres(resolveGenre);
+    };
+    $('.genre', row).appendChild(gsel);
 
     const trans = $('.trans', row);
     const preview = previewCache.get(id);
@@ -548,6 +560,15 @@ function renderRemoved() {
 
 // ------------------------------------------------------------------ Ordner laden
 
+let currentPlaylist = null;
+const playlistKey = () => `${folderRoot}|${currentPlaylist}`;
+
+/** Track-Override > Playlist-Override > automatisch */
+function resolveGenre(t) {
+  const all = genreOverrides();
+  return all[t.path] || all[playlistKey()] || null;
+}
+
 const ROOT_PLAYLIST = '__root__';
 const ALL_PLAYLISTS = '__all__';
 let folderFiles = [];
@@ -605,6 +626,9 @@ async function loadPlaylist(name) {
   if (loadingFolder) return;
   loadingFolder = true;
   saveSettings({ playlist: name });
+  currentPlaylist = name;
+  $('#playlist-genre').value = genreOverrides()[playlistKey()] || 'auto';
+  $('#playlist-genre').hidden = false;
   const files = name === ALL_PLAYLISTS ? folderFiles : folderFiles.filter((f) => playlistOf(f.path) === name);
   const prog = $('#progress');
   const setProgress = (done, total, fname) => {
@@ -630,7 +654,7 @@ async function loadPlaylist(name) {
     for (const d of engine.decks) {
       if (d.track && d.status.playing && !found.some((t) => t.id === d.track.id)) found.unshift(d.track);
     }
-    conductor.setLibrary(found);
+    conductor.setLibrary(found, resolveGenre);
     if (conductor.autopilot && !engine.decks[conductor.master].status.playing) conductor.start();
   } catch (err) {
     toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
@@ -656,6 +680,13 @@ async function boot() {
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
   $('#playlist').onchange = (e) => loadPlaylist(e.target.value);
+  const pg = $('#playlist-genre');
+  pg.innerHTML = '<option value="auto">Richtung: Auto</option>' +
+    Object.entries(GENRES).map(([k, v]) => `<option value="${k}">Richtung: ${v}</option>`).join('');
+  pg.onchange = () => {
+    setGenreOverride(playlistKey(), pg.value === 'auto' ? null : pg.value);
+    conductor.applyGenres(resolveGenre);
+  };
   $('#btn-folder').onclick = async () => {
     const path = await pickFolder();
     if (path) loadFolder(path, ALL_PLAYLISTS);
