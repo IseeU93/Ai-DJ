@@ -271,6 +271,12 @@ function fullEnergyInside(v, b0, b1) {
   return false;
 }
 
+/** Läuft im Bereich [b0, b1) kräftiger Gesang (z. B. Refrain)? */
+function strongVocalInside(v, b0, b1) {
+  for (let b = Math.max(0, b0); b < b1; b++) if (v.vocalSmooth(b) >= 0.6) return true;
+  return false;
+}
+
 /** Erster Takt ab `bar` (auf dem 4er-Raster), an dem kein voller Drop mehr läuft. */
 function afterFullEnergy(v, bar) {
   let b = bar;
@@ -317,6 +323,15 @@ function choosePoints(ctx, lengths, allowFull = false) {
           if (!allowFull) continue;
           sc -= 3; // nur als allerletzte Möglichkeit
         }
+        // Nie wegmischen, während der alte Track kräftigen Gesang hat (man singt mit …)
+        if (strongVocalInside(va, outBar, Math.min(outEnd, E))) {
+          if (!allowFull) continue;
+          sc -= 2;
+        }
+        // … und keinen späteren Gesangsteil überspringen
+        let skippedVocal = 0;
+        for (let bar = outEnd; bar < E; bar++) if (va.vocalSmooth(bar) >= 0.5) skippedVocal++;
+        sc -= skippedVocal * 0.08;
         if (va.label(outBar - 1) !== labStart) {
           sc += 0.35;
           if (labStart === 'break' || labStart === 'outro' || labStart === 'build') {

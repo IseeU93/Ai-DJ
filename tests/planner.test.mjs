@@ -465,3 +465,24 @@ test('Starke Tempo-Anpassung hält die Überlappung kurz', () => {
   const plan = planTransition({ out: track('a', 128), inc: track('d', 120), type: 'blend' });
   assert.ok(plan.bars <= 8, `bars ${plan.bars}`);
 });
+
+test('Nicht während kräftigem Gesang wegmischen und keinen späteren Refrain überspringen', () => {
+  const lateChorus = [
+    { bars: 16, kick: true },
+    { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+    { bars: 8, pad: true },
+    { bars: 16, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true, vocal: true },
+    { bars: 16, kick: true },
+  ];
+  const out = trackWith('lc', 128, lateChorus);
+  const a = out.analysis;
+  const vs = (bar) => ((a.vocals[bar - 1] ?? 0) + 2 * (a.vocals[bar] ?? 0) + (a.vocals[bar + 1] ?? 0)) / 4;
+  for (const type of ['blend', 'filter']) {
+    const plan = planTransition({ out, inc: track('b', 128), type });
+    for (let bar = Math.floor(plan.outBar); bar < plan.outBar + plan.bars && bar < a.barCount; bar++) {
+      assert.ok(vs(bar) < 0.6, `${type}: mischt bei kräftigem Gesang weg (Takt ${bar})`);
+    }
+    assert.ok(plan.outBar >= (a.points.vocalLast ?? 0) - 1, `${type}: überspringt Gesang (Mix ab ${plan.outBar}, Gesang bis ${a.points.vocalLast})`);
+  }
+});
