@@ -146,6 +146,18 @@ export class Conductor extends EventTarget {
     this.emit('plan');
   }
 
+  /** Zum Testen: ein paar Takte vor den geplanten Übergang springen (im Takt). */
+  jumpToTransition(bars = 4) {
+    const p = this.plan;
+    const md = this.masterDeck;
+    if (!p || p.committed || !md.track) return false;
+    const a = md.track.analysis;
+    const lead = Math.min(0, ...p.steps.map((s) => s.at));
+    const target = p.outBar + lead - bars;
+    this.jumpTo(this.master, barToSeconds(a, Math.max(0, target)));
+    return true;
+  }
+
   /** Track aus der Queue sofort reinmixen. */
   mixInto(index) {
     if (index < this.editableFrom) return;
@@ -325,6 +337,7 @@ export class Conductor extends EventTarget {
       outRate: rate,
       type: this.overrides.get(inc.id) || 'auto',
       history: this.history,
+      flavorHistory: this.flavorHistory || [],
       earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : null,
       instant,
     };
@@ -411,8 +424,10 @@ export class Conductor extends EventTarget {
   finishPlan() {
     const p = this.plan;
     this.master = p.inDeck;
+    this.lastPlan = p;
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));
     this.history.push(p.type);
+    this.flavorHistory = [...(this.flavorHistory || []), ...(p.flavors ? [`in:${p.flavors.entry}`, `out:${p.flavors.exit}`] : [])].slice(-4);
     this.rampUntil = p.rampEnd || 0;
     this.rampFrozen = false;
     this.decks[p.outDeck].resetParams();

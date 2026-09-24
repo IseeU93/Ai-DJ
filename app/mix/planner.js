@@ -77,12 +77,19 @@ class TrackView {
   vocalRuns(min = 8) {
     const runs = [];
     let start = null;
+    let gap = 0;
     for (let b = 0; b <= this.end; b++) {
-      const on = b < this.end && this.vocalSmooth(b) >= 0.45;
-      if (on && start === null) start = b;
-      if (!on && start !== null) {
-        if (b - start >= min) runs.push({ from: start, to: b });
+      const on = b < this.end && this.vocalSmooth(b) >= 0.35;
+      if (on) {
+        if (start === null) start = b;
+        gap = 0;
+      } else if (start !== null && b < this.end && gap === 0) {
+        gap = 1; // ein schwächerer Takt unterbricht keine Gesangspassage
+      } else if (start !== null) {
+        const to = b - gap;
+        if (to - start >= min) runs.push({ from: start, to });
         start = null;
+        gap = 0;
       }
     }
     return runs;
@@ -165,14 +172,23 @@ function vocalGuard(ctx, steps, L, sw) {
       else clashAfter = true;
     }
   }
-  if (lastBefore >= 0) {
-    const until = Math.min(sw, lastBefore + 1);
-    steps.push(p(0, 'in', 'vocal', 1), p(until, 'in', 'vocal', 0, 0.5));
-    ctx.notes.push(`Gesang des neuen Tracks bis Takt ${until} abgesenkt (sonst zwei Stimmen gleichzeitig)`);
-  }
+  // Der alte Track darf seine Zeilen zu Ende singen – abgesenkt wird immer der neue.
+  let last = lastBefore;
   if (clashAfter) {
-    steps.push(p(sw, 'out', 'vocal', 1, 0.5));
-    ctx.notes.push('Gesang des alten Tracks nach dem Bass-Swap abgesenkt');
+    for (let t = L - 1; t >= 0; t--) {
+      const ov = va.vocalSmooth(outBarAt(ctx, t));
+      let iv = 0;
+      for (let k = 0; k < Math.max(1, m); k++) iv = Math.max(iv, vb.vocalSmooth(ctx.inBar + t * m + k));
+      if (ov >= 0.45 && iv >= 0.45) {
+        last = Math.max(last, t);
+        break;
+      }
+    }
+  }
+  if (last >= 0) {
+    const until = Math.min(L, last + 1);
+    steps.push(p(0, 'in', 'vocal', 1), p(until, 'in', 'vocal', 0, 0.5));
+    ctx.notes.push(`Stimme des neuen Tracks bis Takt ${until} zurückgenommen – der alte singt seine Zeile zu Ende`);
   }
 }
 
@@ -280,6 +296,14 @@ function choosePoints(ctx, lengths) {
           if (va.vocalSmooth(outBar + t) >= 0.45 && vb.vocalSmooth(inBar + t * m) >= 0.45) clash++;
         }
         sc -= clash * 0.05;
+        // Gesangszeilen des alten Tracks nicht abschneiden: Zeile läuft über das Ende hinaus
+        // oder fällt in die Ausblendphase (zweite Hälfte) -> stark bestrafen
+        if (va.vocalSmooth(outEnd - 1) >= 0.55 && va.vocalSmooth(outEnd) >= 0.55) sc -= 0.8;
+        let lateVocal = 0;
+        for (let t = Math.floor(L / 2); t < L; t++) if (va.vocalSmooth(outBar + t) >= 0.55) lateVocal++;
+        sc -= lateVocal * 0.08;
+        // Gesang direkt vor einem Drop des alten Tracks (Pre-Drop-Zeile) nie mitten drin kappen
+        if (drops.some((d) => d > outBar && d <= outEnd + 1) && va.mean(va.vocalSmooth, outEnd - 2, outEnd) >= 0.6) sc -= 0.5;
         // Energie: Ende des alten Teils vs. Ankunft des neuen – passend zum gewünschten Verlauf
         const eOut = va.mean(va.energy, Math.max(outBar, outEnd - 4), Math.min(outEnd, E));
         const eIn = vb.mean(vb.energy, arrival, arrival + 4);
@@ -291,6 +315,80 @@ function choosePoints(ctx, lengths) {
     }
   }
   return best;
+}
+
+// ------------------------------------------------------------------ Bausteine
+
+export const ENTRY_FLAVORS = { eq: 'EQ-Einstieg', lpOpen: 'Tiefpass öffnet sich', hpIn: 'dünner Hochpass-Einstieg' };
+export const EXIT_FLAVORS = { fade: 'Ausblenden', lpOut: 'Tiefpass-Ausstieg', hpOut: 'Hochpass-Ausstieg', echoOut: 'Echo-Wurf', loopOut: 'Loop-Out' };
+
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Wählt Ein- und Ausstiegs-Baustein passend zu den Tracks (Energie, Helligkeit, Tonart,
+ * Loopbarkeit) mit etwas Abwechslung, und baut sie in den Übergang ein.
+ */
+function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
+  const { va, vb, a, b } = ctx;
+  const roll = hash(`${ctx.outId}|${ctx.inId}`); // stabil pro Paar, verschieden zwischen Paaren
+  const recent = ctx.flavorHistory || [];
+
+  // --- Einstieg
+  const entry = { eq: 1 };
+  const inDark = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 4) < 0.35; // atmosphärisches Intro
+  entry.lpOpen = 0.8 + (inDark ? 0.4 : 0) + (ctx.keyDist >= 0.3 ? 0.3 : 0);
+  entry.hpIn = 0.7 + ((b.brightness ?? -10) > -8 ? 0.2 : 0) + (ctx.energyUp > 0.1 ? 0.2 : 0);
+  // --- Ausstieg
+  const exit = { fade: 0.9 };
+  exit.lpOut = 0.8 + (ctx.energyUp < -0.05 ? 0.5 : 0);
+  exit.hpOut = 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0);
+  exit.echoOut = 0.75 + (ctx.energyUp > 0.15 ? 0.3 : 0) + (va.mean(va.drums, ctx.outBar + L - 2, ctx.outBar + L) > 0.5 ? 0.15 : 0);
+  const tailLoop = bestLoop(va, Math.max(0, ctx.outBar + Math.floor(fadeFrom) - 4), ctx.outBar + Math.floor(fadeFrom), 1);
+  if (!ctx.loopExt && tailLoop && loopable(va, { bar: tailLoop.bar, len: 1 }) && L - fadeFrom >= 1) exit.loopOut = 0.7;
+
+  const pick = (opts, key) => {
+    let best = null;
+    let bestS = -Infinity;
+    Object.entries(opts).forEach(([k, v], i) => {
+      const sc = v - (recent.includes(`${key}:${k}`) ? 0.45 : 0) + 0.35 * hash(`${roll}|${key}|${i}`);
+      if (sc > bestS) {
+        bestS = sc;
+        best = k;
+      }
+    });
+    return best;
+  };
+  const en = pick(entry, 'in');
+  const ex = pick(exit, 'out');
+  ctx.flavors = { entry: en, exit: ex };
+
+  if (en === 'lpOpen') {
+    steps.push(p(0, 'in', 'filter', -0.7), p(q * 0.5, 'in', 'filter', 0, Math.max(1, sw - q * 0.5)));
+    ctx.notes.push('neuer Track öffnet sich langsam aus dem Tiefpass');
+  } else if (en === 'hpIn') {
+    steps.push(p(0, 'in', 'filter', 0.45), p(q, 'in', 'filter', 0, Math.max(1, sw - q)));
+    ctx.notes.push('neuer Track kommt erst dünn (Hochpass) und bekommt dann Körper');
+  }
+  const fl = Math.max(0.5, L - fadeFrom + 0.5);
+  if (ex === 'lpOut') {
+    steps.push(p(fadeFrom - 0.5, 'out', 'filter', -0.6, fl));
+    ctx.notes.push('alter Track verschwindet im Tiefpass');
+  } else if (ex === 'hpOut') {
+    steps.push(p(fadeFrom - 0.5, 'out', 'filter', 0.6, fl));
+    ctx.notes.push('alter Track wird per Hochpass ausgedünnt');
+  } else if (ex === 'echoOut') {
+    steps.push(p(Math.max(fadeFrom, L - 0.75), 'out', 'echo', 0.6, 0.25), p(L - 0.25, 'out', 'echo', 0, 0.25));
+    ctx.notes.push('Echo-Wurf auf dem letzten Beat des alten Tracks');
+  } else if (ex === 'loopOut') {
+    const at = Math.max(Math.ceil(fadeFrom), L - 2);
+    const bar = va.grid(ctx.outBar + at - 1, 1, 'floor');
+    steps.push(act(at, 'out', 'loop', { bars: 1, anchor: bar - ctx.outBar }));
+    ctx.notes.push('alter Track läuft auf einem 1-Takt-Loop aus');
+  }
 }
 
 // ------------------------------------------------------------------ Composer je Technik
@@ -345,15 +443,17 @@ function composeBlend(ctx) {
   steps.push(p(sw, 'in', 'low', 0, swapDur));
   steps.push(p(sw, 'in', 'fader', 1, Math.max(0.5, Math.min(2, q / 2))));
   steps.push(p(sw + 0.5, 'in', 'high', 0, Math.max(0.5, q / 2)));
-  steps.push(p(sw + 0.5, 'out', 'mid', clash ? -14 : -9, Math.max(1, (L - sw) * 0.6)));
+  // Singt der alte Track noch, bleiben Mitten/Lautstärke bis zum Ende seiner Zeile stehen
+  let vEnd = -1;
+  for (let t = 0; t < L; t++) if (va.vocalSmooth(outBarAt(ctx, t)) >= 0.45) vEnd = t;
+  const holdUntil = Math.min(L - 0.5, Math.max(sw + 0.5, vEnd + 1));
+  if (vEnd >= sw) ctx.notes.push(`alter Track singt seine Zeile bis Takt ${vEnd + 1} zu Ende, erst dann raus`);
+  steps.push(p(holdUntil, 'out', 'mid', clash ? -14 : -9, Math.max(0.5, (L - holdUntil) * 0.6)));
   steps.push(p(sw + Math.max(1, q / 2), 'in', 'mid', 0, Math.max(0.5, q / 2)));
-  steps.push(p(Math.max(sw + 1, L - q * 1.5), 'out', 'high', -14, Math.max(1, q)));
-  const fadeFrom = Math.max(sw + 1, L - q * 1.25);
-  if (ctx.energyUp < -0.1) {
-    steps.push(p(fadeFrom - 1, 'out', 'filter', -0.4, L - fadeFrom + 1));
-    ctx.notes.push('alter Track wird zum Ende weich abgedunkelt (Energie geht runter)');
-  }
-  steps.push(p(fadeFrom, 'out', 'fader', 0, L - fadeFrom));
+  steps.push(p(Math.max(holdUntil, L - q * 1.5), 'out', 'high', -14, Math.max(0.5, Math.min(q, L - Math.max(holdUntil, L - q * 1.5)))));
+  const fadeFrom = Math.max(holdUntil, sw + 1, L - q * 1.25);
+  applyFlavors(ctx, steps, { L, sw, q, fadeFrom });
+  steps.push(p(fadeFrom, 'out', 'fader', 0, Math.max(0.25, L - fadeFrom)));
   steps.push(act(L, 'out', 'stop'));
   vocalGuard(ctx, steps, L, sw);
 
@@ -461,8 +561,8 @@ function composeVocal(ctx) {
     if (t + u > limit) break;
     const who = j % 2 === 0 ? 'in' : 'out';
     const has = who === 'in'
-      ? vb.mean(vb.vocal, ctx.inBar + t * m, ctx.inBar + (t + u) * m) >= 0.4
-      : va.mean(va.vocal, outFrom + t, outFrom + t + u) >= 0.4;
+      ? vb.mean(vb.vocal, ctx.inBar + t * m, ctx.inBar + (t + u) * m) >= 0.3
+      : va.mean(va.vocal, outFrom + t, outFrom + t + u) >= 0.3;
     if (!has) break;
     singers.push(who);
   }
@@ -621,7 +721,7 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false }) {
+export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [] }) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -634,6 +734,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     energyUp: (inc.energy ?? 0.5) - (out.energy ?? 0.5),
     earliestBar, instant,
     m: 1, notes: [], loopExt: null,
+    outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
   };
   ctx.m = rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT) ? rel.m : 1;
 
@@ -688,7 +789,11 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
 
   return {
     type: chosen,
-    label: TRANSITIONS[chosen],
+    label: TRANSITIONS[chosen] + (ctx.flavors
+      ? [ctx.flavors.entry !== 'eq' ? ENTRY_FLAVORS[ctx.flavors.entry] : null, ctx.flavors.exit !== 'fade' ? EXIT_FLAVORS[ctx.flavors.exit] : null]
+        .filter(Boolean).map((x) => ` · ${x}`).join('')
+      : ''),
+    flavors: ctx.flavors || null,
     reason: (note ? `${note} · ` : '') + describe(a, b, rel, keyDist, masterBpm),
     notes: ctx.notes,
     bars: L,

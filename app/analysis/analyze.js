@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 6;
+export const ANALYSIS_VERSION = 7;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -259,6 +259,7 @@ function spectralFeatures(mid, side, sr) {
   const chroma = new Float32Array(frames * 12);
   const vocal = new Float32Array(frames);
   const totals = new Float32Array(frames);
+  const pitch = new Float32Array(frames); // Tonhöhe (Halbtöne) des stärksten mittigen Peaks
 
   const vLo = Math.round(350 / binHz);
   const vHi = Math.round(4000 / binHz);
@@ -295,6 +296,8 @@ function spectralFeatures(mid, side, sr) {
     // Stimme ~ zentrierte (Mitte >> Seite), tonale Peaks im Bereich 350–4000 Hz.
     // Rauschen (Hi-Hats) hat keine Peaks, breite Pads/Synths haben viel Seitenanteil.
     let centered = 0;
+    let domE = 0;
+    let domK = 0;
     for (let k = vLo + 3; k <= vHi - 3; k++) {
       const p = pow[k];
       if (p < pow[k - 1] || p < pow[k + 1]) continue;
@@ -302,8 +305,14 @@ function spectralFeatures(mid, side, sr) {
       if (p < neigh * 4) continue;
       const peak = p + pow[k - 1] + pow[k + 1];
       const sidePeak = sideBand[t * nb + k - vLo] + sideBand[t * nb + k - vLo - 1] + sideBand[t * nb + k - vLo + 1];
-      centered += Math.max(0, peak - 2 * sidePeak);
+      const c = Math.max(0, peak - 2 * sidePeak);
+      centered += c;
+      if (c > domE) {
+        domE = c;
+        domK = k;
+      }
     }
+    pitch[t] = domK ? 12 * Math.log2((domK * binHz) / 440) : NaN;
     vocal[t] = centered;
     totals[t] = total;
     // Frame-Chroma normieren (Wurzel der Frame-Energie als Gewicht), damit laute Passagen nicht alles bestimmen
@@ -321,7 +330,7 @@ function spectralFeatures(mid, side, sr) {
   const ref = percentile(totals, 0.9) || 1;
   for (let t = 0; t < frames; t++) vocal[t] /= ref;
 
-  return { chroma, vocal, frames, fps: sr / SPEC_HOP };
+  return { chroma, vocal, pitch, frames, fps: sr / SPEC_HOP };
 }
 
 function estimateKey(chroma, frames) {
@@ -428,6 +437,15 @@ export function analyzeTrack(L, R, sr) {
     const t1 = t0 + 4 * beatInterval;
     const [f0, f1] = frameRange(t0, t1);
     let v = 0;
+    let moves = 0;
+    let pairs = 0;
+    for (let f = f0 + 1; f < f1; f++) {
+      const d = Math.abs(spec.pitch[f] - spec.pitch[f - 1]);
+      if (!Number.isFinite(d)) continue;
+      pairs++;
+      if (d >= 0.5 && d <= 8) moves++; // Melodieschritt (kein Oktav-/Obertonsprung)
+    }
+    const melody = pairs ? moves / pairs : 0;
     const chroma = new Float64Array(12);
     for (let f = f0; f < f1; f++) {
       v += spec.vocal[f];
@@ -463,7 +481,8 @@ export function analyzeTrack(L, R, sr) {
       rms: db(rmsRange(mid, t0 * sr, t1 * sr)),
       low: db(sub),
       high: db(rmsRange(highSig, t0 * sr, t1 * sr)),
-      vocalRaw: v / Math.max(1, f1 - f0),
+      // Stimme = mittig + tonal + melodisch; stehende Akkorde (Pads) bewegen sich kaum
+      vocalRaw: (v / Math.max(1, f1 - f0)) * Math.min(1, 0.15 + 4 * melody),
       chroma: Array.from(chroma, (x) => x / cn),
       onset: onset / Math.max(1, e1 - e0),
       kick,
@@ -583,8 +602,9 @@ export function analyzeTrack(L, R, sr) {
   // Gesangsgrenzen (mind. 2 Takte am Stück, damit einzelne Ausreißer nicht zählen)
   let vocalFirst = null;
   let vocalLast = null;
+  const vs = (i) => ((vocals[i - 1] ?? 0) + 2 * vocals[i] + (vocals[i + 1] ?? 0)) / 4;
   for (let i = 0; i < barCount - 1; i++) {
-    if (vocals[i] >= 0.5 && vocals[i + 1] >= 0.5) {
+    if (vs(i) >= 0.45 && vs(i + 1) >= 0.45) {
       if (vocalFirst === null) vocalFirst = i;
       vocalLast = i + 1;
     }

@@ -263,6 +263,7 @@ function updateTransition(now) {
   const typeSel = $('#tr-type');
   typeSel.disabled = !nextId || !!p?.committed;
   mixNow.disabled = !nextId || !!p?.committed || !engine.decks[conductor.master].status.playing;
+  $('#btn-jump').disabled = !p || !!p.committed;
   const waitingLoad = conductor.forceSoon && !p && conductor.loading.some(Boolean);
   mixNow.textContent = waitingLoad ? 'Lädt …' : conductor.forceSoon && !p?.committed ? 'Startet …' : 'Jetzt mixen';
 
@@ -559,6 +560,9 @@ async function boot() {
   $('#btn-reorder').onclick = () => conductor.reorderAI();
   $('#btn-reshuffle').onclick = () => conductor.reshuffle();
   $('#btn-mixnow').onclick = () => conductor.mixNow();
+  $('#btn-jump').onclick = () => {
+    if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
+  };
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
   $('#autopilot').onchange = (e) => {
     conductor.setAutopilot(e.target.checked);
