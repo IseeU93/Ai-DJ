@@ -17,11 +17,9 @@ import { createScannerAudioSnapshot } from '../src/visuals/scanner/AudioSnapshot
 import { Choreographer } from '../src/show/Choreographer.js';
 import { AutoPunctuation } from '../src/show/AutoPunctuation.js';
 import { insightAt, boundariesBetween, keyPalette, GENRE_ESCALATION } from './insight.js';
+import { buildShowPlan, segmentAt } from './showplan.js';
 
 const STORE = 'automix.laser';
-const SLOW = new Set(['liquidSky', 'snake', 'lissajous', 'waveform']);
-const AGGRESSIVE = new Set(['chaosBlades', 'hotBeams', 'spiral', 'scanner']);
-const UPTEMPO_CALM = ['tunnel', 'lsdTunnel', 'spiral', 'hotBeams'];
 const LOW_KILLED = -15; // dB: Bass dieses Decks ist rausgedreht -> der andere trägt den Groove
 
 /** Die Analyse-Pipeline der Lasershow, aber an einem vorhandenen Knoten statt an einem Mikrofon. */
@@ -124,6 +122,9 @@ export class LaserStage extends EventTarget {
     this.sig = null;
     this.appliedAt = 0;
     this.lastConfigSent = 0;
+    this.plans = new Map();
+    this.heldEffect = null;
+    this.heldSince = -Infinity;
     this.status = { deck: -1, phase: '-', beatsToDrop: Infinity, bpm: 0, key: null, mixing: false };
     this.applySettings();
 
@@ -297,6 +298,7 @@ export class LaserStage extends EventTarget {
     this.sendAudio(data);
     if (this.beamerOpen && performance.now() - this.lastConfigSent > 1000) this.sendConfig();
     if (++this.seq % 6 === 0) this.emitStatus();
+    if (this.seq % 60 === 0) this.prepare();
   }
 
   emitStatus() {
@@ -388,7 +390,6 @@ export class LaserStage extends EventTarget {
       },
       performance.now(),
     );
-    cfg.effect = d.primaryEffect;
     cfg.palette = d.palette;
     cfg.speed = d.speed;
     cfg.trailLength = d.trailLength;
@@ -396,17 +397,38 @@ export class LaserStage extends EventTarget {
     cfg.autoRotate = d.autoRotate;
     cfg.show.colorMode = d.colorMode;
     cfg.show.intensity = 'auto';
-    if (d.effectConfig && cfg[d.primaryEffect]) Object.assign(cfg[d.primaryEffect], d.effectConfig);
-    for (const [k, preset] of Object.entries(d.overlayEffectConfigs || {})) if (cfg[k]) Object.assign(cfg[k], preset);
     const strobe = cfg.autoStrobe.enabled !== false;
     if (strobe && d.hotBeamsConfig) Object.assign(cfg.hotBeams, d.hotBeamsConfig);
     cfg._strobeGate = strobe ? d.strobeGate || null : null;
     cfg.blackout = this.manualBlackout || (cfg.autoBlackout.enabled !== false && Boolean(d.blackout));
-    cfg._overlayEffect = d.overlayEffect;
-    cfg._overlayEffects = d.overlayEffects || (d.overlayEffect ? [d.overlayEffect] : []);
-    cfg._overlayOpacity = d.overlayOpacity;
+    cfg._overlayOpacity = 1;
     cfg._aggression = d.aggression;
-    this.hardPassage(cfg, d, data, st);
+
+    // Welcher Effekt läuft, steht im vorab berechneten Show-Plan des Tracks (Wechsel nur auf
+    // Phrasengrenzen). Ohne Track-Analyse entscheidet der Choreograph, aber mit Mindest-Haltezeit.
+    const seg = st ? this.segmentFor(st) : null;
+    let effect;
+    let overlays;
+    if (seg) {
+      effect = seg.effect;
+      overlays = seg.overlay ? [seg.overlay] : [];
+    } else {
+      const now = performance.now();
+      if (d.primaryEffect !== this.heldEffect && now - this.heldSince > 8000) {
+        this.heldEffect = d.primaryEffect;
+        this.heldSince = now;
+      }
+      effect = this.heldEffect || d.primaryEffect;
+      overlays = [];
+    }
+    cfg.effect = effect;
+    cfg._overlayEffects = overlays;
+    cfg._overlayEffect = overlays[0] || null;
+    for (const e of [effect, ...overlays]) {
+      const preset = this.choreo._presetFor?.(e);
+      if (preset && cfg[e]) Object.assign(cfg[e], preset);
+    }
+    this.tune(cfg, seg, st);
     // Tonart-Farben: Grundfarbe aus der Tonart des Tracks, pro Phrase eine Nuance weiter. Im Drop
     // behält der Choreograph seine Kontrastfarben (Weiß/Regenbogen), damit der Drop knallt.
     const pal = this.settings.keyColors && st ? keyPalette(st.track.analysis.key) : null;
@@ -424,60 +446,51 @@ export class LaserStage extends EventTarget {
     }
   }
 
+  /** Show-Plan des Tracks (einmal pro Track und Musikrichtung berechnet, auch für das Vorladedeck). */
+  segmentFor(st) {
+    const plan = this.planFor(st.track);
+    return plan.length ? segmentAt(plan, Math.max(0, st.ins.bar)) : null;
+  }
+
+  planFor(t) {
+    const key = `${t.id}|${t.genre}|${t.analysis.bpm}|${t.analysis.firstBeat}`;
+    let plan = this.plans.get(key);
+    if (!plan) {
+      plan = buildShowPlan(t.analysis, t.genre, t.id);
+      this.plans.set(key, plan);
+      if (this.plans.size > 40) this.plans.delete(this.plans.keys().next().value);
+    }
+    return plan;
+  }
+
+  /** Geladene Tracks (auch das Deck für den nächsten Übergang) schon vorab einplanen. */
+  prepare() {
+    for (const d of this.engine.decks) if (d.track?.analysis) this.planFor(d.track);
+  }
+
   /**
-   * Harte Passagen (Hardstyle/Uptempo-Kicks, knallende Drops): der aggressive Balken (Beam Sweep)
-   * übernimmt und peitscht im Takt über den Schirm. Langsame, schwebende Effekte (Liquid Sky,
-   * Snake, Lissajous, Wellenform) passen zu harten Kicks nicht und fliegen raus – bei Uptempo auch
-   * außerhalb der Drops.
+   * Feinschliff je Musikrichtung: Harte Drops (Hardstyle/Uptempo) fahren den Balken schnell, aber
+   * nur einen gleichzeitig und in ~1 s über den Schirm. Pop/Rap nie schneller als normal.
    */
-  hardPassage(cfg, d, data, st) {
+  tune(cfg, seg, st) {
     const genre = st?.track.genre;
-    const hardGenre = genre === 'uptempo' || genre === 'hardstyle';
-    const ins = st?.ins;
-    const kicks = (ins?.drums ?? 0) >= 0.6;
-    // nur im echten Drop/Hauptteil mit kräftigen Kicks – nicht jede Strophe
-    const loud = ins ? ins.phase === 'drop' : data.energy?.phase === 'drop';
-    // Nur harte Musik bekommt den harten Modus: Hardstyle/Uptempo, bei House/EDM nur ganz laute
-    // Drops. Pop und Rap nie – dort wirkt das hektisch.
-    const hard = loud && kicks && (hardGenre || (genre === 'edm' && (ins?.level ?? 0) > 0.9));
     const bs = cfg.beamSweep;
-    if (hard) {
-      // höchstens eine Zusatzebene, und nichts Schwebendes
-      cfg._overlayEffects = cfg._overlayEffects.filter((e) => e !== 'beamSweep' && !SLOW.has(e)).slice(0, 1);
-      cfg._overlayEffect = cfg._overlayEffects[0] || null;
-      cfg.effect = 'beamSweep';
-      // Tempo nach Zeit statt nach Schlägen: ein Balken quert den Schirm in ~1,1 s (Uptempo ~0,9 s),
-      // egal ob 150 oder 250 BPM – sonst wird es bei Uptempo hektisch
-      const beatSec = 60 / Math.max(60, data.bpm || 128);
+    if (seg?.hard && cfg.effect === 'beamSweep') {
+      const beatSec = 60 / Math.max(60, this.status.bpm || 128);
       const perBeat = beatSec / (genre === 'uptempo' ? 0.9 : 1.1);
       bs.speed = Math.max(1, Math.min(8, perBeat <= 0.18 ? (perBeat - 0.045) / 0.045 : 3 + (perBeat - 0.18) / 0.06));
       bs.count = 1;
-      bs.maxConcurrent = 1; // ein Balken nach dem anderen, kein Gewimmel
+      bs.maxConcurrent = 1;
       bs.thickness = 3;
-      bs.orientation = 'auto';
       cfg.speed = Math.max(cfg.speed, 1.2);
       cfg.trailLength = Math.min(cfg.trailLength, 0.2);
-      this.hard = true;
-      return;
-    }
-    if (this.hard) {
-      bs.speed = DEFAULT_CONFIG.beamSweep.speed;
-      bs.count = DEFAULT_CONFIG.beamSweep.count;
-      bs.thickness = DEFAULT_CONFIG.beamSweep.thickness;
+    } else {
+      bs.speed = Math.min(bs.speed ?? 1, 2);
+      bs.count = Math.min(bs.count ?? 1, 2);
       delete bs.maxConcurrent;
-      this.hard = false;
     }
-    if (genre === 'pop' || genre === 'rap') {
-      // ruhiger Grundcharakter: nicht schneller als normal, keine Trails-Hektik
-      cfg.speed = Math.min(cfg.speed, 1);
-    }
-    if (genre === 'uptempo') {
-      // auch in ruhigeren Teilen: nichts Schwebendes, dafür schneller
-      if (SLOW.has(cfg.effect)) cfg.effect = UPTEMPO_CALM[Math.max(0, ins?.phraseIndex ?? 0) % UPTEMPO_CALM.length];
-      cfg._overlayEffects = cfg._overlayEffects.filter((e) => !SLOW.has(e));
-      cfg._overlayEffect = cfg._overlayEffects[0] || null;
-      cfg.speed = Math.max(cfg.speed, 1.15);
-    }
+    if (genre === 'pop' || genre === 'rap') cfg.speed = Math.min(cfg.speed, 1);
+    else if (genre === 'uptempo') cfg.speed = Math.max(cfg.speed, 1.15);
   }
 
   punctuate(data) {

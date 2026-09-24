@@ -80,3 +80,30 @@ test('Tonart ergibt eine feste Farbpalette, Nachbartonarten liegen farblich nah'
   assert.deepEqual(keyPalette({ camelot: '8A' }), p8a);
   assert.equal(keyPalette(null), null);
 });
+
+import { buildShowPlan, segmentAt } from '../app/laser/dj/showplan.js';
+
+test('Show-Plan: Effekte wechseln nur auf Phrasengrenzen, nie öfter als alle 8 Takte', () => {
+  const a = fakeTrack();
+  for (const g of ['edm', 'pop', 'rap', 'hardstyle', 'uptempo']) {
+    const plan = buildShowPlan(a, g, 'track-1');
+    assert.ok(plan.length >= 3, g);
+    for (let i = 0; i < plan.length; i++) {
+      assert.ok(plan[i].bars >= 8, `${g}: Segment ${i} nur ${plan[i].bars} Takte`);
+      assert.ok(a.phrases.some((p) => p.bar === plan[i].bar), 'Wechsel nicht auf Phrasengrenze');
+      if (i) assert.notEqual(plan[i].effect, plan[i - 1].effect, `${g}: zweimal derselbe Effekt hintereinander`);
+    }
+  }
+});
+
+test('Show-Plan: vorhersehbar, harte Drops mit Balken, Pop ohne Zusatzebenen', () => {
+  const a = fakeTrack();
+  assert.deepEqual(buildShowPlan(a, 'edm', 'x'), buildShowPlan(a, 'edm', 'x'));
+  const up = buildShowPlan(a, 'uptempo', 'x');
+  const drop = segmentAt(up, 20);
+  assert.equal(drop.phase, 'drop');
+  assert.equal(drop.effect, 'beamSweep');
+  assert.equal(drop.hard, true);
+  assert.ok(buildShowPlan(a, 'pop', 'x').every((s) => !s.overlay && !s.hard));
+  assert.ok(!['liquidSky', 'snake', 'lissajous'].includes(segmentAt(up, 34).effect), 'Uptempo-Break schwebt');
+});
