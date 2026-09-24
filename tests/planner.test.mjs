@@ -596,3 +596,20 @@ test('Teaser: Hook des neuen Tracks 2 Takte im Break des alten, nie über seine 
   // kein Platz vor dem Übergang -> kein Teaser
   assert.equal(planTeaser(a, inc.analysis, plan.outBar, plan.outBar - 6), null);
 });
+
+import { learn } from '../app/mix/feedback.js';
+
+test('Lernen aus Bewertungen: 👎 für eine Technik -> andere Technik, "zu lang" -> kürzer', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const base = planTransition({ out, inc });
+  const bad = Array.from({ length: 6 }, () => ({ verdict: 'down', type: base.type, genres: base.genres, reasons: ['long'] }));
+  const learned = learn(bad);
+  assert.ok(learned.bias[base.type] < -0.5, `bias ${learned.bias[base.type]}`);
+  assert.ok(learned.tune.lengthScale < 0.8, `lengthScale ${learned.tune.lengthScale}`);
+  const after = planTransition({ out, inc, bias: learned.bias, tune: learned.tune });
+  assert.notEqual(after.type, base.type, `immer noch ${after.type}`);
+  const good = learn(Array.from({ length: 6 }, () => ({ verdict: 'up', type: 'filter', genres: ['edm', 'edm'], reasons: [] })));
+  assert.ok(good.bias.filter > 0 && good.bias['filter@edm>edm'] >= good.bias.filter);
+  assert.equal(learn([]).n, 0);
+});

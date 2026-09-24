@@ -49,6 +49,7 @@ export class Conductor extends EventTarget {
     this.forceSoon = false;
     this.autopilot = false;
     this.freestyle = false;
+    this.learned = { bias: {}, tune: {} }; // aus deinen Bewertungen (siehe feedback.js)
     this.nextTrickAt = 0;
     this.lastTrick = null;
     this.timer = setInterval(() => this.tick(), 40);
@@ -319,7 +320,7 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle });
+      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune });
       out.set(b.id, p);
       history.push(p.type);
     }
@@ -564,6 +565,8 @@ export class Conductor extends EventTarget {
       instant,
       freestyle: this.freestyle,
       keylock: od.keylock,
+      bias: this.learned.bias,
+      tune: this.learned.tune,
     };
     let plan = planTransition(opts);
     if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
@@ -648,8 +651,19 @@ export class Conductor extends EventTarget {
     this.emit('plan');
   }
 
+  /** Gelernte Vorlieben übernehmen (nach einer Bewertung) und neu planen. */
+  setLearned(learned) {
+    this.learned = learned;
+    this.invalidatePlan();
+  }
+
   finishPlan() {
     const p = this.plan;
+    this.emit('transitionDone', {
+      type: p.type, label: p.label, genres: p.genres, bars: p.bars, outBar: p.outBar, inBar: p.inBar,
+      audit: p.audit ? { issues: p.audit.issues, penalty: +p.audit.penalty.toFixed(2) } : null,
+      out: this.track(p.outId), inc: this.track(p.inId), freestyle: this.freestyle,
+    });
     this.master = p.inDeck;
     this.lastPlan = p;
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));

@@ -9,6 +9,7 @@ import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
+import { REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -892,6 +893,56 @@ async function boot() {
     conductor.setFreestyle(e.target.checked);
     saveSettings({ freestyle: e.target.checked });
   };
+  // Bewertung des letzten Übergangs -> die App lernt deinen Geschmack
+  let lastTransition = null;
+  const applyLearned = () => {
+    const l = learn();
+    conductor.setLearned(l);
+    $('#tr-learned').innerHTML = `Gelernt: ${describeLearned(l, TRANSITIONS)} · <a href="#" id="fb-copy">Protokoll kopieren</a>`;
+    $('#fb-copy').onclick = async (ev) => {
+      ev.preventDefault();
+      const text = JSON.stringify(loadFeedback(), null, 1);
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Übergangs-Protokoll kopiert – kannst du mir einfach schicken');
+      } catch {
+        toast('Kopieren nicht erlaubt');
+      }
+    };
+  };
+  applyLearned();
+  const rateBox = $('#tr-rate');
+  const reasonsBox = $('#rate-reasons');
+  reasonsBox.innerHTML = Object.entries(REASONS).map(([k, v]) => `<button class="btn small chip" data-r="${k}">${v}</button>`).join('');
+  const save = (verdict, reasons = []) => {
+    if (!lastTransition) return;
+    const t = lastTransition;
+    addFeedback({
+      verdict, reasons, type: t.type, label: t.label, genres: t.genres, bars: t.bars,
+      out: t.out ? `${t.out.artist || ''} – ${t.out.title || t.out.name || ''}` : '',
+      in: t.inc ? `${t.inc.artist || ''} – ${t.inc.title || t.inc.name || ''}` : '',
+      outBar: t.outBar, inBar: t.inBar, audit: t.audit, freestyle: t.freestyle,
+    });
+    lastTransition = null;
+    rateBox.hidden = true;
+    reasonsBox.hidden = true;
+    applyLearned();
+    toast(verdict === 'up' ? 'Gemerkt – öfter so' : 'Gemerkt – wird angepasst');
+  };
+  $('#rate-up').onclick = () => save('up');
+  $('#rate-down').onclick = () => {
+    reasonsBox.hidden = !reasonsBox.hidden;
+  };
+  reasonsBox.onclick = (e) => {
+    const r = e.target.closest('[data-r]')?.dataset.r;
+    if (r) save('down', [r]);
+  };
+  conductor.addEventListener('transitionDone', (e) => {
+    lastTransition = e.detail;
+    $('#rate-name').textContent = `${e.detail.label} (${e.detail.inc?.title || ''})`;
+    rateBox.hidden = false;
+    reasonsBox.hidden = true;
+  });
   conductor.addEventListener('teaser', (e) => {
     const el = $('#tr-trick');
     const wait = Math.max(0, e.detail.at - engine.now);

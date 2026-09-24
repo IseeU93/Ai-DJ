@@ -4,6 +4,7 @@
 // ausführt, plus Notizen, warum der Übergang so gebaut wurde.
 import { BEATMATCH_LIMIT, camelotDistance, keySync, shiftCamelot, tempoRelation } from './order.js';
 import { GENRES, combineProfiles, detectGenre } from './genre.js';
+import { auditPlan } from './audit.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
@@ -378,6 +379,7 @@ function choosePoints(ctx, lengths, allowFull = false) {
         else if (swapDrop === undefined) sc -= skippedMain * 0.035;
         else sc -= Math.max(0, skippedMain - 16) * 0.035; // beim Drop-Swap ersetzt der neue Drop den alten
         sc -= Math.max(0, E - outEnd) * 0.001;
+        sc += (ctx.tune?.exitShift ?? 0) * (outBar / E);
         // Nicht ein langes, ereignisloses Ende ausspielen: nach dem letzten Hauptteil/Gesang
         // höchstens ein paar Takte warten, dann mixen
         const idle = Math.max(0, outBar - quietFrom);
@@ -863,6 +865,7 @@ function chorusExit(ctx) {
     if (tail <= 8) sc -= 0.6;
     if (bar >= vocalEnd - 2) sc -= 0.3;
     sc -= 0.05 * frac; // bei Gleichstand lieber den früheren passenden Refrain-Schluss
+    sc += ctx.tune.exitShift * frac; // gelernt: "zu früh" -> später, "zu spät" -> früher
     if (!best || sc > best.sc) best = { bar, sc };
   }
   return best;
@@ -877,7 +880,19 @@ function composeChorus(ctx) {
   // erste Stimme oder erster Hauptteil – was zuerst kommt (Gesangserkennung kann spät anschlagen)
   const first = Math.min(b.points.vocalFirst ?? Infinity, b.points.dropBar ?? Infinity, start + 16);
   const introBars = Math.max(0, Math.floor((first - start) / m));
-  const pre = ctx.instant ? 0 : Math.min(8, introBars >= 4 ? 4 * Math.floor(Math.min(introBars, 8) / 4) : introBars >= 2 ? introBars : 0);
+  let pre = ctx.instant ? 0 : Math.min(8, introBars >= 4 ? 4 * Math.floor(Math.min(introBars, 8) / 4) : introBars >= 2 ? introBars : 0);
+  // Der Wechsel muss auch im neuen Track auf einer Phrasengrenze liegen (sonst kippt er dort
+  // mitten in einen Abschnitt): Vorlauf auf dessen 4er-Raster ausrichten
+  if (pre > 0) {
+    const offB = b.phraseOffset || 0;
+    const grid = (bar) => ((((bar - offB) % 4) + 4) % 4) === 0;
+    let best = null;
+    for (let k = 1; k <= 8; k++) {
+      if (!grid(start + k * m)) continue;
+      if (best === null || Math.abs(k - pre) < Math.abs(best - pre)) best = k;
+    }
+    if (best !== null) pre = best;
+  }
   // Einstieg frei wie ein DJ: meist am Anfang des neuen Songs – soll die Energie hoch (oder zur
   // Abwechslung), direkt in seinen Refrain/Hook. Dann läuft der Takt davor ohne Gesang/Bass an.
   const hook = hookBar(vb, b);
@@ -1056,8 +1071,10 @@ function composePingPong(ctx) {
   if (ctx.keyDist > 0.35 || ctx.instant) return null;
   const U = 4;
   const L = 4 * U;
-  const exit = chorusExit(ctx);
-  const from = exit ? exit.bar - L : va.grid(va.end * 0.6, 4);
+  // Pop/Rap: nach einem Refrain; Clubmusik: am Ende, wo sonst das Outro gemischt würde
+  const exit = ctx.profile.shortForm ? chorusExit(ctx) : null;
+  const clubEnd = Math.min(va.end - 2, (ctx.a.points.outroBar ?? va.end - 8) + 8);
+  const from = exit ? exit.bar - L : va.grid(clubEnd - L, 4, 'floor');
   const outBar = Math.max(ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0, from);
   if (outBar + L > va.end) return null;
   if (va.mean(va.drums, outBar, outBar + L) < 0.35) return null;
@@ -1209,7 +1226,43 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true }) {
+/**
+ * Plant mehrere Varianten (die bestbewerteten Techniken), prüft jede im Selbstcheck (zwei Stimmen,
+ * zwei Basslines, Lautstärke-Loch, Wechsel neben der Eins, abgeschnittene Zeile) und nimmt die
+ * beste. Erzwungene Techniken und "Jetzt mixen" werden nur geprüft, nicht ersetzt.
+ */
+export function planTransition(opts) {
+  const first = planSingle(opts);
+  const va = new TrackView(opts.out.analysis);
+  const vb = new TrackView(opts.inc.analysis);
+  first.audit = auditPlan(first, va, vb);
+  const forced = opts.type && opts.type !== 'auto' && opts.type in TRANSITIONS;
+  let best = first;
+  if (!forced && !opts.instant && first.ranked) {
+    let bestTotal = first.score - first.audit.penalty;
+    const tried = new Set([first.type]);
+    for (const [k] of first.ranked) {
+      if (tried.size >= 4) break;
+      if (tried.has(k)) continue;
+      tried.add(k);
+      const alt = planSingle(opts, k);
+      if (alt.type !== k) continue; // Technik passte nicht (Rückfall auf Blend)
+      alt.audit = auditPlan(alt, va, vb);
+      const total = alt.score - alt.audit.penalty;
+      if (total > bestTotal + 0.05) {
+        best = alt;
+        bestTotal = total;
+      }
+    }
+    if (best !== first) {
+      best.notes.push(`Selbstcheck: statt ${TRANSITIONS[first.type]} (${first.audit.issues.join(', ') || 'knapp schlechter'})`);
+    }
+  }
+  if (best.audit.issues.length) best.notes.push(`Selbstcheck: ${best.audit.issues.join(', ')}`);
+  return best;
+}
+
+function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null }, pick = null) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -1222,7 +1275,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   let ks = keySync(outKey, b.key.camelot, keylock && (b.key.confidence ?? 1) > 0.15 && (a.key.confidence ?? 1) > 0.15);
   if (vocalIn >= 0.2 && Math.abs(ks.semis) > 1) ks = { semis: 0, dist: camelotDistance(outKey, b.key.camelot) };
   const keyDist = ks.dist;
-  const forced = type !== 'auto' && type in TRANSITIONS;
+  const forced = !pick && type !== 'auto' && type in TRANSITIONS;
   const ctx = {
     a, b, va: new TrackView(a), vb: new TrackView(b),
     rel, keyDist, masterBpm,
@@ -1231,6 +1284,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory, freestyle,
+    tune: { lengthScale: 1, exitShift: 0, hardness: 0, ...(tune || {}) },
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
@@ -1240,18 +1294,22 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   ctx.m = rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT) ? rel.m : 1;
 
   let chosen = type;
+  let ranked = null;
+  let chosenScore = 0;
   if (!forced) {
     const c = scoreStyles(ctx);
     const last = history[history.length - 1];
     const prev = history[history.length - 2];
-    let best = -Infinity;
-    for (const [k, score] of Object.entries(c)) {
-      const s = score - (k === last ? 0.3 : 0) - (k === prev ? 0.15 : 0);
-      if (s > best) {
-        best = s;
-        chosen = k;
-      }
-    }
+    // gelernte Vorlieben aus deinen Bewertungen (👍/👎 pro Technik und Genre-Paar)
+    const pair = `${ctx.genreOut}>${ctx.genreIn}`;
+    for (const k of Object.keys(c)) c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0);
+    for (const k of ['cut', 'roll', 'mashin']) if (k in c) c[k] -= ctx.tune.hardness;
+    ranked = Object.entries(c)
+      .map(([k, score]) => [k, score - (k === last ? 0.3 : 0) - (k === prev ? 0.15 : 0)])
+      .sort((x, y) => y[1] - x[1]);
+    const picked = pick ? ranked.find(([k]) => k === pick) : ranked[0];
+    if (picked) [chosen, chosenScore] = picked;
+    else chosen = pick;
   }
   let note = '';
   // Unsicheres Beatgrid (z. B. Live-Drums, schwankendes Tempo): lange Beatmatches würden
@@ -1265,7 +1323,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
   // Überlappung nach Zeit begrenzen: 16 Takte bei 96 BPM wären 40 s zwei Songs übereinander
   const barSec = (4 * 60) / masterBpm;
-  const maxSec = ctx.profile.shortForm ? 20 : 65; // House/Techno dürfen lang verweben, Pop nicht
+  const maxSec = (ctx.profile.shortForm ? 20 : 65) * ctx.tune.lengthScale; // House/Techno dürfen lang verweben, Pop nicht
   const byTime = Math.max(Math.min(...ctx.profile.lengths), [32, 16, 8, 4].find((L) => L * barSec <= maxSec) ?? 4);
   ctx.maxL = Math.min(ctx.maxL, byTime);
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
@@ -1279,6 +1337,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   if (!result) {
     note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : chosen === 'mashup' || chosen === 'mashin' ? 'kein passender Abschnitt ohne Gesang' : 'keine passenden Gesangszeilen'}) – Blend`;
     chosen = 'blend';
+    chosenScore = ranked?.find(([k]) => k === 'blend')?.[1] ?? chosenScore; // Rückfall zählt als Blend
     ctx.notes = [];
     ctx.loopExt = null;
     result = composeBlend(ctx);
@@ -1333,6 +1392,8 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     inBar: ctx.inBar,
     echoBeats: 1, // Wiederholungen immer genau auf dem Beat
     steps: cleaned,
+    score: chosenScore,
+    ranked,
   };
 }
 
