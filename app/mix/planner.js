@@ -34,6 +34,15 @@ class TrackView {
   constructor(a) {
     this.a = a;
     this.end = a.points.lastBar + 1;
+    // Ausklingen (Fade-out) am Ende ist kein nutzbares Material: Übergänge enden davor
+    if (a.barEnergy) {
+      let e = this.end;
+      while (e > (a.barCount || this.end) * 0.6 && a.barEnergy[e - 1] < -9) e--;
+      if (e < this.end) {
+        this.fadeFrom = e;
+        this.end = e;
+      }
+    }
   }
 
   _at(arr, bar, def) {
@@ -132,9 +141,22 @@ function bestLoop(v, from, to, len) {
   return best;
 }
 
-/** Klingt ein Loop an dieser Stelle natürlich? Drums, kein Gesang, starke Wiederholung. */
-function loopable(v, loop) {
-  return v.mean(v.repeat, loop.bar, loop.bar + loop.len) >= 0.6
+/**
+ * Klingt ein Loop an dieser Stelle natürlich? Drums, kein Gesang, starke Wiederholung und
+ * gleichmäßige Lautstärke (sonst springt es bei jedem Durchlauf laut/leise).
+ * `joinBar`: Takt, an dem der Loop einsetzt – dort muss die Lautstärke zum Loop-Anfang passen.
+ */
+function loopable(v, loop, joinBar = null) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let b = loop.bar; b < loop.bar + loop.len; b++) {
+    lo = Math.min(lo, v.energy(b));
+    hi = Math.max(hi, v.energy(b));
+  }
+  const steady = hi - lo <= 2.5 && lo > -8;
+  const joins = joinBar === null || Math.abs(v.energy(joinBar) - v.energy(loop.bar)) <= 2.5;
+  return steady && joins
+    && v.mean(v.repeat, loop.bar, loop.bar + loop.len) >= 0.6
     && v.mean(v.drums, loop.bar, loop.bar + loop.len) >= 0.4
     && v.mean(v.vocal, loop.bar, loop.bar + loop.len) < 0.3;
 }
@@ -217,8 +239,8 @@ function extendWithLoop(ctx, steps, L) {
   if (avail >= L) return L;
   const lo = Math.max(outBar, va.end - 16);
   const loop = bestLoop(va, lo, va.end, avail >= 12 ? 8 : 4);
-  // nur loopen, wenn sich die Stelle wirklich wiederholt (sonst klingt der Loop "falsch")
-  if (!loop || !loopable(va, loop)) {
+  // nur loopen, wenn sich die Stelle wirklich wiederholt und gleich laut bleibt
+  if (!loop || !loopable(va, loop, loop.bar + loop.len - 1)) {
     ctx.notes.push('altes Outro zu kurz – Übergang verkürzt');
     return Math.max(2, Math.floor(avail / 2) * 2);
   }
@@ -348,7 +370,7 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   exit.hpOut = 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0);
   if (ctx.energyUp > 0.25) exit.echoOut = 0.45;
   const tailLoop = bestLoop(va, Math.max(0, ctx.outBar + Math.floor(fadeFrom) - 4), ctx.outBar + Math.floor(fadeFrom), 1);
-  if (!ctx.loopExt && tailLoop && loopable(va, { bar: tailLoop.bar, len: 1 }) && L - fadeFrom >= 1) exit.loopOut = 0.7;
+  if (!ctx.loopExt && tailLoop && loopable(va, { bar: tailLoop.bar, len: 1 }, tailLoop.bar) && L - fadeFrom >= 1) exit.loopOut = 0.5;
 
   const pick = (opts, key) => {
     let best = null;

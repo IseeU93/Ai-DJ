@@ -264,3 +264,32 @@ test('Mittlerer Tempo-Sprung (12 %) -> sauberer Drop-Cut statt Echo', () => {
   const plan = planTransition({ out: track('a', 128), inc: track('d', 113) });
   assert.equal(plan.type, 'cut', plan.type);
 });
+
+test('Leises Ausklingen am Ende: kein Loop, der laut/leise springt, Übergang endet vor dem Fade', () => {
+  const s = synthSong({ bpm: 128, root: 57, offset: 0.2, sections: [
+    { bars: 16, kick: true },
+    { bars: 32, kick: true, bass: true, pad: true },
+    { bars: 12, kick: true, bass: true, pad: true },
+  ] });
+  // letzte 12 Takte langsam ausblenden
+  const beat = 60 / 128;
+  const fadeStart = Math.round((0.2 + 48 * 4 * beat) * s.sr);
+  for (let i = fadeStart; i < s.L.length; i++) {
+    const g = Math.max(0.02, 1 - (i - fadeStart) / (s.L.length - fadeStart));
+    s.L[i] *= g * g;
+    s.R[i] *= g * g;
+  }
+  const out = { id: 'f', analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5 };
+  const a = out.analysis;
+  for (const type of ['blend', 'loop', 'filter']) {
+    const plan = planTransition({ out, inc: track('b', 128), type });
+    for (const l of plan.steps.filter((x) => x.action === 'loop')) {
+      const bar = plan.outBar + l.anchor;
+      const e = Array.from(a.barEnergy).slice(bar, bar + Math.max(1, l.bars));
+      assert.ok(Math.max(...e) - Math.min(...e) <= 2.5, `${type}: Loop über ungleich laute Takte ${e}`);
+    }
+    const lastOutBar = plan.outBar + plan.bars;
+    assert.ok(a.barEnergy[Math.min(a.barCount - 1, lastOutBar - 1)] > -9 || plan.steps.some((x) => x.action === 'loop'),
+      `${type}: Übergang reicht in den Fade (bis Takt ${lastOutBar})`);
+  }
+});
