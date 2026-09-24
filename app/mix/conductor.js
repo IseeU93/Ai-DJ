@@ -271,6 +271,30 @@ export class Conductor extends EventTarget {
     else this.start();
   }
 
+  /**
+   * "Länger spielen": der laufende Song kommt gut an – den geplanten Übergang um 16 Takte nach
+   * hinten schieben (auf das nächste passende Phrasenende). Mehrfach drücken schiebt weiter.
+   * Liefert false, wenn der Song dafür nicht mehr lang genug ist oder der Übergang schon läuft.
+   */
+  extend(bars = 16) {
+    if (this.plan?.committed) return false;
+    const md = this.masterDeck;
+    const a = md.track?.analysis;
+    if (!a) return false;
+    const nowBar = secondsToBar(a, md.realAt(this.engine.now) / this.engine.sr);
+    const base = Math.max(this.plan?.outBar ?? nowBar, this.extendFrom ?? 0, nowBar);
+    const lastBar = a.points?.lastBar ?? Math.floor(secondsToBar(a, a.duration));
+    // so weit wie möglich, aber mit Platz für einen sauberen Übergang vor dem Songende
+    const from = Math.min(base + bars, lastBar - 8);
+    if (from < base + 2) return false;
+    this.extendFrom = from;
+    this.forceSoon = false;
+    this.soonWindow = false;
+    this.invalidatePlan();
+    this.emit('plan');
+    return true;
+  }
+
   /** Freestyle: wildere Übergänge + kleine Tricks im laufenden Track. */
   setFreestyle(on) {
     this.freestyle = on;
@@ -560,7 +584,7 @@ export class Conductor extends EventTarget {
       history: this.history,
       flavorHistory: this.flavorHistory || [],
       outKeyShift: md.keyShift || 0,
-      earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : soon ? nowBar + leadBars + 1 : null,
+      earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : soon ? nowBar + leadBars + 1 : this.extendFrom ?? null,
       latestBar: soon ? nowBar + leadBars + 32 : null,
       instant,
       freestyle: this.freestyle,
@@ -569,7 +593,7 @@ export class Conductor extends EventTarget {
       tune: this.learned.tune,
     };
     let plan = planTransition(opts);
-    if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
+    if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: Math.max(nowBar + leadBars, this.extendFrom ?? 0) });
 
     const barSec = (4 * 60) / plan.masterBpm;
     const realOut0 = barToSeconds(a, plan.outBar) * sr;
@@ -676,6 +700,7 @@ export class Conductor extends EventTarget {
     this.plan = null;
     this.forceSoon = false;
     this.soonWindow = false;
+    this.extendFrom = null;
     if (this.autopilot) {
       this.recycleIfNeeded();
       this.reorderAI();

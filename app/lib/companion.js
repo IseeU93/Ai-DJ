@@ -46,6 +46,7 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
         type: p.type,
         committed: !!p.committed,
         inSec: p.firstStepTime ? Math.max(0, Math.round(p.firstStepTime - engine.now)) : null,
+        extended: conductor.extendFrom != null,
         notes: (p.notes || []).slice(0, 3),
       } : null,
       queue: q.slice(from, from + 60).map((id, k) => ({ ...trackInfo(conductor.track(id)), i: from + k, current: from + k === conductor.pos })),
@@ -102,6 +103,7 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
   const COMMANDS = {
     togglePlay: () => conductor.togglePlay(conductor.master),
     mixNow: () => conductor.mixNow(),
+    extend: () => conductor.extend(),
     skip: () => {
       const next = conductor.track(conductor.queue[conductor.pos + 1]);
       if (next) conductor.mixSoon(next);

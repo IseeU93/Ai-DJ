@@ -886,6 +886,9 @@ async function boot() {
   $('#btn-reorder').onclick = () => conductor.reorderAI();
   $('#btn-reshuffle').onclick = () => conductor.reshuffle();
   $('#btn-mixnow').onclick = () => conductor.mixNow();
+  $('#btn-extend').onclick = () => {
+    if (!conductor.extend()) toast('Länger geht nicht – der Song ist fast zu Ende oder der Übergang läuft schon.');
+  };
   $('#btn-jump').onclick = () => {
     if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
   };
