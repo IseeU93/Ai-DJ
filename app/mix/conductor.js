@@ -5,6 +5,7 @@ import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
 import { detectGenre } from './genre.js';
+import { planTrick } from './freestyle.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
 const LEAD_SECONDS = 2.5; // Mindestvorlauf für normal geplante Übergänge
@@ -45,6 +46,9 @@ export class Conductor extends EventTarget {
     this.loading = [null, null];
     this.forceSoon = false;
     this.autopilot = false;
+    this.freestyle = false;
+    this.nextTrickAt = 0;
+    this.lastTrick = null;
     this.timer = setInterval(() => this.tick(), 40);
   }
 
@@ -264,6 +268,14 @@ export class Conductor extends EventTarget {
     else this.start();
   }
 
+  /** Freestyle: wildere Übergänge + kleine Tricks im laufenden Track. */
+  setFreestyle(on) {
+    this.freestyle = on;
+    this.nextTrickAt = this.engine.now + 8;
+    this.invalidatePlan();
+    this.emit('plan');
+  }
+
   setAutopilot(on) {
     this.autopilot = on;
     if (on) {
@@ -305,7 +317,7 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history });
+      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle });
       out.set(b.id, p);
       history.push(p.type);
     }
@@ -370,6 +382,7 @@ export class Conductor extends EventTarget {
     if (md.track && md.status.playing && md.realAt(now) >= md.length) md.stopAt(now);
 
     if (!this.automix || !md.track || !md.status.playing) return;
+    if (this.freestyle) this.maybeTrick(now);
     if (this.autopilot && !this.plan?.committed && this.recycleIfNeeded()) {
       this.reorderAI();
       return;
@@ -427,6 +440,51 @@ export class Conductor extends EventTarget {
     }
   }
 
+  /**
+   * Freestyle-Trick auf dem laufenden Track an der nächsten Phrasengrenze einplanen. Nie während
+   * eines Übergangs, nie kurz davor, nie in einem Loop oder einer Tempo-Rampe.
+   */
+  maybeTrick(now) {
+    if (now < this.nextTrickAt || this.plan?.committed || now < this.rampUntil) return;
+    // Übergang wird gerade (neu) geplant, z. B. nach einem Sprung -> erst den Plan abwarten
+    if (!this.plan && this.queue[this.pos + 1]) return;
+    if (now < (this.holdPlanningUntil || 0)) return;
+    const md = this.masterDeck;
+    if (md.status.loopLen > 0) return;
+    const a = md.track.analysis;
+    const sr = this.engine.sr;
+    const rate = md.status.rate || 1;
+    const sec = md.realAt(now) / sr;
+    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick);
+    if (!trick) {
+      this.nextTrickAt = now + 2;
+      return;
+    }
+    const barSec = (4 * a.beatInterval) / rate;
+    const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
+    // Abstand zum geplanten Übergang: mindestens 8 Takte
+    if (this.plan && T(this.plan.outBar) - T(trick.bar) < 8 * barSec) {
+      this.nextTrickAt = now + 4;
+      return;
+    }
+    const cur = md.values();
+    for (const s of trick.steps) {
+      const t = T(trick.bar + s.at);
+      if (s.param) {
+        md.ramp(s.param, t, cur[s.param], t + (s.dur || 0) * barSec, s.to);
+        cur[s.param] = s.to;
+      } else if (s.action === 'loop') {
+        md.segment(md.virtualAt(t), barToSeconds(a, trick.bar + s.anchor) * sr, s.bars * 4 * a.beatInterval * sr);
+      } else if (s.action === 'unloop') {
+        md.segment(md.virtualAt(t), barToSeconds(a, trick.bar + s.at) * sr, 0);
+      }
+    }
+    this.lastTrick = trick.kind;
+    // nächster Trick frühestens 16–32 Takte später
+    this.nextTrickAt = T(trick.bar) + (16 + Math.floor(Math.random() * 5) * 4) * barSec;
+    this.emit('trick', trick);
+  }
+
   makePlan() {
     const sr = this.engine.sr;
     const now = this.engine.now;
@@ -454,6 +512,7 @@ export class Conductor extends EventTarget {
       earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : soon ? nowBar + leadBars + 1 : null,
       latestBar: soon ? nowBar + leadBars + 32 : null,
       instant,
+      freestyle: this.freestyle,
     };
     let plan = planTransition(opts);
     if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
@@ -493,6 +552,8 @@ export class Conductor extends EventTarget {
     inn.cancel({ transport: true, ratesAfter: this.engine.now });
     inn.setKeyShift(plan.keyShift || 0);
     for (const name of PARAMS) inn.cancelFrom(name, this.engine.now);
+    // noch eingeplante Freestyle-Tricks auf dem alten Track verwerfen – jetzt gilt der Übergang
+    for (const name of PARAMS) out.cancelFrom(name, this.engine.now);
 
     for (const s of plan.steps) {
       const deck = s.deck === 'out' ? out : inn;

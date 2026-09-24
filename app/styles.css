@@ -389,3 +389,5 @@ select.sel:disabled { opacity: 0.5; }
   .transition { grid-template-columns: minmax(0, 1fr) auto; }
   .transition .tr-timeline { grid-column: 1 / -1; grid-row: 2; }
 }
+
+.tr-info .trick { color: var(--a); font-size: 11.5px; min-height: 0; }

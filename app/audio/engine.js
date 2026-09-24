@@ -357,7 +357,10 @@ export class Deck {
       for (let k = 1; k <= n; k++) {
         const x = k / n;
         const e = x * x * (3 - 2 * x);
-        param.linearRampToValueAtTime(map(v0 + (v1 - v0) * e), t0 + (t1 - t0) * x);
+        // Fader: in der Leistung (Quadrat) überblenden statt in der Amplitude – laufen zwei Tracks
+        // gegenläufig, bleibt die Gesamtlautheit konstant (kein Loch in der Mitte, wie am DJ-Mixer)
+        const v = name === 'fader' ? Math.sqrt(Math.max(0, v0 * v0 + (v1 * v1 - v0 * v0) * e)) : v0 + (v1 - v0) * e;
+        param.linearRampToValueAtTime(map(v), t0 + (t1 - t0) * x);
       }
     }
   }

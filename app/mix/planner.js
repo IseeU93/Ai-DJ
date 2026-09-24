@@ -8,6 +8,10 @@ import { GENRES, combineProfiles, detectGenre } from './genre.js';
 export const TRANSITIONS = {
   blend: 'Blend',
   chorus: 'Refrain-Wechsel',
+  mashup: 'Mashup: alte Stimme, neuer Beat',
+  mashin: 'Mashup: neue Stimme, alter Beat',
+  roll: 'Loop-Roll',
+  pingpong: 'Hin und her',
   handoff: 'Vocal-Übergabe',
   loop: 'Loop-Mix',
   vocal: 'Lyrics-Wechsel',
@@ -770,9 +774,12 @@ function composeEcho(ctx) {
 function chorusExit(ctx) {
   const { va } = ctx;
   const E = va.end;
-  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(E * 0.45, 4);
+  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(E * 0.4, 4);
+  // Nicht bis ins leere Ende: spätestens, solange noch Musik/Gesang da ist
+  const vocalEnd = (va.a.points.vocalLast ?? E) + 1;
+  const last = Math.min(E - 4, Math.max(from, vocalEnd));
   let best = null;
-  for (let bar = from; bar <= E - 4; bar += 4) {
+  for (let bar = from; bar <= last; bar += 4) {
     if (!va.isPhraseStart(bar) && bar % 8 !== (va.a.phraseOffset ?? 0) % 8) continue;
     const before = va.mean(va.vocalSmooth, bar - 8, bar);
     const eBefore = va.mean(va.energy, bar - 8, bar);
@@ -784,9 +791,14 @@ function chorusExit(ctx) {
     if (va.label(bar) !== va.label(bar - 1)) sc += 0.2;
     // Gesangszeile läuft genau über die Grenze -> Zeile würde abgeschnitten
     if (va.vocalSmooth(bar - 1) >= 0.6 && va.vocalSmooth(bar) >= 0.6 && va.vocal(bar) > va.vocal(bar - 1) + 0.15) sc -= 0.3;
+    // Wo es musikalisch passt – kein fester Prozentwert. Nur: nicht zu früh (weniger als die
+    // Hälfte gespielt) und nicht ins ausklingende Ende, wo nur noch Leerlauf käme.
     const frac = bar / E;
-    sc -= Math.abs(frac - 0.72) * (ctx.earliestBar !== null ? 0.4 : 1.6); // DJ-typisch: ~2/3–3/4 des Songs
-    if (frac > 0.9) sc -= 0.8;
+    if (frac < 0.5 && ctx.earliestBar === null) sc -= (0.5 - frac) * 2;
+    const tail = E - bar;
+    if (tail <= 8) sc -= 0.6;
+    if (bar >= vocalEnd - 2) sc -= 0.3;
+    sc -= 0.05 * frac; // bei Gleichstand lieber den früheren passenden Refrain-Schluss
     if (!best || sc > best.sc) best = { bar, sc };
   }
   return best;
@@ -802,8 +814,35 @@ function composeChorus(ctx) {
   const first = Math.min(b.points.vocalFirst ?? Infinity, b.points.dropBar ?? Infinity, start + 16);
   const introBars = Math.max(0, Math.floor((first - start) / m));
   const pre = ctx.instant ? 0 : Math.min(8, introBars >= 4 ? 4 * Math.floor(Math.min(introBars, 8) / 4) : introBars >= 2 ? introBars : 0);
+  // Einstieg frei wie ein DJ: meist am Anfang des neuen Songs – soll die Energie hoch (oder zur
+  // Abwechslung), direkt in seinen Refrain/Hook. Dann läuft der Takt davor ohne Gesang/Bass an.
+  const hook = hookBar(vb, b);
+  const dice = hash(`${ctx.outId}|${ctx.inId}|entry`);
+  if (!ctx.instant && hook !== null && (ctx.energyUp > 0.08 || dice < 0.35)) {
+    const hp = 4;
+    ctx.outBar = exit.bar - hp;
+    ctx.inBar = Math.max(start, Math.round(hook - hp * m));
+    return chorusSteps(ctx, exit, hp, `neuer Track steigt direkt vor seinem Refrain ein (Takt ${hook}) – der Hook kommt genau beim Wechsel`);
+  }
   ctx.outBar = exit.bar - pre;
-  ctx.inBar = start; // der neue Song beginnt immer an seinem Anfang, nie mittendrin
+  ctx.inBar = start;
+  return chorusSteps(ctx, exit, pre, pre > 0
+    ? `neuer Track startet am Anfang, sein Intro läuft ${pre} Takte ohne Bass unter dem Refrain`
+    : 'neuer Track startet direkt mit seiner ersten Zeile');
+}
+
+/** Erster Refrain/Hook eines Tracks: lauter Hauptteil mit Gesang, nicht ganz am Anfang. */
+function hookBar(v, t) {
+  const start = t.points.startBar ?? 0;
+  for (const ph of t.phrases) {
+    if (ph.bar < start + 8 || ph.bar > v.end * 0.6) continue;
+    if (ph.label === 'main' && ph.vocal >= 0.4 && ph.energy > -3) return ph.bar;
+  }
+  return null;
+}
+
+function chorusSteps(ctx, exit, pre, entryNote) {
+  const { va } = ctx;
   const steps = [];
   if (pre > 0) {
     steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1));
@@ -821,12 +860,146 @@ function composeChorus(ctx) {
   steps.push(p(pre + 1, 'out', 'echo', 0), act(pre + 1.5, 'out', 'stop'));
   ctx.notes.unshift(
     `Ausstieg nach dem Refrain (Takt ${exit.bar} von ${va.end}), nicht erst am Songende`,
-    pre > 0
-      ? `neuer Track startet am Anfang, sein Intro läuft ${pre} Takte ohne Bass unter dem Refrain`
-      : 'neuer Track startet direkt mit seiner ersten Zeile',
-    'auf der Eins: Bass-Wechsel + kurzer Echo-Schweif, die neue Strophe übernimmt',
+    entryNote,
+    'auf der Eins: Bass-Wechsel + kurzer Echo-Schweif, der neue Track übernimmt',
   );
   return { L: pre + 1.5, steps };
+}
+
+/** Instrumentaler Abschnitt mit Beat (Intro/Break) im Track: Start-Takt oder null. */
+function beatWithoutVocal(v, from, to, len) {
+  for (let bar = v.grid(from, 4); bar + len <= to; bar += 4) {
+    if (v.mean(v.vocalSmooth, bar, bar + len) < 0.3 && v.mean(v.drums, bar, bar + len) >= 0.45) return bar;
+  }
+  return null;
+}
+
+/**
+ * Mashup: Die Stimme des alten Tracks läuft fast a cappella (Kick/Bass weggefiltert) über dem
+ * instrumentalen Beat des neuen Tracks – wie ein Live-Edit. Danach übernimmt der neue ganz.
+ */
+function composeMashup(ctx) {
+  const { va, vb, b, m } = ctx;
+  if (ctx.keyDist > 0.35 || ctx.instant) return null;
+  const U = 8;
+  const runs = va.vocalRuns(8).filter((r) => r.from >= va.end * 0.45 && r.from >= (ctx.earliestBar ?? 0));
+  if (!runs.length) return null;
+  const inst = beatWithoutVocal(vb, b.points.startBar ?? 0, (b.points.vocalFirst ?? vb.end) + 2, U * m);
+  if (inst === null) return null;
+  ctx.outBar = va.grid(runs[0].from, 4, 'floor');
+  ctx.inBar = inst;
+  const steps = [
+    p(0, 'in', 'fader', 0), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
+    p(0, 'in', 'fader', 1, 1),
+    // alter Track: Beat und Bass raus, nur noch Stimme/Mitten
+    p(0, 'out', 'low', KILL, 1), p(0, 'out', 'filter', 0.45, 1), p(0, 'out', 'high', -4, 1),
+    p(U - 0.5, 'out', 'echo', 0.3, 0.5), p(U, 'out', 'fader', 0, 1), p(U, 'in', 'vocal', 0, 1),
+    p(U + 1, 'out', 'echo', 0), act(U + 1.5, 'out', 'stop'),
+  ];
+  ctx.notes.unshift(
+    `Mashup: ${U} Takte singt der alte Track über den Beat des neuen`,
+    'Kick und Bass des alten Tracks sind weggefiltert – nur seine Stimme bleibt',
+  );
+  return { L: U + 1.5, steps };
+}
+
+/**
+ * Mashup andersrum: Die erste Zeile des neuen Tracks (nur Stimme, gefiltert) läuft über den Beat des
+ * alten; erst danach kippt der Beat zum neuen Track.
+ */
+function composeMashIn(ctx) {
+  const { va, vb, b, m } = ctx;
+  if (ctx.keyDist > 0.35 || ctx.instant) return null;
+  const inRun = vb.vocalRuns(4)[0];
+  if (!inRun) return null;
+  const inBar = vb.grid(inRun.from, 4, 'floor');
+  const drop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > inBar);
+  const U = Math.min(8, drop !== undefined ? Math.floor((drop - inBar) / m / 4) * 4 : 8);
+  if (U < 4) return null;
+  const from = Math.max(va.grid(va.end * 0.5, 4), ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0);
+  // alter Track: Beat ohne (oder mit wenig) Gesang – sonst singen zwei
+  const outBar = beatWithoutVocal(va, from, va.end - 4, U + 1);
+  if (outBar === null) return null;
+  ctx.outBar = outBar;
+  ctx.inBar = inBar;
+  const steps = [
+    p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'filter', 0.45),
+    act(0, 'in', 'play'), p(0, 'in', 'fader', 0.9, 0.5), p(0, 'out', 'vocal', 1, 0.5),
+    // Beat kippt: Bass/Kick des neuen rein, alter raus
+    p(U - 0.25, 'out', 'echo', 0.25, 0.25), p(U, 'out', 'fader', 0, 0.5), p(U, 'out', 'low', KILL, 0.1),
+    p(U, 'in', 'filter', 0, 0.1), p(U, 'in', 'low', 0, 0.1), p(U, 'in', 'fader', 1, 0.1),
+    p(U + 1, 'out', 'echo', 0), act(U + 1.5, 'out', 'stop'),
+  ];
+  ctx.notes.unshift(
+    `Mashup: die ersten ${U} Takte singt der neue Track über den Beat des alten`,
+    `bei Takt ${U} kippt der Beat zum neuen Track`,
+  );
+  return { L: U + 1.5, steps };
+}
+
+/**
+ * Loop-Roll (für Mutige): Der letzte Takt vor dem Wechsel wird immer schneller wiederholt
+ * (1/4 -> 1/8 -> 1/16), der Hochpass zieht hoch – und auf der Eins schlägt der neue Track mit
+ * seinem Hook oder Drop ein.
+ */
+function composeRoll(ctx) {
+  const { va, vb, b } = ctx;
+  const exit = ctx.instant ? { bar: va.grid(ctx.earliestBar + 1, 1) } : chorusExit(ctx);
+  if (!exit) return null;
+  const hook = hookBar(vb, b);
+  const dropHasBeat = vb.mean(vb.drums, b.points.dropBar, b.points.dropBar + 4) >= 0.5;
+  const arrival = dropHasBeat ? b.points.dropBar : hook ?? b.points.dropBar;
+  if (arrival === undefined || arrival === null) return null;
+  ctx.outBar = exit.bar - 1;
+  ctx.inBar = arrival;
+  const steps = [
+    act(0, 'out', 'loop', { bars: 0.25, anchor: 0 }),
+    act(0.5, 'out', 'loop', { bars: 0.125, anchor: 0.5 }),
+    act(0.75, 'out', 'loop', { bars: 0.0625, anchor: 0.75 }),
+    p(0, 'out', 'filter', 0.55, 1), p(0.5, 'out', 'low', KILL, 0.5), p(0.875, 'out', 'echo', 0.35, 0.125),
+    p(1, 'out', 'fader', 0), p(1, 'in', 'fader', 1), act(1, 'in', 'play'),
+    p(1.5, 'out', 'echo', 0), act(2, 'out', 'stop'),
+  ];
+  ctx.notes.unshift('Loop-Roll: der letzte Takt wird immer schneller wiederholt, der Filter zieht hoch', `auf der Eins schlägt der neue Track ein (Takt ${arrival})`);
+  return { L: 1.25, steps };
+}
+
+/**
+ * Hin und her (Freestyle): Beide Tracks laufen im Takt, der Groove springt alle 4 Takte zwischen
+ * ihnen hin und her – Bass und Stimme wechseln die Seite, bis der neue Track endgültig übernimmt.
+ */
+function composePingPong(ctx) {
+  const { va, vb, b, m } = ctx;
+  if (ctx.keyDist > 0.35 || ctx.instant) return null;
+  const U = 4;
+  const L = 4 * U;
+  const exit = chorusExit(ctx);
+  const from = exit ? exit.bar - L : va.grid(va.end * 0.6, 4);
+  const outBar = Math.max(ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0, from);
+  if (outBar + L > va.end) return null;
+  if (va.mean(va.drums, outBar, outBar + L) < 0.35) return null;
+  const start = b.points.startBar ?? 0;
+  const inBar = vb.mean(vb.drums, start, start + L * m) >= 0.35 ? start : beatWithoutVocal(vb, start, vb.end - L, L * m) ?? start;
+  ctx.outBar = outBar;
+  ctx.inBar = inBar;
+  const steps = [
+    p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), act(0, 'in', 'play'), p(0, 'in', 'fader', 0.85, 1),
+    // 1: neuer Groove übernimmt
+    p(U, 'out', 'low', KILL, 0.1), p(U, 'in', 'low', 0, 0.1), p(U, 'out', 'vocal', 1, 0.25),
+    // 2: zurück zum alten – der neue wird dünn gefiltert
+    p(2 * U, 'in', 'low', KILL, 0.1), p(2 * U, 'out', 'low', 0, 0.1), p(2 * U, 'out', 'vocal', 0, 0.25),
+    p(2 * U, 'in', 'filter', 0.3, 0.5),
+    // 3: endgültig zum neuen
+    p(3 * U, 'in', 'filter', 0, 0.1), p(3 * U, 'in', 'low', 0, 0.1), p(3 * U, 'in', 'fader', 1, 0.1),
+    p(3 * U, 'out', 'low', KILL, 0.1), p(3 * U, 'out', 'vocal', 1, 0.25),
+    p(L - 2, 'out', 'high', -10, 2), p(L - 2, 'out', 'fader', 0, 2), p(L - 0.25, 'out', 'echo', 0.3, 0.25),
+    p(L + 1, 'out', 'echo', 0), act(L + 1.5, 'out', 'stop'),
+  ];
+  ctx.notes.unshift(
+    `Hin und her: der Groove springt alle ${U} Takte zwischen beiden Tracks`,
+    `ab Takt ${3 * U} gehört er endgültig dem neuen Track`,
+  );
+  return { L: L + 1.5, steps };
 }
 
 /**
@@ -877,6 +1050,10 @@ function composeHandoff(ctx) {
 
 const COMPOSERS = {
   chorus: composeChorus,
+  mashup: composeMashup,
+  mashin: composeMashIn,
+  roll: composeRoll,
+  pingpong: composePingPong,
   handoff: composeHandoff,
   blend: composeBlend,
   loop: composeLoop,
@@ -916,11 +1093,23 @@ function scoreStyles(ctx) {
     // Refrain-Wechsel: bei Songs mit durchgehendem Gesang (Pop/Rap) der natürliche DJ-Weg
     const vocalHeavy = va.mean(va.vocalSmooth, Math.floor(va.end * 0.4), va.end) >= 0.45;
     if (outVocal) c.chorus = 0.9 + (vocalHeavy ? 0.5 : 0) + (outClean < 8 ? 0.3 : 0);
+    // Freie DJ-Techniken: Stimme über fremdem Beat nur, wenn die Tonarten passen
+    if (keyDist <= 0.35 && outVocal) c.mashup = 1.0 + (keyDist <= 0.15 ? 0.25 : 0);
+    if (keyDist <= 0.35 && inVocal) c.mashin = 0.9 + (keyDist <= 0.15 ? 0.25 : 0);
+    c.roll = 0.75 + (energyUp > 0.1 ? 0.25 : 0);
   } else {
     c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
     c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
   }
   for (const k of Object.keys(c)) c[k] += ctx.profile.styles[k] ?? 0;
+  if (ctx.freestyle && tempoOk) {
+    // Freestyle: wilder, verspielter, mehr Abwechslung – aber nie gegen die Tonart
+    // (der brave Standard-Blend tritt zurück, damit die freien Techniken wirklich zum Zug kommen)
+    const boost = { blend: -0.8, filter: -0.2, mashup: 0.7, mashin: 0.7, roll: 0.9, loop: 0.5, handoff: 0.35, vocal: 0.3, chorus: -0.1 };
+    for (const [k, v] of Object.entries(boost)) if (k in c) c[k] += v;
+    if (keyDist <= 0.35) c.pingpong = 1.9;
+    for (const k of Object.keys(c)) c[k] += 1.0 * hash(`${ctx.outId}|${ctx.inId}|${k}|free`);
+  }
   return c;
 }
 
@@ -934,7 +1123,7 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0 }) {
+export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false }) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -951,7 +1140,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     earliestBar, latestBar, instant,
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
-    outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
+    outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory, freestyle,
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
@@ -984,6 +1173,11 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   if (stretch > 0.06) ctx.maxL = Math.min(ctx.maxL, 8);
   else if (stretch > 0.04) ctx.maxL = Math.min(ctx.maxL, 16);
   if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
+  // Überlappung nach Zeit begrenzen: 16 Takte bei 96 BPM wären 40 s zwei Songs übereinander
+  const barSec = (4 * 60) / masterBpm;
+  const maxSec = ctx.profile.shortForm ? 20 : 65; // House/Techno dürfen lang verweben, Pop nicht
+  const byTime = Math.max(Math.min(...ctx.profile.lengths), [32, 16, 8, 4].find((L) => L * barSec <= maxSec) ?? 4);
+  ctx.maxL = Math.min(ctx.maxL, byTime);
   if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
     chosen = 'echo';
@@ -993,7 +1187,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
 
   let result = COMPOSERS[chosen](ctx);
   if (!result) {
-    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : 'keine passenden Gesangszeilen'}) – Blend`;
+    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : chosen === 'mashup' || chosen === 'mashin' ? 'kein passender Abschnitt ohne Gesang' : 'keine passenden Gesangszeilen'}) – Blend`;
     chosen = 'blend';
     ctx.notes = [];
     ctx.loopExt = null;
@@ -1003,7 +1197,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
   // zwei Tracks im Drop klingen immer nach Unfall.
   // (Refrain-Wechsel schaltet selbst genau auf der Eins um – sein Echo-Schweif darf ausklingen)
-  if (chosen !== 'cut' && chosen !== 'echo' && chosen !== 'chorus') {
+  if (!SELF_TIMED.has(chosen)) {
     const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
     if (nextDrop !== undefined) {
       // Hat der neue Track vor dem Drop einen Build-up, muss der alte schon davor weg sein
@@ -1052,6 +1246,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   };
 }
 
+const SELF_TIMED = new Set(['cut', 'echo', 'chorus', 'roll', 'mashin', 'pingpong']);
 const TEASE_STYLES = new Set(['blend', 'filter', 'loop', 'handoff', 'vocal', 'wordplay']);
 const TEASE_LEVEL = 0.22;
 

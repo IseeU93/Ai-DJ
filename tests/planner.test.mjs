@@ -520,3 +520,45 @@ test('Set-Reihenfolge bleibt auch bei 150 Tracks schnell', () => {
   const ms = performance.now() - t0;
   assert.ok(ms < 8000, `${ms.toFixed(0)} ms`);
 });
+
+test('Freie Techniken: Mashup, Mashup andersrum, Loop-Roll liefern echte Pläne', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  for (const type of ['mashup', 'mashin', 'roll']) {
+    const plan = planTransition({ out, inc, type });
+    assert.equal(plan.type, type, `${type} fiel zurück: ${plan.reason}`);
+    assert.ok(plan.steps.some((s) => s.action === 'play' && s.deck === 'in'));
+    assert.ok(plan.steps.some((s) => s.action === 'stop' && s.deck === 'out'));
+  }
+  const roll = planTransition({ out, inc, type: 'roll' });
+  const loops = roll.steps.filter((s) => s.action === 'loop').map((s) => s.bars);
+  assert.deepEqual(loops, [0.25, 0.125, 0.0625], 'Roll wird nicht schneller');
+  const mash = planTransition({ out, inc, type: 'mashup' });
+  assert.ok(mash.steps.some((s) => s.deck === 'out' && s.param === 'low' && s.to <= -20), 'alter Beat nicht weggefiltert');
+  assert.ok(mash.steps.some((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 1), 'neue Stimme nicht stumm');
+});
+
+import { planTrick } from '../app/mix/freestyle.js';
+
+test('Freestyle: Hin und her wechselt den Groove mehrmals, Tricks lösen sich auf der Eins auf', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const plan = planTransition({ out, inc, type: 'pingpong' });
+  assert.equal(plan.type, 'pingpong', plan.reason);
+  const inBass = plan.steps.filter((s) => s.deck === 'in' && s.param === 'low').map((s) => s.to);
+  assert.ok(inBass.filter((v) => v === 0).length >= 2 && inBass.includes(-26), `Bass pendelt nicht: ${inBass}`);
+  // Freestyle wählt öfter mal etwas anderes als den Standard-Blend
+  const types = new Set();
+  for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) {
+    types.add(planTransition({ out: { ...out, id: `o${id}` }, inc: { ...inc, id }, freestyle: true }).type);
+  }
+  assert.ok(types.size >= 2, `immer ${[...types]}`);
+  const a = out.analysis;
+  for (let d = 0; d < 1; d += 0.1) {
+    const t = planTrick(a, 10, d);
+    if (!t) continue;
+    assert.ok(t.bar >= 12 && a.phrases.some((ph) => ph.bar === t.bar), 'Trick nicht an Phrasengrenze');
+    const last = t.steps[t.steps.length - 1];
+    assert.equal(last.at, 0, 'Trick endet nicht auf der Eins');
+  }
+});

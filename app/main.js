@@ -888,6 +888,16 @@ async function boot() {
     if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
   };
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
+  $('#freestyle').onchange = (e) => {
+    conductor.setFreestyle(e.target.checked);
+    saveSettings({ freestyle: e.target.checked });
+  };
+  conductor.addEventListener('trick', (e) => {
+    const el = $('#tr-trick');
+    el.textContent = `Freestyle: ${e.detail.name}`;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => (el.textContent = ''), 8000);
+  });
   $('#autopilot').onchange = (e) => {
     conductor.setAutopilot(e.target.checked);
     $('#automix').checked = conductor.automix;
@@ -933,7 +943,11 @@ async function boot() {
     .then(({ initLaserPane }) => initLaserPane({ engine, conductor }))
     .catch((err) => console.error('Lasershow', err));
 
-  const { folder, autopilot } = loadSettings();
+  const { folder, autopilot, freestyle } = loadSettings();
+  if (freestyle) {
+    $('#freestyle').checked = true;
+    conductor.setFreestyle(true);
+  }
   if (autopilot) {
     $('#autopilot').checked = true;
     $('#automix').disabled = true;
