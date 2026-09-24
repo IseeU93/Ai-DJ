@@ -38,7 +38,7 @@ test('keylock bei rate 1 ist transparent', () => {
   core.schedulePlay(0, 0);
   const { L } = render(core, SR);
   let maxErr = 0;
-  for (let i = core.Ha + DECLICK_PAD; i < SR - 10; i++) maxErr = Math.max(maxErr, Math.abs(L[i] - src[i]));
+  for (let i = DECLICK_PAD; i < SR - 10; i++) maxErr = Math.max(maxErr, Math.abs(L[i] - src[i]));
   assert.ok(maxErr < 1e-4, `maxErr ${maxErr}`);
 });
 const DECLICK_PAD = 256;
@@ -109,4 +109,26 @@ test('geplanter Start beginnt exakt am Frame', () => {
   const { L } = render(core, 2000);
   assert.equal(L[999], 0);
   assert.ok(L[1000] > 0);
+});
+
+test('keylock: saubere Wiedergabe bei -3 % (kaum Obertöne/Knackser)', () => {
+  // Akkord aus drei Tönen: Stretch darf keine starken Sprünge zwischen Samples erzeugen
+  const n = SR * 3;
+  const src = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    src[i] = 0.3 * Math.sin(2 * Math.PI * 220 * t) + 0.2 * Math.sin(2 * Math.PI * 277 * t) + 0.2 * Math.sin(2 * Math.PI * 330 * t);
+  }
+  const core = new DeckCore(SR);
+  core.load(src, src);
+  core.scheduleRate(0, 0.97, 0);
+  core.schedulePlay(0, 0);
+  const { L } = render(core, SR * 2);
+  let maxStep = 0;
+  for (let i = SR / 10; i < SR * 2; i++) maxStep = Math.max(maxStep, Math.abs(L[i] - L[i - 1]));
+  // Quelle: max. Sampleschritt ~ 2π·330/48000·0.7 ≈ 0.03
+  assert.ok(maxStep < 0.06, `maxStep ${maxStep}`);
+  const f = zeroCrossFreq(L, SR, SR / 2, SR * 2);
+  const fs = zeroCrossFreq(src, SR, SR / 2, SR * 2);
+  assert.ok(Math.abs(f - fs) < 3, `freq ${f} vs ${fs}`);
 });

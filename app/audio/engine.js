@@ -33,15 +33,18 @@ export class Engine {
     this.ctx = ctx;
     this.sr = ctx.sampleRate;
 
+    // Headroom: zwei überlappende Tracks summieren sich (Kicks im Takt bis +6 dB) –
+    // der Bus sitzt deshalb tiefer, der Limiter fängt nur echte Spitzen ab statt dauernd zu pumpen.
     this.bus = ctx.createGain();
+    this.bus.gain.value = 0.7;
     this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -3;
+    this.limiter.threshold.value = -1.5;
     this.limiter.knee.value = 0;
     this.limiter.ratio.value = 20;
-    this.limiter.attack.value = 0.002;
-    this.limiter.release.value = 0.15;
+    this.limiter.attack.value = 0.001;
+    this.limiter.release.value = 0.25;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.9;
+    this.master.gain.value = 1;
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 1024;
     this.bus.connect(this.limiter).connect(this.master).connect(this.analyser).connect(ctx.destination);

@@ -39,6 +39,15 @@ for (const bpm of [124, 128, 140, 95]) {
     const other = v.slice(40 - barShift, 56 - barShift);
     const mean = (x) => x.reduce((p, c) => p + c, 0) / x.length;
     assert.ok(mean(inVocal) > mean(other) + 0.3, `vocal ${mean(inVocal)} vs ${mean(other)}`);
+    // Drums: Intro (Kick) hat Drums, Break (nur Pad) nicht
+    const dr = Array.from(a.barDrums);
+    assert.ok(mean(dr.slice(4 - barShift, 12 - barShift)) > 0.4, `intro drums ${mean(dr.slice(4, 12))}`);
+    assert.ok(mean(dr.slice(33 - barShift, 39 - barShift)) < 0.3, `break drums ${mean(dr.slice(33, 39))}`);
+    assert.ok(mean(dr.slice(18 - barShift, 30 - barShift)) > 0.5, `main drums ${mean(dr.slice(18, 30))}`);
+    assert.deepEqual(a.points.drops.map((d) => d + barShift), [16, 40], `drops ${a.points.drops}`);
+    assert.ok(Math.abs(a.points.vocalFirst + barShift - 16) <= 1, `vocalFirst ${a.points.vocalFirst}`);
+    // Loop-taugliche Takte: der Main-Teil wiederholt sich
+    assert.ok(mean(Array.from(a.barRepeat).slice(44 - barShift, 52 - barShift)) > 0.6, 'repeat');
     // A-Moll bzw. parallel C-Dur -> Camelot 8 (A/B sind harmonisch kompatibel)
     assert.match(a.key.camelot, /^8[AB]$/, `key ${a.key.name}`);
   });

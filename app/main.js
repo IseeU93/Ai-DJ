@@ -509,7 +509,7 @@ async function boot() {
   buildStrip(0);
   buildStrip(1);
 
-  new Slider($('#master-vol'), { value: 0.9, onInput: (v) => engine.setMasterVolume(v) });
+  new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
   $('#btn-folder').onclick = async () => {

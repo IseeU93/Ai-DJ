@@ -6,7 +6,7 @@
 //    linear (len = 0) oder ein Loop (len > 0). Loops, Loop-Rolls und Sprünge sind damit nur
 //    neue Segmente ab einer virtuellen Position – der Conductor kann sie sample-genau im
 //    Voraus planen, weil v(t) unabhängig von Loops linear bleibt.
-//  - Keylock: WSOLA-Time-Stretch (Tempo ändern ohne Tonhöhe). Ohne Keylock: Vinyl-Modus.
+//  - Keylock: Time-Stretch (Tempo ändern ohne Tonhöhe). Ohne Keylock: Vinyl-Modus.
 
 const SEAM = 96; // Crossfade-Länge an Loop-/Sprungnähten (gegen Klicks)
 const DECLICK = 256; // Ein-/Ausblendlänge bei Start/Stop
@@ -36,17 +36,13 @@ export class DeckCore {
     this.keylock = true;
     this.vinylPos = 0;
 
-    // WSOLA
-    let n = 1;
-    while (n < sampleRate * 0.042) n <<= 1;
-    this.N = n;
-    this.Ha = n >> 1;
-    this.S = Math.round(sampleRate * 0.006) & ~3;
-    this.win = new Float32Array(n);
-    for (let i = 0; i < n; i++) this.win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
-    this.accL = new Float32Array(n);
-    this.accR = new Float32Array(n);
-    const cap = n * 4;
+    // Time-Stretch nach dem SoundTouch-Prinzip: lange Abschnitte (SEQ) werden 1:1 übernommen,
+    // nur an den Nahtstellen wird kurz (OV) überblendet – an der Stelle mit der besten
+    // Übereinstimmung (Suche ±SEEK). Klingt deutlich sauberer als dauerhaft überlappende Grains.
+    this.N = Math.round(sampleRate * 0.06); // Sequenzlänge
+    this.OV = Math.round(sampleRate * 0.01); // Überblendlänge
+    this.S = Math.round(sampleRate * 0.012) & ~3; // Suchbereich ±
+    const cap = this.N * 4;
     this.fifoL = new Float32Array(cap);
     this.fifoR = new Float32Array(cap);
     this.fifoV = new Float64Array(cap);
@@ -55,11 +51,13 @@ export class DeckCore {
     this.fifoCount = 0;
     this.nominal = 0;
     this.prevActual = null;
-    const scratch = n + 2 * this.S + 8;
+    this.tailL = new Float32Array(this.OV);
+    this.tailR = new Float32Array(this.OV);
+    this.tailM = new Float32Array(this.OV);
+    const scratch = this.N + 2 * this.S + 8;
     this.tmpL = new Float32Array(scratch);
     this.tmpR = new Float32Array(scratch);
     this.tmpM = new Float32Array(scratch);
-    this.tmpT = new Float32Array(this.Ha);
   }
 
   load(L, R) {
@@ -90,8 +88,6 @@ export class DeckCore {
     this.prevActual = null;
     this.fifoHead = 0;
     this.fifoCount = 0;
-    this.accL.fill(0);
-    this.accR.fill(0);
   }
 
   /** Ab virtueller Position v gilt: real = real0 (+ Fortschritt, bei len > 0 geloopt). */
@@ -257,54 +253,52 @@ export class DeckCore {
     return this.keylock ? this.nominal : this.vinylPos;
   }
 
-  // ---------- WSOLA ----------
+  // ---------- Time-Stretch ----------
 
   _generateGrain(emitFrame) {
-    const { N, Ha, S } = this;
+    const { N, OV } = this;
     const rate = this.rateAt(emitFrame);
     const nom = Math.round(this.nominal);
     let actual = nom;
-
-    if (this.prevActual !== null) {
-      const natural = this.prevActual + Ha;
-      if (natural !== nom) {
-        actual = this._search(nom, natural);
-      }
-    }
+    const hasPrev = this.prevActual !== null;
+    // natürliche Fortsetzung = kein Suchen nötig (Tempo 1, kein Versatz) -> bitgenau transparent
+    if (hasPrev && this.prevActual + N - OV !== nom) actual = this._search(nom);
 
     this.readBlock(actual, N, this.tmpL, this.tmpR);
-    const { accL, accR, win } = this;
-    for (let i = 0; i < N; i++) {
-      accL[i] += this.tmpL[i] * win[i];
-      accR[i] += this.tmpR[i] * win[i];
-    }
-    // erste Ha Samples sind fertig -> in FIFO
+    const L = this.tmpL;
+    const R = this.tmpR;
+    const out = N - OV;
     const cap = this.fifoCap;
     let w = (this.fifoHead + this.fifoCount) % cap;
-    for (let i = 0; i < Ha; i++) {
-      this.fifoL[w] = accL[i];
-      this.fifoR[w] = accR[i];
-      this.fifoV[w] = this.nominal + i * rate;
+    for (let j = 0; j < out; j++) {
+      let l = L[j];
+      let r = R[j];
+      if (j < OV && hasPrev) {
+        const g = j / OV;
+        l = this.tailL[j] * (1 - g) + l * g;
+        r = this.tailR[j] * (1 - g) + r * g;
+      }
+      this.fifoL[w] = l;
+      this.fifoR[w] = r;
+      this.fifoV[w] = this.nominal + j * rate;
       w = w + 1 === cap ? 0 : w + 1;
     }
-    this.fifoCount += Ha;
-    accL.copyWithin(0, Ha);
-    accR.copyWithin(0, Ha);
-    accL.fill(0, N - Ha);
-    accR.fill(0, N - Ha);
-
+    this.fifoCount += out;
+    // Ende der Sequenz = Überblend-Material für die nächste Naht
+    for (let j = 0; j < OV; j++) {
+      this.tailL[j] = L[out + j];
+      this.tailR[j] = R[out + j];
+      this.tailM[j] = L[out + j] + R[out + j];
+    }
     this.prevActual = actual;
-    this.nominal += Ha * rate;
+    this.nominal += out * rate;
   }
 
-  _search(nom, natural) {
-    const { Ha, S } = this;
-    const T = this.tmpT;
-    // Template: natürliche Fortsetzung des vorigen Grains (mono)
-    this.readBlock(natural, Ha, this.tmpL, this.tmpR);
-    for (let i = 0; i < Ha; i++) T[i] = this.tmpL[i] + this.tmpR[i];
-    // Kandidatenbereich
-    const span = Ha + 2 * S;
+  /** Beste Anschlussstelle um `nom`: maximale normierte Korrelation mit dem Überblend-Material. */
+  _search(nom) {
+    const { OV, S } = this;
+    const T = this.tailM;
+    const span = OV + 2 * S;
     this.readBlock(nom - S, span, this.tmpL, this.tmpR);
     const M = this.tmpM;
     for (let i = 0; i < span; i++) M[i] = this.tmpL[i] + this.tmpR[i];
@@ -312,28 +306,27 @@ export class DeckCore {
     const score = (off, step) => {
       let c = 0;
       let e = 1e-9;
-      for (let i = 0; i < Ha; i += step) {
+      for (let i = 0; i < OV; i += step) {
         const x = M[off + i];
         c += T[i] * x;
         e += x * x;
       }
-      return c / Math.sqrt(e);
+      const d = (off - S) / S;
+      return (c / Math.sqrt(e)) * (1 - 0.2 * d * d); // leichte Bevorzugung der Mitte
     };
 
     let best = S;
     let bestScore = -Infinity;
     for (let off = 0; off <= 2 * S; off += 4) {
-      const s = score(off, 4);
+      const s = score(off, 2);
       if (s > bestScore) {
         bestScore = s;
         best = off;
       }
     }
-    const lo = Math.max(0, best - 3);
-    const hi = Math.min(2 * S, best + 3);
-    bestScore = -Infinity;
     let fine = best;
-    for (let off = lo; off <= hi; off++) {
+    bestScore = -Infinity;
+    for (let off = Math.max(0, best - 3); off <= Math.min(2 * S, best + 3); off++) {
       const s = score(off, 1);
       if (s > bestScore) {
         bestScore = s;

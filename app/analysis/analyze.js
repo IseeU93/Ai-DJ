@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 4;
+export const ANALYSIS_VERSION = 5;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -434,15 +434,59 @@ export function analyzeTrack(L, R, sr) {
       for (let i = 0; i < 12; i++) chroma[i] += spec.chroma[f * 12 + i];
     }
     const cn = Math.hypot(...chroma) || 1;
+    // Rhythmus: Onset-Dichte, Kick auf den Beats, 16tel-Muster (für Wiederholungs-/Loop-Erkennung)
+    const e0 = Math.round(t0 * fr);
+    const e1 = Math.round(t1 * fr);
+    let onset = 0;
+    for (let t = e0; t < e1 && t < env.length; t++) onset += env[t];
+    let kick = 0;
+    for (let k = 0; k < 4; k++) {
+      const c = Math.round((t0 + k * beatInterval) * fr);
+      let m = 0;
+      for (let t = c - 2; t <= c + 2; t++) if (t >= 0 && t < low.length) m = Math.max(m, low[t]);
+      kick += m / 4;
+    }
+    const pattern = new Float64Array(16);
+    for (let k = 0; k < 16; k++) {
+      const c = Math.round((t0 + (k * beatInterval) / 4) * fr);
+      let m = 0;
+      for (let t = c - 1; t <= c + 1; t++) if (t >= 0 && t < env.length) m = Math.max(m, env[t]);
+      pattern[k] = m;
+    }
     bars.push({
       rms: db(rmsRange(mid, t0 * sr, t1 * sr)),
       low: db(rmsRange(lowSig, t0 * sr, t1 * sr)),
       high: db(rmsRange(highSig, t0 * sr, t1 * sr)),
       vocalRaw: v / Math.max(1, f1 - f0),
       chroma: Array.from(chroma, (x) => x / cn),
+      onset: onset / Math.max(1, e1 - e0),
+      kick,
+      pattern,
     });
   }
   const barCount = bars.length;
+
+  // Drums 0..1: Onset-Stärke relativ zu den rhythmischsten Takten des Tracks.
+  // (Leicht gekrümmt, damit Breaks mit einzelnen Akkordwechseln nicht als "Drums" zählen.)
+  const pOn = percentile(bars.map((b) => b.onset), 0.9) || 1;
+  const drums = bars.map((b) => Math.min(1, (b.onset / (0.6 * pOn)) ** 1.2));
+
+  // Wiederholung: wie ähnlich ist ein Takt dem vorigen / 2 / 4 Takte davor (Rhythmus + Harmonie)
+  const cos = (x, y) => {
+    let d = 0, nx = 0, ny = 0;
+    for (let i = 0; i < x.length; i++) { d += x[i] * y[i]; nx += x[i] * x[i]; ny += y[i] * y[i]; }
+    return nx && ny ? d / Math.sqrt(nx * ny) : 0;
+  };
+  const repeat = bars.map((b, i) => {
+    let best = 0;
+    for (const lag of [1, 2, 4]) {
+      const o = bars[i - lag] || bars[i + lag];
+      if (!o) continue;
+      const sim = 0.6 * cos(b.pattern, o.pattern) + 0.4 * cos(b.chroma, o.chroma) - Math.min(0.5, Math.abs(b.rms - o.rms) / 12);
+      best = Math.max(best, sim);
+    }
+    return Math.max(0, Math.min(1, best));
+  });
 
   // Gesang pro Takt -> 0..1, relativ zum Track, aber mit absoluter Untergrenze
   // (sonst würde ein Instrumental auf volle Skala hochnormalisiert)
@@ -480,12 +524,19 @@ export function analyzeTrack(L, R, sr) {
 
   const p90rms = percentile(bars.map((b) => b.rms), 0.9);
   const p90low = percentile(bars.map((b) => b.low), 0.9);
+  const avg = (arr, from, len) => {
+    let t = 0;
+    for (let i = from; i < from + len; i++) t += arr[i];
+    return t / Math.max(1, len);
+  };
+  const barEnergy = bars.map((b) => b.rms - p90rms);
+  const barBass = bars.map((b) => b.low - p90low);
   for (const ph of phrases) {
-    const slice = bars.slice(ph.bar, ph.bar + ph.bars);
-    ph.energy = slice.reduce((a, b) => a + b.rms, 0) / slice.length - p90rms;
-    ph.bass = slice.reduce((a, b) => a + b.low, 0) / slice.length - p90low;
-    ph.vocal = vocals.slice(ph.bar, ph.bar + ph.bars).reduce((a, b) => a + b, 0) / slice.length;
-    ph.label = ph.energy > -4.5 && ph.bass > -6 ? 'main' : 'break';
+    ph.energy = avg(barEnergy, ph.bar, ph.bars);
+    ph.bass = avg(barBass, ph.bar, ph.bars);
+    ph.vocal = avg(vocals, ph.bar, ph.bars);
+    ph.drums = avg(drums, ph.bar, ph.bars);
+    ph.label = ph.energy > -4.5 && ph.bass > -6 && ph.drums > 0.35 ? 'main' : 'break';
   }
   const mains = phrases.filter((p) => p.label === 'main');
   if (mains.length) {
@@ -498,6 +549,20 @@ export function analyzeTrack(L, R, sr) {
   } else {
     phrases.forEach((p) => (p.label = 'main'));
   }
+  // Build-up: Phrase direkt vor einem Hauptteil, in der Energie/Drums zum Ende hin ansteigen
+  phrases.forEach((p, i) => {
+    const next = phrases[i + 1];
+    if (!next || next.label !== 'main' || p.label === 'main' || p.label === 'intro' || p.bars < 4) return;
+    const h = Math.max(1, Math.floor(p.bars / 2));
+    const rise = avg(barEnergy, p.bar + p.bars - h, h) - avg(barEnergy, p.bar, h);
+    const drumRise = avg(drums, p.bar + p.bars - h, h) - avg(drums, p.bar, h);
+    if (rise > 1.5 || drumRise > 0.12) p.label = 'build';
+  });
+  // Drops: Beginn jedes Hauptteil-Blocks
+  const drops = [];
+  phrases.forEach((p, i) => {
+    if (p.label === 'main' && (i === 0 || phrases[i - 1].label !== 'main')) drops.push(p.bar);
+  });
 
   // --- Mix-Punkte (als Beat-Indizes, immer auf Downbeats)
   const barBeat = (b) => downbeat + 4 * b;
@@ -509,6 +574,15 @@ export function analyzeTrack(L, R, sr) {
   const firstMain = phrases.find((p) => p.label === 'main');
   const outro = phrases.find((p) => p.label === 'outro');
   const dropBar = firstMain ? Math.max(firstMain.bar, firstBar) : firstBar;
+  // Gesangsgrenzen (mind. 2 Takte am Stück, damit einzelne Ausreißer nicht zählen)
+  let vocalFirst = null;
+  let vocalLast = null;
+  for (let i = 0; i < barCount - 1; i++) {
+    if (vocals[i] >= 0.5 && vocals[i + 1] >= 0.5) {
+      if (vocalFirst === null) vocalFirst = i;
+      vocalLast = i + 1;
+    }
+  }
 
   // --- Lautheit / Intensität
   const mainBars = [];
@@ -519,7 +593,7 @@ export function analyzeTrack(L, R, sr) {
   for (const b of mainBars) mainPow += 10 ** (bars[b].rms / 10);
   mainPow /= Math.max(1, mainBars.length);
   const mainRms = Math.sqrt(mainPow);
-  const gainDb = Math.max(-12, Math.min(6, 20 * Math.log10(0.2 / (mainRms + 1e-9))));
+  const gainDb = Math.max(-12, Math.min(4, 20 * Math.log10(0.22 / (mainRms + 1e-9))));
 
   let fluxSum = 0;
   for (const v of env) fluxSum += v;
@@ -568,17 +642,24 @@ export function analyzeTrack(L, R, sr) {
     barCount,
     phraseOffset,
     key,
-    phrases: phrases.map(({ bar, bars: len, label, energy, bass, vocal }) => ({
+    phrases: phrases.map(({ bar, bars: len, label, energy, bass, vocal, drums: dr }) => ({
       bar, bars: len, label,
-      energy: +energy.toFixed(2), bass: +bass.toFixed(2), vocal: +vocal.toFixed(3),
+      energy: +energy.toFixed(2), bass: +bass.toFixed(2), vocal: +vocal.toFixed(3), drums: +dr.toFixed(3),
     })),
     vocals: Float32Array.from(vocals),
     barRms: Float32Array.from(bars.map((b) => b.rms)),
+    barEnergy: Float32Array.from(barEnergy),
+    barBass: Float32Array.from(barBass),
+    barDrums: Float32Array.from(drums),
+    barRepeat: Float32Array.from(repeat),
     points: {
       startBar: firstBar,
       dropBar,
+      drops,
       outroBar: outro ? outro.bar : null,
       lastBar,
+      vocalFirst,
+      vocalLast,
     },
     loudness: { mainRms, gainDb },
     intensity,
