@@ -282,13 +282,16 @@ function afterFullEnergy(v, bar) {
  * Bewertet Sektionswechsel, Drop-Swap, Drums im Überlappungsbereich, Gesangskonflikte,
  * Energieverlauf und wie viel vom alten Track übersprungen würde.
  */
-function choosePoints(ctx, lengths) {
+function choosePoints(ctx, lengths, allowFull = false) {
   const { va, vb, a, b, m } = ctx;
   const E = va.end;
   const drops = a.points.drops?.length ? a.points.drops : [a.points.dropBar];
   const arrivals = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).slice(0, 2);
   const earliest = ctx.earliestBar !== null ? ctx.earliestBar : 0;
   const minOut = Math.max(va.grid(earliest, 4), va.grid(E * 0.45, 4));
+  let lastMainEnd = 0;
+  for (let bar = 0; bar < E; bar++) if (va.label(bar) === 'main') lastMainEnd = bar + 1;
+  const quietFrom = Math.max(lastMainEnd, (a.points.vocalLast ?? -1) + 1);
   let best = null;
 
   for (const arrival of arrivals) {
@@ -305,7 +308,10 @@ function choosePoints(ctx, lengths) {
         // Sektionswechsel im alten Track: hier "atmet" der Song – natürlicher Mix-Punkt
         if (va.isPhraseStart(outBar)) sc += 0.25;
         // Niemals, während der alte Track noch voll im Drop ist (harte Kicks, volle Energie)
-        if (fullEnergyInside(va, outBar, Math.min(outEnd, E))) continue;
+        if (fullEnergyInside(va, outBar, Math.min(outEnd, E))) {
+          if (!allowFull) continue;
+          sc -= 3; // nur als allerletzte Möglichkeit
+        }
         if (va.label(outBar - 1) !== labStart) {
           sc += 0.35;
           if (labStart === 'break' || labStart === 'outro' || labStart === 'build') {
@@ -326,7 +332,11 @@ function choosePoints(ctx, lengths) {
         for (let bar = outEnd; bar < E; bar++) if (va.label(bar) === 'main') skippedMain++;
         if (swapDrop === undefined) sc -= skippedMain * 0.035;
         else sc -= Math.max(0, skippedMain - 16) * 0.035; // beim Drop-Swap ersetzt der neue Drop den alten
-        sc -= Math.max(0, E - outEnd) * 0.004;
+        sc -= Math.max(0, E - outEnd) * 0.001;
+        // Nicht ein langes, ereignisloses Ende ausspielen: nach dem letzten Hauptteil/Gesang
+        // höchstens ein paar Takte warten, dann mixen
+        const idle = Math.max(0, outBar - quietFrom);
+        sc -= Math.max(0, idle - 4) * 0.06;
         if (outEnd > E) sc -= 0.25 + (outEnd - E) * 0.03; // bräuchte Loop-Verlängerung
         // neuer Track: lieber zum ersten Drop ankommen
         if (arrival !== arrivals[0]) sc -= 0.35;
@@ -362,6 +372,7 @@ function choosePoints(ctx, lengths) {
       }
     }
   }
+  if (!best && !allowFull) return choosePoints(ctx, lengths, true);
   return best;
 }
 
@@ -945,6 +956,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
   if (beatmatch && Math.abs(inRate - 1) > 0.001) {
     steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: 16 }));
   }
+  if (!instant && TEASE_STYLES.has(chosen)) steps = addTeaser(ctx, steps);
   const cleaned = instant ? steps.filter((s) => s.at >= 0) : steps;
   cleaned.sort((x, y) => x.at - y.at);
   const end = Math.max(...cleaned.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0)));
@@ -974,6 +986,53 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     echoBeats: 1, // Wiederholungen immer genau auf dem Beat
     steps: cleaned,
   };
+}
+
+const TEASE_STYLES = new Set(['blend', 'filter', 'loop', 'handoff', 'vocal', 'wordplay']);
+const TEASE_LEVEL = 0.22;
+
+/**
+ * Einen Takt vor dem Übergang wird der neue Track leise angeteasert: nur Höhen (Hi-Hats),
+ * ohne Bass und Gesang. Danach geht der geplante Übergang ohne Lautstärke-Loch weiter.
+ */
+function addTeaser(ctx, steps) {
+  const { b, m } = ctx;
+  const composerVocal = steps.some((s) => s.deck === 'in' && s.param === 'vocal' && s.at <= 0);
+  if (ctx.inBar - m < (b.points.startBar ?? 0) - 1e-6) {
+    // kein Material vor dem Einstieg: erster Takt des Übergangs wird zum leisen Teaser
+    const fadeIn = steps.find((s) => s.deck === 'in' && s.param === 'fader' && s.dur && s.at === 0);
+    if (!fadeIn) return steps;
+    const rest = steps.filter((s) => s !== fadeIn);
+    rest.push(
+      p(0, 'in', 'fader', TEASE_LEVEL, 0.75),
+      { ...fadeIn, at: 1, dur: Math.max(0.5, fadeIn.dur - 1) },
+    );
+    if (!steps.some((s) => s.deck === 'in' && s.param === 'filter' && s.at <= 1)) {
+      rest.push(p(0, 'in', 'filter', 0.55), p(0.75, 'in', 'filter', 0, 0.25));
+    }
+    ctx.notes.push('erster Takt: neuer Track nur leise angeteasert');
+    return rest;
+  }
+  const out = [];
+  for (const s of steps) {
+    if (s.deck === 'in' && s.action === 'play' && s.at === 0) continue; // Start wandert nach vorn
+    // "Fader auf 0" zu Beginn würde den Teaser abwürgen -> auf Teaser-Pegel halten
+    if (s.deck === 'in' && s.param === 'fader' && s.at === 0 && !s.dur && s.to === 0) {
+      out.push({ ...s, to: TEASE_LEVEL });
+      continue;
+    }
+    out.push(s);
+  }
+  out.unshift(
+    p(-1, 'in', 'fader', 0), p(-1, 'in', 'low', KILL), p(-1, 'in', 'vocal', 1), p(-1, 'in', 'filter', 0.55),
+    act(-1, 'in', 'play', { barOffset: -m }),
+    p(-1, 'in', 'fader', TEASE_LEVEL, 0.75),
+    p(-0.25, 'in', 'filter', 0, 0.2),
+  );
+  // Gesangssperre nur aufheben, wenn der Composer den Gesang nicht selbst steuert
+  if (!composerVocal) out.splice(7, 0, p(-0.05, 'in', 'vocal', 0, 0.04));
+  ctx.notes.push('neuer Track wird einen Takt vorher leise angeteasert (nur Hi-Hats)');
+  return out;
 }
 
 /** Alle Aktionen des alten Decks enden spätestens bei tEnd (Fader dann sicher auf 0). */
