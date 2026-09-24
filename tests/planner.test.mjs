@@ -418,3 +418,37 @@ test('Teaser ohne Vorlauf-Material: erster Takt wird leise angeteasert', () => {
   const f = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader' && s.dur);
   assert.ok(f.some((s) => s.at === 0 && s.to <= 0.3), 'kein leiser erster Takt');
 });
+
+test('Nie im Build-up mixen – weder im alten noch über den Build-up des neuen', () => {
+  // alter Track: Break -> Build-up (steigende Drums) -> Drop -> Outro
+  const withBuild = [
+    { bars: 16, kick: true },
+    { bars: 24, kick: true, bass: true, pad: true },
+    { bars: 8, pad: true },
+    { bars: 8, kick: true, pad: true },
+    { bars: 16, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  const out = trackWith('bu', 128, withBuild);
+  const a = out.analysis;
+  const buildBars = [];
+  for (const ph of a.phrases) if (ph.label === 'build') for (let b = ph.bar; b < ph.bar + ph.bars; b++) buildBars.push(b);
+  for (const type of ['blend', 'filter', 'loop']) {
+    const plan = planTransition({ out, inc: track('b', 128), type });
+    for (let bar = Math.floor(plan.outBar); bar < plan.outBar + plan.bars; bar++) {
+      assert.ok(!buildBars.includes(bar), `${type}: mixt im Build-up (Takt ${bar}), Build ${buildBars}`);
+    }
+  }
+  // neuer Track mit Build-up vor dem Drop: alter Track ist vorher weg
+  const inc = trackWith('bi', 128, [{ bars: 16, kick: true }, { bars: 8, kick: true, pad: true }, { bars: 24, kick: true, bass: true, pad: true }, { bars: 8, kick: true }]);
+  const b = inc.analysis;
+  const build = b.phrases.find((ph) => ph.label === 'build');
+  if (build) {
+    const plan = planTransition({ out: track('a', 128), inc, type: 'blend' });
+    const tBuild = (build.bar - plan.inBar) / plan.m;
+    if (tBuild >= 4) {
+      const outEnd = Math.max(...plan.steps.filter((s) => s.deck === 'out').map((s) => s.at + (s.dur || 0)));
+      assert.ok(outEnd <= tBuild + 1e-9, `alter Track läuft bis ${outEnd}, Build-up ab ${tBuild}`);
+    }
+  }
+});
