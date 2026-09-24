@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fitsSystemWindows="true">
+
+    <!-- ============================================================ Verbinden -->
+    <ScrollView
+        android:id="@+id/connectView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AI-DJ Companion"
+                android:textColor="@color/text"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Im Mixer am PC oben auf „Handy“ klicken – dort stehen Adresse und PIN. Handy und PC im selben WLAN."
+                android:textColor="@color/muted" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSearch"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="Im WLAN suchen"
+                android:textColor="@color/accent" />
+
+            <LinearLayout
+                android:id="@+id/foundList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_marginTop="18dp"
+                android:text="ADRESSE (IP:PORT)" />
+
+            <EditText
+                android:id="@+id/editHost"
+                style="@style/Field"
+                android:hint="192.168.0.20:7777"
+                android:inputType="textUri" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_marginTop="12dp"
+                android:text="PIN" />
+
+            <EditText
+                android:id="@+id/editPin"
+                style="@style/Field"
+                android:hint="1234"
+                android:inputType="numberPassword"
+                android:maxLength="4" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnConnect"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="20dp"
+                android:backgroundTint="@color/accent"
+                android:text="Verbinden"
+                android:textColor="@color/black" />
+
+            <TextView
+                android:id="@+id/connectStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/warn" />
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- ============================================================ Steuerung -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/controlView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/connDot"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="● verbunden"
+                    android:textColor="@color/ok"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/btnDisconnect"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="Trennen"
+                    android:textColor="@color/muted" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/warnBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/card"
+                android:padding="12dp"
+                android:textColor="@color/warn"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <!-- Läuft gerade -->
+            <LinearLayout
+                style="@style/Card"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/nowLabel"
+                    style="@style/Label"
+                    android:text="LÄUFT GERADE" />
+
+                <TextView
+                    android:id="@+id/nowTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:text="–"
+                    android:textColor="@color/text"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/nowMeta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/muted" />
+
+                <ProgressBar
+                    android:id="@+id/nowProgress"
+                    style="@android:style/Widget.Material.ProgressBar.Horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="10dp"
+                    android:max="1000"
+                    android:progressTint="@color/accent" />
+
+                <TextView
+                    android:id="@+id/nowTime"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPlay"
+                        android:layout_width="0dp"
+                        android:layout_height="52dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="@color/text"
+                        android:text="⏯"
+                        android:textColor="@color/black"
+                        android:textSize="18sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnMixNow"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1.4"
+                        android:text="Jetzt mixen"
+                        android:textColor="@color/accent" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExtend"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1.4"
+                        android:text="Länger spielen"
+                        android:textColor="@color/text" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Nächster Übergang -->
+            <LinearLayout
+                style="@style/Card"
+                android:layout_marginTop="10dp">
+
+                <TextView
+                    style="@style/Label"
+                    android:text="NÄCHSTER ÜBERGANG" />
+
+                <TextView
+                    android:id="@+id/planText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="–"
+                    android:textColor="@color/text"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/nextText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/muted" />
+
+                <LinearLayout
+                    android:id="@+id/rateRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/rateText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textColor="@color/muted"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnUp"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:text="👍" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDown"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="6dp"
+                        android:text="👎" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/learnedText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="@color/faint"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Schalter -->
+            <LinearLayout
+                style="@style/Card"
+                android:layout_marginTop="10dp">
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swAutomix"
+                    style="@style/Switch"
+                    android:text="Automix" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swAutopilot"
+                    style="@style/Switch"
+                    android:text="Autopilot" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swFreestyle"
+                    style="@style/Switch"
+                    android:text="Freestyle" />
+
+                <TextView
+                    style="@style/Label"
+                    android:layout_marginTop="10dp"
+                    android:text="LAUTSTÄRKE" />
+
+                <SeekBar
+                    android:id="@+id/seekMaster"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:max="100"
+                    android:progressTint="@color/accent"
+                    android:thumbTint="@color/accent" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLaser"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:text="Lasershow"
+                        android:textColor="@color/text" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBlackout"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:text="Blackout"
+                        android:textColor="@color/text" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Queue -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center_vertical"
+                android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/queueTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Queue"
+                    android:textColor="@color/text"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnReorder"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="KI-Reihenfolge"
+                    android:textColor="@color/accent" />
+
+                <TextView
+                    android:id="@+id/btnReshuffle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="Reshuffle"
+                    android:textColor="@color/accent" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Antippen: als Nächstes, verschieben, entfernen"
+                android:textColor="@color/faint"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/queueList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</FrameLayout>
