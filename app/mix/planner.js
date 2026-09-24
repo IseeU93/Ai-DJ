@@ -7,6 +7,7 @@ import { GENRES, combineProfiles, detectGenre } from './genre.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
+  handoff: 'Vocal-Übergabe',
   loop: 'Loop-Mix',
   vocal: 'Lyrics-Wechsel',
   filter: 'Filter-Blend',
@@ -218,7 +219,13 @@ function vocalGuard(ctx, steps, L, sw) {
 /** Ausstiegs-Takt: Übergangsende = Trackende, sonst frühester erlaubter Takt ("Jetzt mixen"). */
 function exitBar(ctx, L) {
   const { va } = ctx;
-  if (ctx.earliestBar !== null) return va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+  if (ctx.earliestBar !== null) {
+    const bar = va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+    // läuft gerade ein voller Drop: bis zu seinem Ende warten statt mitten hineinzuschneiden
+    const after = afterFullEnergy(va, bar);
+    if (after !== bar) ctx.notes.push(`wartet bis Takt ${after}: der alte Track ist gerade voll im Drop`);
+    return after;
+  }
   const outro = ctx.a.points.outroBar;
   let bar = va.grid(va.end - L, 4, 'floor');
   // lieber zum Outro-Beginn raus, wenn das Outro lang genug ist
@@ -251,6 +258,21 @@ function extendWithLoop(ctx, steps, L) {
   return L;
 }
 
+/** Läuft im Bereich [b0, b1) ein voller Hauptteil (Drop mit Drums und Energie)? */
+function fullEnergyInside(v, b0, b1) {
+  for (let b = Math.max(0, b0); b < b1; b++) {
+    if (v.label(b) === 'main' && v.drums(b) >= 0.55 && v.energy(b) > -4) return true;
+  }
+  return false;
+}
+
+/** Erster Takt ab `bar` (auf dem 4er-Raster), an dem kein voller Drop mehr läuft. */
+function afterFullEnergy(v, bar) {
+  let b = bar;
+  while (b < v.end - 2 && fullEnergyInside(v, b, b + 1)) b++;
+  return b === bar ? bar : v.grid(b, 4);
+}
+
 // ------------------------------------------------------------------ Mix-Punkt-Suche
 
 /**
@@ -281,12 +303,8 @@ function choosePoints(ctx, lengths) {
         const labStart = va.label(outBar);
         // Sektionswechsel im alten Track: hier "atmet" der Song – natürlicher Mix-Punkt
         if (va.isPhraseStart(outBar)) sc += 0.25;
-        // Nicht mitten in einen Drop/vollen Hauptteil reinmixen (volle Energie läuft weiter)
-        if (labStart === 'main' && va.label(outBar - 1) === 'main') {
-          let mainLeft = 0;
-          for (let bar = outBar; bar < Math.min(outEnd, E) && va.label(bar) === 'main'; bar++) mainLeft++;
-          sc -= 0.9 + 0.04 * mainLeft;
-        }
+        // Niemals, während der alte Track noch voll im Drop ist (harte Kicks, volle Energie)
+        if (fullEnergyInside(va, outBar, Math.min(outEnd, E))) continue;
         if (va.label(outBar - 1) !== labStart) {
           sc += 0.35;
           if (labStart === 'break' || labStart === 'outro' || labStart === 'build') {
@@ -503,7 +521,7 @@ function composeLoop(ctx) {
   // Loop-Stelle: im Endbereich des alten Tracks die groovigste, gesangsfreie Stelle
   let loop;
   if (ctx.earliestBar !== null) {
-    const bar = va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+    const bar = afterFullEnergy(va, va.grid(ctx.earliestBar, ctx.instant ? 1 : 4));
     const len = va.mean(va.repeat, bar, bar + 8) > 0.6 && bar + 8 <= va.end ? 8 : 4;
     loop = { bar, len };
   } else {
@@ -566,7 +584,7 @@ function composeVocal(ctx) {
   // Alter Track: ein später Gesangsabschnitt (letzter Refrain), neuer: der erste
   let outFrom;
   if (ctx.earliestBar !== null) {
-    outFrom = va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+    outFrom = afterFullEnergy(va, va.grid(ctx.earliestBar, ctx.instant ? 1 : 4));
     if (va.mean(va.vocal, outFrom, outFrom + 8) < 0.4) return null;
   } else {
     const runs = va.vocalRuns(8).filter((r) => r.from >= va.end * 0.35);
@@ -659,7 +677,7 @@ function composeFilter(ctx) {
 
 function composeCut(ctx) {
   const { va, a, b } = ctx;
-  if (ctx.earliestBar !== null) ctx.outBar = va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+  if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, va.grid(ctx.earliestBar, ctx.instant ? 1 : 4));
   else ctx.outBar = a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
   ctx.outBar = Math.min(ctx.outBar, va.end - 1);
   ctx.inBar = b.points.dropBar;
@@ -680,7 +698,7 @@ function composeCut(ctx) {
 
 function composeEcho(ctx) {
   const { va, vb, a, b } = ctx;
-  if (ctx.earliestBar !== null) ctx.outBar = va.grid(ctx.earliestBar, ctx.instant ? 1 : 4);
+  if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, va.grid(ctx.earliestBar, ctx.instant ? 1 : 4));
   else ctx.outBar = a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
   ctx.outBar = Math.min(ctx.outBar, va.end - 1);
   ctx.inBar = b.points.startBar;
@@ -700,7 +718,54 @@ function composeEcho(ctx) {
   return { L: 2, steps };
 }
 
+/**
+ * Vocal-Übergabe (Wortspiel-Technik): die letzte Zeile des alten Tracks läuft fast a cappella über
+ * den Beat des neuen – genau wenn sie endet, setzt die erste Zeile des neuen Tracks ein.
+ */
+function composeHandoff(ctx) {
+  const { va, vb, a, b, m } = ctx;
+  const u = 4; // Länge der letzten Zeile
+  const outRuns = va.vocalRuns(4).filter((r) => r.to >= va.end * 0.5);
+  const inRuns = vb.vocalRuns(4);
+  if (!outRuns.length || !inRuns.length) return null;
+  const outRun = outRuns[outRuns.length - 1];
+  const lineEnd = va.grid(outRun.to, 4, 'round'); // Ende der letzten Zeile auf dem Raster
+  let outBar = lineEnd - u;
+  if (ctx.earliestBar !== null && outBar < ctx.earliestBar) return null;
+  if (outBar < outRun.from || fullEnergyInside(va, outBar, lineEnd)) return null;
+  const vIn = vb.grid(inRuns[0].from, 4, 'floor');
+  const inBar = Math.round(vIn - u * m);
+  if (inBar < b.points.startBar) return null;
+  // Übergabe muss vor dem ersten Drop des neuen Tracks fertig sein
+  const drop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > inBar);
+  if (drop !== undefined && (drop - inBar) / m < u + 1) return null;
+  ctx.outBar = outBar;
+  ctx.inBar = inBar;
+  const L = u + 1;
+  const steps = [
+    // neuer Beat kommt unter die letzte Zeile, ohne eigenen Gesang (der kommt erst danach)
+    p(0, 'in', 'fader', 0), p(0, 'in', 'vocal', 1), p(0, 'in', 'low', KILL),
+    act(0, 'in', 'play'),
+    p(0, 'in', 'fader', 0.9, 1),
+    // alter Track: Beat und Bass weg -> Stimme steht fast a cappella über dem neuen Beat
+    p(0, 'out', 'low', KILL, 0.5),
+    p(0.5, 'out', 'filter', 0.35, 1),
+    p(1, 'in', 'low', 0, 0.5),
+    // Übergabe: Zeile endet, neue Stimme setzt ein
+    p(u - 0.25, 'in', 'vocal', 0, 0.25),
+    p(u - 0.25, 'in', 'fader', 1, 0.25),
+    p(u - 0.25, 'out', 'fader', 0, 1),
+    act(L, 'out', 'stop'),
+  ];
+  ctx.notes.unshift(
+    'Vocal-Übergabe: die letzte Zeile des alten Tracks läuft über den neuen Beat',
+    `genau wenn sie endet, setzt die erste Zeile des neuen Tracks ein (Takt ${u})`,
+  );
+  return { L, steps };
+}
+
 const COMPOSERS = {
+  handoff: composeHandoff,
   blend: composeBlend,
   loop: composeLoop,
   vocal: composeVocal,
@@ -733,6 +798,9 @@ function scoreStyles(ctx) {
     c.filter = 0.8 + (keyDist >= 0.3 ? 0.35 : 0) + (energyUp < -0.1 ? 0.2 : 0);
     c.cut = 0.2 + (inLead < 4 ? 0.6 : 0) + (keyDist >= 0.6 ? 0.3 : 0);
     c.echo = 0.05;
+    const outLines = va.vocalRuns(4).some((r) => r.to >= va.end * 0.5);
+    const inLines = vb.vocalRuns(4).length > 0;
+    if (outLines && inLines) c.handoff = 1.25 + (keyDist <= 0.35 ? 0.2 : -0.4);
   } else {
     c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
     c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
@@ -806,7 +874,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
 
   let result = COMPOSERS[chosen](ctx);
   if (!result) {
-    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : 'kein passender Gesangsteil'}) – Blend`;
+    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : 'keine passenden Gesangszeilen'}) – Blend`;
     chosen = 'blend';
     ctx.notes = [];
     ctx.loopExt = null;

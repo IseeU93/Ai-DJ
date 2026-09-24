@@ -205,11 +205,15 @@ test('Gesang wird abgesenkt, wenn sich zwei Stimmen überlagern würden', () => 
   assert.ok(now.steps.some((s) => s.param === 'vocal' && s.to === 1), now.notes.join(' | '));
 });
 
-test('Jetzt mixen (sofort): Einstieg auf dem nächsten Takt, keine Vorlauf-Schritte', () => {
+test('Jetzt mixen (sofort): nächster Takt – aber nicht mitten im Drop, keine Vorlauf-Schritte', () => {
   const out = track('a', 128);
   for (const type of ['blend', 'loop', 'cut', 'echo', 'filter']) {
+    // Takt 34 liegt im Break -> sofort auf dem nächsten Takt
+    const now = planTransition({ out, inc: track('b', 126), type, earliestBar: 34.2, instant: true });
+    assert.equal(now.outBar, 35, `${type}: outBar ${now.outBar}`);
+    // Takt 30 liegt im Drop -> wartet bis zu dessen Ende (Takt 32)
     const plan = planTransition({ out, inc: track('b', 126), type, earliestBar: 30.2, instant: true });
-    assert.equal(plan.outBar, 31, `${type}: outBar ${plan.outBar}`);
+    assert.equal(plan.outBar, 32, `${type}: outBar ${plan.outBar}`);
     assert.ok(plan.steps.every((s) => s.at >= 0), type);
   }
 });
@@ -311,4 +315,39 @@ test('Nie mitten in einen vollen Hauptteil reinmixen', () => {
   const plan = planTransition({ out, inc: track('b', 127), type: 'blend' });
   const lab = (bar) => [...out.analysis.phrases].reverse().find((p) => p.bar <= bar)?.label;
   assert.ok(!(lab(plan.outBar) === 'main' && lab(plan.outBar - 1) === 'main'), `Einstieg bei Takt ${plan.outBar}`);
+});
+
+test('Niemals mitten im vollen Drop des alten Tracks wechseln (auch nicht bei "Jetzt mixen")', () => {
+  const out = track('a', 128);
+  const a = out.analysis;
+  const full = (bar) => {
+    const ph = [...a.phrases].reverse().find((x) => x.bar <= bar);
+    return ph?.label === 'main' && a.barDrums[bar] >= 0.55 && a.barEnergy[bar] > -4;
+  };
+  for (const type of ['blend', 'filter', 'loop']) {
+    const plan = planTransition({ out, inc: track('b', 127), type });
+    for (let bar = plan.outBar; bar < plan.outBar + plan.bars && bar < a.barCount; bar++) {
+      if (!plan.steps.some((s) => s.action === 'loop')) assert.ok(!full(bar), `${type}: Takt ${bar} ist voller Drop`);
+    }
+  }
+  // "Jetzt mixen" mitten im Drop (Takt 42) wartet bis nach dem Drop
+  const now = planTransition({ out, inc: track('b', 127), type: 'blend', earliestBar: 42, instant: true });
+  assert.ok(!full(now.outBar), `Jetzt-mixen startet in Takt ${now.outBar}`);
+});
+
+test('Vocal-Übergabe: letzte Zeile des alten, dann erste Zeile des neuen', () => {
+  const pop = [
+    { bars: 8, kick: true },
+    { bars: 8, kick: true, vocal: true },
+    { bars: 16, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true, vocal: true },
+    { bars: 8, kick: true },
+  ];
+  const out = { ...trackWith('p1', 100, pop), genre: 'pop' };
+  const inc = { ...trackWith('p2', 100, pop, 64), genre: 'pop' };
+  const plan = planTransition({ out, inc, type: 'handoff' });
+  assert.equal(plan.type, 'handoff', plan.reason);
+  const hand = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0);
+  const outFade = plan.steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to === 0);
+  assert.ok(hand && outFade && Math.abs(hand.at - outFade.at) < 0.01, 'Übergabe nicht gleichzeitig');
 });
