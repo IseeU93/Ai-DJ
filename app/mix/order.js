@@ -40,12 +40,35 @@ export function tempoRelation(bpmOut, bpmIn) {
 export const BEATMATCH_LIMIT = 0.08; // bis ±8 % wird per Keylock-Tempo angeglichen
 
 export function transitionCost(a, b) {
-  const rel = tempoRelation(a.analysis.bpm, b.analysis.bpm);
+  const A = a.analysis;
+  const B = b.analysis;
+  const rel = tempoRelation(A.bpm, B.bpm);
   const d = rel.diff;
   const tempo = d <= 0.02 ? d * 5 : d <= BEATMATCH_LIMIT ? 0.1 + (d - 0.02) * 8 : 0.7 + (d - BEATMATCH_LIMIT) * 4;
-  const key = camelotDistance(a.analysis.key.camelot, b.analysis.key.camelot);
+  const key = camelotDistance(A.key.camelot, B.key.camelot);
   const energy = Math.abs((a.energy ?? 0.5) - (b.energy ?? 0.5));
-  return tempo + 0.8 * key + 0.3 * energy;
+  // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
+  const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);
+  const introCost = intro >= 16 ? 0 : intro >= 8 ? 0.1 : 0.25;
+  const lastBar = A.points?.lastBar ?? 0;
+  const vocalLast = A.points?.vocalLast;
+  const tailClean = vocalLast === null || vocalLast === undefined ? 16 : lastBar - vocalLast;
+  const tailCost = tailClean >= 8 ? 0 : 0.15;
+  const introVocal = B.points?.vocalFirst !== null && B.points?.vocalFirst !== undefined
+    && B.points.vocalFirst < (B.points?.dropBar ?? 0);
+  const vocalCost = introVocal && tailClean < 8 ? 0.2 : 0;
+  return tempo + 0.8 * key + 0.3 * energy + introCost + tailCost + vocalCost;
+}
+
+/** Einfacher, reproduzierbarer Zufall (für Reshuffle-Varianten). */
+function rng(seed) {
+  let s = (seed * 2654435761) >>> 0 || 1;
+  return () => {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    return ((s >>> 0) % 1e6) / 1e6;
+  };
 }
 
 /** Energie 0..1 pro Track über Ränge (unabhängig von Mastering-Lautheit). */
@@ -84,9 +107,10 @@ function totalCost(order, fixedPrefix, costCache) {
 }
 
 /**
- * Baut die Reihenfolge. `fixed` = Tracks, die schon gespielt wurden/laufen (bleiben vorne, in Reihenfolge).
+ * Baut die Reihenfolge. `fixed` = Tracks, die schon gespielt wurden/laufen (bleiben vorne).
+ * `seed` = 0 liefert die beste Reihenfolge; andere Werte liefern gute Alternativen (Reshuffle).
  */
-export function buildSetOrder(tracks, fixed = []) {
+export function buildSetOrder(tracks, fixed = [], seed = 0) {
   const pool = tracks.filter((t) => !fixed.includes(t));
   if (pool.length <= 1) return [...fixed, ...pool];
 
@@ -103,25 +127,28 @@ export function buildSetOrder(tracks, fixed = []) {
 
   const total = fixed.length + pool.length;
   // Greedy
+  const rand = seed ? rng(seed) : null;
   const order = [...fixed];
   const remaining = [...pool];
   if (!order.length) {
     remaining.sort((a, b) => a.energy - b.energy);
-    order.push(remaining.shift());
+    // Variante: Start aus den ruhigsten drei
+    const k = rand ? Math.floor(rand() * Math.min(3, remaining.length)) : 0;
+    order.push(remaining.splice(k, 1)[0]);
   }
   while (remaining.length) {
     const prev = order[order.length - 1];
     const p = total > 1 ? order.length / (total - 1) : 0;
-    let best = 0;
-    let bestScore = Infinity;
-    remaining.forEach((t, i) => {
-      const s = cost(prev, t) + ARC_WEIGHT * (t.energy - targetEnergy(p)) ** 2;
-      if (s < bestScore) {
-        bestScore = s;
-        best = i;
-      }
-    });
-    order.push(remaining.splice(best, 1)[0]);
+    const ranked = remaining
+      .map((t, i) => ({ i, s: cost(prev, t) + ARC_WEIGHT * (t.energy - targetEnergy(p)) ** 2 }))
+      .sort((x, y) => x.s - y.s);
+    // Variante: unter den (fast) gleich guten Nachfolgern zufällig wählen
+    let pick = ranked[0];
+    if (rand) {
+      const good = ranked.filter((r) => r.s <= ranked[0].s + 0.25).slice(0, 3);
+      pick = good[Math.floor(rand() * good.length)];
+    }
+    order.push(remaining.splice(pick.i, 1)[0]);
   }
 
   // Lokale Verbesserung: 2-opt + Verschieben einzelner Tracks
@@ -131,7 +158,7 @@ export function buildSetOrder(tracks, fixed = []) {
     let current = totalCost(order, fixed.length, cost);
     let improved = true;
     let rounds = 0;
-    while (improved && rounds++ < 30) {
+    while (improved && rounds++ < (rand ? 2 : 30)) {
       improved = false;
       for (let i = lock; i < n - 1; i++) {
         for (let j = i + 1; j < n; j++) {

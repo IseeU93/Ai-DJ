@@ -79,13 +79,22 @@ export class Conductor extends EventTarget {
     return this.pos + 1 + (this.plan?.committed ? 1 : 0);
   }
 
-  reorderAI() {
+  reorderAI(seed = 0) {
     const from = this.editableFrom;
     const fixed = this.queue.slice(0, from).map((id) => this.track(id));
     const all = this.queue.map((id) => this.track(id));
-    this.queue = buildSetOrder(all, fixed).map((t) => t.id);
+    this.queue = buildSetOrder(all, fixed, seed).map((t) => t.id);
     this.invalidatePlan();
     this.emit('queue');
+  }
+
+  /** Neue, ebenfalls gut passende Reihenfolge (andere Variante). */
+  reshuffle() {
+    const before = this.queue.slice(this.editableFrom).join('|');
+    for (let tries = 0; tries < 8; tries++) {
+      this.reorderAI(1 + Math.floor(Math.random() * 1e9));
+      if (this.queue.slice(this.editableFrom).join('|') !== before) return;
+    }
   }
 
   move(from, to) {

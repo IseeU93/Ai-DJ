@@ -125,6 +125,13 @@ function bestLoop(v, from, to, len) {
   return best;
 }
 
+/** Klingt ein Loop an dieser Stelle natürlich? Drums, kein Gesang, starke Wiederholung. */
+function loopable(v, loop) {
+  return v.mean(v.repeat, loop.bar, loop.bar + loop.len) >= 0.6
+    && v.mean(v.drums, loop.bar, loop.bar + loop.len) >= 0.4
+    && v.mean(v.vocal, loop.bar, loop.bar + loop.len) < 0.3;
+}
+
 // ------------------------------------------------------------------ Schritt-Helfer
 
 const p = (at, deck, param, to, dur = 0) => ({ at, deck, param, to, dur });
@@ -193,8 +200,9 @@ function extendWithLoop(ctx, steps, L) {
   const avail = va.end - outBar;
   if (avail >= L) return L;
   const lo = Math.max(outBar, va.end - 16);
-  const loop = bestLoop(va, lo, va.end, avail >= 12 ? 8 : 4) || bestLoop(va, lo, va.end, 2);
-  if (!loop || loop.score < 0.1) {
+  const loop = bestLoop(va, lo, va.end, avail >= 12 ? 8 : 4);
+  // nur loopen, wenn sich die Stelle wirklich wiederholt (sonst klingt der Loop "falsch")
+  if (!loop || !loopable(va, loop)) {
     ctx.notes.push('altes Outro zu kurz – Übergang verkürzt');
     return Math.max(2, Math.floor(avail / 2) * 2);
   }
@@ -372,7 +380,8 @@ function composeLoop(ctx) {
     const from = Math.max(0, va.end - 32);
     const l8 = bestLoop(va, from, va.end, 8);
     const l4 = bestLoop(va, from, va.end, 4);
-    loop = l8 && (!l4 || l8.score >= l4.score - 0.1) ? l8 : l4 || { bar: va.grid(va.end - 8, 4, 'floor'), len: 4 };
+    loop = [l8, l4].filter((l) => l && loopable(va, l)).sort((x, y) => y.score + (y.len === 8 ? 0.1 : 0) - x.score - (x.len === 8 ? 0.1 : 0))[0];
+    if (!loop) return null; // keine saubere Loop-Stelle -> Composer fällt auf Blend zurück
   }
   ctx.outBar = loop.bar;
   ctx.loopExt = loop;
@@ -393,10 +402,10 @@ function composeLoop(ctx) {
     steps.push(act(L - 2, 'out', 'loop', { bars: 1, anchor: 0 }));
     steps.push(act(L - 1, 'out', 'loop', { bars: 0.5, anchor: 0 }));
     steps.push(act(L - 0.5, 'out', 'loop', { bars: 0.25, anchor: 0 }));
-    steps.push(p(L - 0.5, 'out', 'echo', 0.5, 0.5));
-    steps.push(p(L - 0.25, 'out', 'fader', 0, 0.5), p(L, 'in', 'low', 0, 0.125), p(L - 1, 'in', 'fader', 1, 1));
-    steps.push(p(L + 0.5, 'out', 'echo', 0, 0.5));
-    steps.push(act(L + 1.5, 'out', 'stop'));
+    steps.push(p(L - 0.75, 'out', 'echo', 0.5, 0.5));
+    steps.push(p(L - 0.5, 'out', 'fader', 0, 0.5), p(L, 'in', 'low', 0, 0.125), p(L - 1, 'in', 'fader', 1, 1));
+    steps.push(p(L, 'out', 'echo', 0));
+    steps.push(act(L, 'out', 'stop'));
     ctx.notes.unshift(
       `Loop ${loop.len} Takte auf dem Groove des alten Tracks, neuer Track kommt gefiltert darüber`,
       'am Ende Loop-Roll als Build-up, Bass erst mit dem Drop',
@@ -444,8 +453,12 @@ function composeVocal(ctx) {
 
   // Wechsel so oft, wie beide Stimmen haben (max. 4), Ende immer beim neuen Track
   const singers = [];
+  // Wechsel nur vor dem ersten Drop des neuen Tracks (danach laufen nie zwei Tracks im Drop)
+  const inNextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
+  const limit = inNextDrop === undefined ? Infinity : (inNextDrop - ctx.inBar) / m;
   for (let j = 0; j < 4; j++) {
     const t = pre + j * u;
+    if (t + u > limit) break;
     const who = j % 2 === 0 ? 'in' : 'out';
     const has = who === 'in'
       ? vb.mean(vb.vocal, ctx.inBar + t * m, ctx.inBar + (t + u) * m) >= 0.4
@@ -586,7 +599,7 @@ function scoreStyles(ctx) {
     // Verweben (Blend) ist der Normalfall; alles Härtere nur, wenn die Tracks es verlangen
     c.blend = 1.3 + (inLead >= 16 ? 0.4 : inLead >= 8 ? 0.1 : -0.7) + (outClean >= 8 ? 0.2 : -0.1)
       + (keyDist <= 0.15 ? 0.3 : -0.9 * keyDist) - (vocalClash ? 0.5 : 0);
-    c.loop = 0.6 + (outClean < 8 ? 0.4 : 0) + (energyUp > 0.2 ? 0.2 : 0) + (loop && loop.score > 0.9 ? 0.15 : 0);
+    if (loop && loopable(va, loop)) c.loop = 0.6 + (outClean < 8 ? 0.4 : 0) + (energyUp > 0.2 ? 0.2 : 0);
     if (outVocal && inVocal) c.vocal = 1.5 + (keyDist <= 0.15 ? 0.35 : keyDist <= 0.35 ? 0 : -0.8);
     c.filter = 0.8 + (keyDist >= 0.3 ? 0.35 : 0) + (energyUp < -0.1 ? 0.2 : 0);
     c.cut = 0.2 + (inLead < 4 ? 0.6 : 0) + (keyDist >= 0.6 ? 0.3 : 0);
@@ -648,13 +661,23 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
 
   let result = COMPOSERS[chosen](ctx);
   if (!result) {
-    note = `${TRANSITIONS[chosen]} passt hier nicht (kein passender Gesangsteil) – Blend`;
+    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : 'kein passender Gesangsteil'}) – Blend`;
     chosen = 'blend';
     ctx.notes = [];
     ctx.loopExt = null;
     result = composeBlend(ctx);
   }
-  const { L, steps } = result;
+  let { L, steps } = result;
+  // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
+  // zwei Tracks im Drop klingen immer nach Unfall.
+  if (chosen !== 'cut' && chosen !== 'echo') {
+    const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
+    if (nextDrop !== undefined) {
+      const tDrop = (nextDrop - ctx.inBar) / ctx.m;
+      steps = clampOutBefore(steps, tDrop);
+      if (L > tDrop) L = tDrop;
+    }
+  }
   const inRate = beatmatch ? (ctx.m * masterBpm) / b.bpm : 1;
   if (beatmatch && Math.abs(inRate - 1) > 0.001) {
     steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: 16 }));
@@ -679,6 +702,34 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     echoBeats: masterBpm > 135 ? 0.5 : 0.75,
     steps: cleaned,
   };
+}
+
+/** Alle Aktionen des alten Decks enden spätestens bei tEnd (Fader dann sicher auf 0). */
+function clampOutBefore(steps, tEnd) {
+  const out = [];
+  let lastFade = null;
+  for (const s of steps) {
+    if (s.deck !== 'out') {
+      out.push(s);
+      continue;
+    }
+    if (s.at >= tEnd) {
+      if (s.action === 'stop') out.push({ ...s, at: tEnd });
+      continue;
+    }
+    const c = { ...s };
+    if (c.dur && c.at + c.dur > tEnd) c.dur = tEnd - c.at;
+    if (c.param === 'fader') lastFade = c;
+    out.push(c);
+  }
+  // sicherstellen, dass der alte Track bei tEnd stumm ist
+  if (!lastFade || lastFade.to > 0.001) {
+    const from = Math.max(0, tEnd - 1);
+    const conflicting = out.some((s) => s.deck === 'out' && s.param === 'fader' && s.at + (s.dur || 0) > from);
+    if (!conflicting) out.push(p(from, 'out', 'fader', 0, tEnd - from));
+  }
+  if (!out.some((s) => s.deck === 'out' && s.action === 'stop')) out.push(act(tEnd, 'out', 'stop'));
+  return out;
 }
 
 function describe(a, b, rel, keyDist, masterBpm) {

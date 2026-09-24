@@ -557,6 +557,7 @@ async function boot() {
   };
   $('#btn-start').onclick = () => conductor.togglePlay(conductor.master);
   $('#btn-reorder').onclick = () => conductor.reorderAI();
+  $('#btn-reshuffle').onclick = () => conductor.reshuffle();
   $('#btn-mixnow').onclick = () => conductor.mixNow();
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
   $('#autopilot').onchange = (e) => {

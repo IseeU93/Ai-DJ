@@ -60,10 +60,19 @@ test('Instrumentale Intros/Outros -> sauberer Blend bevorzugt', () => {
 });
 
 test('Lyrics-Wechsel bei zwei Gesangs-Tracks, wenn schon zweimal geblendet wurde', () => {
-  const plan = planTransition({ out: track('a', 128), inc: track('b', 128, 64), history: ['blend', 'blend'] });
-  assert.equal(plan.type, 'vocal', `gewählt: ${plan.type}`);
-  const vocalSteps = plan.steps.filter((s) => s.param === 'vocal');
-  assert.ok(vocalSteps.length >= 6);
+  // Gesang des neuen Tracks erst nach seinem Drop -> kein Tausch möglich, sauber auf Blend
+  const late = planTransition({ out: track('a', 128), inc: track('b', 128, 64), type: 'vocal' });
+  assert.equal(late.type, 'blend', late.reason);
+  // Gesang schon im Intro -> Lyrics-Wechsel vor dem Drop
+  const vocalIntro = [
+    { bars: 16, kick: true, vocal: true },
+    { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+    { bars: 16, kick: true },
+  ];
+  const plan = planTransition({ out: track('a', 128), inc: trackWith('vi', 128, vocalIntro, 64), type: 'vocal' });
+  assert.equal(plan.type, 'vocal', plan.reason);
+  const tDrop = (plan.inBar < 16 ? 16 - plan.inBar : 0);
+  assert.ok(plan.steps.filter((s) => s.deck === 'out').every((s) => s.at + (s.dur || 0) <= tDrop + 1e-9), 'alter Track nach dem Drop');
 });
 
 test('Abwechslung: gleicher Typ wird nicht dreimal hintereinander gewählt', () => {
@@ -216,4 +225,28 @@ test('Übergang passt sich der Intro-Länge des neuen Tracks an', () => {
   const short = planTransition({ out, inc: trackWith('i', 128, shortIntro), type: 'blend' });
   assert.equal(long.bars, 16);
   assert.equal(short.bars, 8);
+});
+
+test('Alter Track ist immer vor dem ersten Drop des neuen komplett weg', () => {
+  const out = track('a', 128);
+  for (const type of ['blend', 'loop', 'filter', 'vocal']) {
+    const inc = track('b', 127, 64);
+    const plan = planTransition({ out, inc, type });
+    const drop = inc.analysis.points.drops.find((d) => d > plan.inBar);
+    const tDrop = (drop - plan.inBar) / plan.m;
+    const outSteps = plan.steps.filter((s) => s.deck === 'out');
+    assert.ok(outSteps.every((s) => s.at + (s.dur || 0) <= tDrop + 1e-9), `${type}: ${JSON.stringify(outSteps.at(-1))} tDrop ${tDrop}`);
+    const fades = outSteps.filter((s) => s.param === 'fader');
+    assert.equal(fades.at(-1).to, 0, type);
+  }
+});
+
+test('Reshuffle liefert andere, aber gültige Reihenfolgen', () => {
+  const keys = ['8A', '9A', '10A', '8B', '9B', '7A', '8A', '11A'];
+  const tracks = keys.map((k, i) => ({ id: `t${i}`, analysis: { bpm: 124 + (i % 3), key: { camelot: k }, intensity: i, bassWeight: i % 4, brightness: 0 } }));
+  assignEnergy(tracks);
+  const best = buildSetOrder(tracks).map((t) => t.id).join();
+  const variants = new Set([1, 2, 3, 4, 5].map((s) => buildSetOrder(tracks, [], s * 7919).map((t) => t.id).join()));
+  assert.ok([...variants].some((v) => v !== best), 'keine Variante');
+  for (const v of variants) assert.equal(new Set(v.split(',')).size, tracks.length);
 });

@@ -8,7 +8,7 @@
 //    Voraus planen, weil v(t) unabhängig von Loops linear bleibt.
 //  - Keylock: Time-Stretch (Tempo ändern ohne Tonhöhe). Ohne Keylock: Vinyl-Modus.
 
-const SEAM = 96; // Crossfade-Länge an Loop-/Sprungnähten (gegen Klicks)
+const SEAM = 480; // Crossfade-Länge an Loop-/Sprungnähten (~10 ms, gegen Klicks)
 const DECLICK = 256; // Ein-/Ausblendlänge bei Start/Stop
 
 export class DeckCore {
