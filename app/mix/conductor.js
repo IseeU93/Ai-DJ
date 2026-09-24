@@ -426,7 +426,7 @@ export class Conductor extends EventTarget {
       }
       switch (s.action) {
         case 'play': {
-          let real = barToSeconds(b, plan.inBar) * sr;
+          let real = barToSeconds(b, plan.inBar + (s.barOffset || 0)) * sr;
           let start = t;
           if (real < 0) {
             start += -real / (plan.inRate * sr);

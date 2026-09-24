@@ -347,7 +347,40 @@ test('Vocal-Übergabe: letzte Zeile des alten, dann erste Zeile des neuen', () =
   const inc = { ...trackWith('p2', 100, pop, 64), genre: 'pop' };
   const plan = planTransition({ out, inc, type: 'handoff' });
   assert.equal(plan.type, 'handoff', plan.reason);
-  const hand = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0);
+  const hand = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0 && s.at > 0);
   const outFade = plan.steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to === 0);
   assert.ok(hand && outFade && Math.abs(hand.at - outFade.at) < 0.01, 'Übergabe nicht gleichzeitig');
+});
+
+test('Teaser: neuer Track startet einen Takt vorher leise, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
+  const longIntro = [
+    { bars: 24, kick: true },
+    { bars: 32, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  const plan = planTransition({ out: track('a', 128), inc: trackWith('li', 127, longIntro), type: 'blend' });
+  const play = plan.steps.find((s) => s.action === 'play');
+  assert.equal(play.at, -1);
+  assert.equal(play.barOffset, -plan.m);
+  const faders = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader');
+  assert.ok(faders.every((s) => !(s.at === 0 && !s.dur && s.to === 0)), 'Fader fällt bei Takt 0 auf 0');
+  assert.ok(plan.steps.some((s) => s.at === -1 && s.param === 'low' && s.to < -20));
+});
+
+test('Langes ereignisloses Outro wird nicht komplett ausgespielt', () => {
+  const longOutro = [
+    { bars: 16, kick: true },
+    { bars: 32, kick: true, bass: true, pad: true },
+    { bars: 32, kick: true },
+  ];
+  const out = trackWith('lo', 128, longOutro);
+  const plan = planTransition({ out, inc: track('b', 128), type: 'blend' });
+  assert.ok(plan.outBar <= 48 + 8, `wartet bis Takt ${plan.outBar} (Hauptteil endet bei 48, Track bei 80)`);
+});
+
+test('Teaser ohne Vorlauf-Material: erster Takt wird leise angeteasert', () => {
+  const plan = planTransition({ out: track('a', 128), inc: track('b', 127), type: 'blend' });
+  if (plan.inBar - plan.m >= 0) return; // hier gibt es doch Vorlauf
+  const f = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader' && s.dur);
+  assert.ok(f.some((s) => s.at === 0 && s.to <= 0.3), 'kein leiser erster Takt');
 });
