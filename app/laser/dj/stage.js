@@ -437,7 +437,9 @@ export class LaserStage extends EventTarget {
     const kicks = (ins?.drums ?? 0) >= 0.6;
     // nur im echten Drop/Hauptteil mit kräftigen Kicks – nicht jede Strophe
     const loud = ins ? ins.phase === 'drop' : data.energy?.phase === 'drop';
-    const hard = loud && kicks && (hardGenre || (ins?.level ?? 0) > 0.85);
+    // Nur harte Musik bekommt den harten Modus: Hardstyle/Uptempo, bei House/EDM nur ganz laute
+    // Drops. Pop und Rap nie – dort wirkt das hektisch.
+    const hard = loud && kicks && (hardGenre || (genre === 'edm' && (ins?.level ?? 0) > 0.9));
     const bs = cfg.beamSweep;
     if (hard) {
       // höchstens eine Zusatzebene, und nichts Schwebendes
@@ -464,6 +466,10 @@ export class LaserStage extends EventTarget {
       bs.thickness = DEFAULT_CONFIG.beamSweep.thickness;
       delete bs.maxConcurrent;
       this.hard = false;
+    }
+    if (genre === 'pop' || genre === 'rap') {
+      // ruhiger Grundcharakter: nicht schneller als normal, keine Trails-Hektik
+      cfg.speed = Math.min(cfg.speed, 1);
     }
     if (genre === 'uptempo') {
       // auch in ruhigeren Teilen: nichts Schwebendes, dafür schneller

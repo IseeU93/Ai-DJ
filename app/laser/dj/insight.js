@@ -54,9 +54,10 @@ function level(a, bar) {
  * "drop" gilt ein Hauptteil nur, wenn er richtig drückt (laut + Drums + Bass).
  */
 function mainPhase(a, ph, genre) {
+  // Pop/Rap: ein Refrain ist kein Drop – nur wirklich drückende Teile (EDM-Pop) zählen
   const strict = genre === 'pop' || genre === 'rap';
-  const loud = ph.energy >= (strict ? -1.5 : -3);
-  const drive = (ph.drums ?? 0) >= (strict ? 0.55 : 0.4) && (ph.bass ?? 0) >= 0.3;
+  const loud = ph.energy >= (strict ? -0.5 : -3);
+  const drive = (ph.drums ?? 0) >= (strict ? 0.75 : 0.4) && (ph.bass ?? 0) >= (strict ? 0.5 : 0.3);
   return loud && drive ? 'drop' : 'verse';
 }
 
