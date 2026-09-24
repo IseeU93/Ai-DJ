@@ -5,6 +5,7 @@ import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
 import { detectGenre } from './genre.js';
+import { findWordplay } from './wordplay.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
 const LEAD_SECONDS = 2.5; // Mindestvorlauf für normal geplante Übergänge
@@ -27,6 +28,16 @@ function saveCues(all) {
   }
 }
 
+/** Prüft, ob ein Wortspiel-Kandidat musikalisch umsetzbar ist (Beat-Lage, Drop-Regeln). */
+function planTransitionSafe(out, inc, wp) {
+  try {
+    const plan = planTransition({ out, inc, type: 'wordplay', wordplay: wp });
+    return plan.type === 'wordplay' ? plan : null;
+  } catch {
+    return null;
+  }
+}
+
 export class Conductor extends EventTarget {
   constructor(engine) {
     super();
@@ -45,6 +56,8 @@ export class Conductor extends EventTarget {
     this.loading = [null, null];
     this.forceSoon = false;
     this.autopilot = false;
+    this.lyrics = null; // LyricsService, wenn Wortspiele aktiviert sind
+    this.wordplays = new Map(); // "outId|inId" -> Kandidat | null | 'pending'
     this.timer = setInterval(() => this.tick(), 40);
   }
 
@@ -373,6 +386,7 @@ export class Conductor extends EventTarget {
       history: this.history,
       flavorHistory: this.flavorHistory || [],
       outKeyShift: md.keyShift || 0,
+      wordplay: this.wordplayFor(out, inc),
       earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : null,
       instant,
     };
@@ -606,6 +620,57 @@ export class Conductor extends EventTarget {
     delta -= Math.round(delta);
     const jump = delta * 4 * a.beatInterval * sr;
     if (Math.abs(jump) > sr * 0.002) d.segment(Math.round(d.virtualAt(t)), d.realAt(t) + jump, 0);
+  }
+
+  // ------------------------------------------------------------------ Wortspiele
+
+  setLyrics(service) {
+    this.lyrics = service;
+    this.wordplays.clear();
+    this.invalidatePlan();
+  }
+
+  /** Bereits gefundenes Wortspiel für das Paar – startet sonst die Songtext-Erkennung im Hintergrund. */
+  wordplayFor(out, inc) {
+    if (!this.lyrics) return null;
+    const key = `${out.id}|${inc.id}`;
+    const known = this.wordplays.get(key);
+    if (known !== undefined) return known === 'pending' ? null : known;
+    this.wordplays.set(key, 'pending');
+    this.emit('lyrics', { state: 'running', out, inc });
+    this._findWordplay(out, inc)
+      .then((wp) => {
+        this.wordplays.set(key, wp);
+        this.emit('lyrics', { state: 'done', out, inc, wp });
+        // Plan noch nicht eingeplant -> mit Wortspiel neu planen
+        if (wp && this.plan && !this.plan.committed && this.plan.outId === out.id && this.plan.inId === inc.id) {
+          this.plan = null;
+          this.emit('plan');
+        }
+      })
+      .catch((err) => {
+        this.wordplays.set(key, null);
+        this.emit('lyrics', { state: 'error', error: err.message || String(err) });
+      });
+    return null;
+  }
+
+  async _findWordplay(out, inc) {
+    const a = out.analysis;
+    const b = inc.analysis;
+    // Alter Track: letzter Gesangsbereich (bis 40 s), neuer: erste Gesangszeilen (bis 30 s)
+    const outEnd = barToSeconds(a, (a.points.vocalLast ?? a.points.lastBar) + 1);
+    const inStart = barToSeconds(b, Math.max(0, (b.points.vocalFirst ?? b.points.dropBar) - 1));
+    if (a.points.vocalLast === null || b.points.vocalFirst === null) return null;
+    const outWords = await this.lyrics.getWords(out, outEnd - 40, outEnd + 1);
+    const inWords = await this.lyrics.getWords(inc, inStart, inStart + 30);
+    const cands = findWordplay(outWords, inWords);
+    // der Planer prüft Beat-Lage und Drop-Regeln; hier nur die besten Kandidaten vorsortiert
+    for (const c of cands.slice(0, 8)) {
+      const test = planTransitionSafe(out, inc, c);
+      if (test) return c;
+    }
+    return null;
   }
 
   /** Neue Analyse (z. B. nach Grid-Korrektur) übernehmen – auch für geladene Decks. */

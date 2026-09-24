@@ -22,6 +22,13 @@
       <label class="switch" title="Übergänge automatisch planen und fahren – deine Queue-Reihenfolge bleibt">
         <input type="checkbox" id="automix" checked /><i></i><span>Automix</span>
       </label>
+      <label class="switch" title="Wortspiele: erkennt Songtexte (Whisper, läuft lokal) und mixt auf gleiche Wörter/Reime. Beim ersten Einschalten wird das Sprachmodell einmalig geladen (~80 MB).">
+        <input type="checkbox" id="wordplay" /><i></i><span>Wortspiele</span>
+      </label>
+      <select class="sel" id="lyrics-lang" title="Sprache der Songtexte (für die Erkennung)" hidden>
+        <option value="german">Deutsch</option>
+        <option value="english">Englisch</option>
+      </select>
       <label class="switch" title="Voller Autopilot: startet selbst, sortiert die Queue laufend neu, wählt alle Übergänge und spielt endlos weiter">
         <input type="checkbox" id="autopilot" /><i></i><span>Autopilot</span>
       </label>

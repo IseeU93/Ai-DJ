@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeTrack } from '../app/analysis/analyze.js';
-import { planTransition } from '../app/mix/planner.js';
+import { planTransition, barToSeconds as barToSec } from '../app/mix/planner.js';
 import { assignEnergy, buildSetOrder, camelotDistance, keySync, shiftCamelot, tempoRelation } from '../app/mix/order.js';
 import { synthSong } from './synth.mjs';
+import { findWordplay, rhymeKey } from '../app/mix/wordplay.js';
 
 const SECTIONS = [
   { bars: 16, kick: true },
@@ -350,4 +351,37 @@ test('Vocal-Übergabe: letzte Zeile des alten, dann erste Zeile des neuen', () =
   const hand = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0);
   const outFade = plan.steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to === 0);
   assert.ok(hand && outFade && Math.abs(hand.at - outFade.at) < 0.01, 'Übergabe nicht gleichzeitig');
+});
+
+test('Wortspiel-Suche: gleiche Wörter und Reime an Zeilenende/-anfang', () => {
+  const outWords = [
+    { text: 'we', start: 10, end: 10.2 }, { text: 'dance', start: 10.3, end: 10.6 }, { text: 'tonight', start: 10.7, end: 11.2 },
+    { text: 'again', start: 13, end: 13.5 },
+  ];
+  const inWords = [
+    { text: 'Tonight', start: 5, end: 5.5 }, { text: 'is', start: 5.6, end: 5.7 }, { text: 'ours', start: 5.8, end: 6.1 },
+    { text: 'Delight', start: 8, end: 8.5 },
+  ];
+  const c = findWordplay(outWords, inWords);
+  assert.equal(c[0].kind, 'gleich');
+  assert.equal(c[0].out.text, 'tonight');
+  assert.ok(c.some((x) => x.kind === 'Reim' && x.in.text === 'Delight'));
+  assert.equal(rhymeKey('tonight'), 'ight');
+});
+
+test('Wortspiel-Plan: neues Wort landet genau auf dem Beat nach dem alten Wort', () => {
+  const out = track('a', 128);
+  const inc = track('b', 128, 64);
+  const a = out.analysis;
+  const b = inc.analysis;
+  // altes Wort endet kurz vor Beat 150 (Break-Bereich), neues Wort liegt auf Beat 20 (Intro)
+  const wEndOut = a.firstBeat + 149.8 * a.beatInterval;
+  const wStartIn = b.firstBeat + 20 * b.beatInterval;
+  const wp = { kind: 'gleich', score: 1, out: { text: 'tonight', start: wEndOut - 0.4, end: wEndOut }, in: { text: 'tonight', start: wStartIn, end: wStartIn + 0.4 } };
+  const plan = planTransition({ out, inc, type: 'wordplay', wordplay: wp });
+  assert.equal(plan.type, 'wordplay', plan.reason);
+  const hand = barToSec(a, plan.outBar + 4);
+  assert.ok(Math.abs(hand - (a.firstBeat + 150 * a.beatInterval)) < 1e-6, `Übergabe ${hand}`);
+  const inAtHand = barToSec(b, plan.inBar + 4 * plan.m);
+  assert.ok(Math.abs(inAtHand - wStartIn) < 1e-6, 'neues Wort nicht auf der Übergabe');
 });

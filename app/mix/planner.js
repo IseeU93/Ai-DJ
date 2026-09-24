@@ -7,6 +7,7 @@ import { GENRES, combineProfiles, detectGenre } from './genre.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
+  wordplay: 'Wortspiel',
   handoff: 'Vocal-Übergabe',
   loop: 'Loop-Mix',
   vocal: 'Lyrics-Wechsel',
@@ -764,7 +765,54 @@ function composeHandoff(ctx) {
   return { L, steps };
 }
 
+/**
+ * Wortspiel: das letzte Wort einer Zeile im alten Track und ein gleiches/reimendes Wort am
+ * Zeilenanfang im neuen Track. Der neue Track wird so angelegt, dass sein Wort genau auf dem
+ * Beat nach dem Wort des alten einsetzt – dort wird übergeben.
+ */
+function composeWordplay(ctx) {
+  const { va, a, b, m } = ctx;
+  const wp = ctx.wordplay;
+  if (!wp) return null;
+  const beatOut = (wp.out.end - a.firstBeat) / a.beatInterval;
+  const handBeat = Math.ceil(beatOut - 0.1); // nächster Beat nach dem Wort
+  const beatIn = (wp.in.start - b.firstBeat) / b.beatInterval;
+  const inBeat = Math.round(beatIn);
+  if (Math.abs(beatIn - inBeat) > 0.35) return null; // Wort liegt zu weit neben dem Beat
+  const hb = (handBeat - a.downbeat) / 4; // Übergabe als Takt (evtl. gebrochen)
+  const pre = 4; // 4 Takte Vorlauf, neuer Track leise und ohne Gesang darunter
+  const outBar = hb - pre;
+  if (outBar < 0 || fullEnergyInside(va, Math.floor(outBar), Math.ceil(hb))) return null;
+  if (ctx.earliestBar !== null && outBar < ctx.earliestBar) return null;
+  const inBar = (inBeat - b.downbeat) / 4 - pre * m;
+  if (inBar < b.points.startBar - 1e-6) return null;
+  const drop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > inBar);
+  if (drop !== undefined && (drop - inBar) / m < pre + 0.5) return null;
+  ctx.outBar = outBar;
+  ctx.inBar = inBar;
+  const L = pre + 0.5;
+  const steps = [
+    p(0, 'in', 'fader', 0), p(0, 'in', 'vocal', 1), p(0, 'in', 'low', KILL),
+    act(0, 'in', 'play'),
+    p(0, 'in', 'fader', 0.55, 2),
+    // Übergabe genau auf dem Beat nach dem Wort
+    p(pre - 0.0625, 'in', 'vocal', 0, 0.0625),
+    p(pre, 'in', 'fader', 1, 0.125),
+    p(pre, 'in', 'low', 0, 0.25),
+    p(pre, 'out', 'low', KILL, 0.125),
+    p(pre, 'out', 'fader', 0, 0.5),
+    act(L, 'out', 'stop'),
+  ];
+  const aligned = ((handBeat - a.downbeat) % 4 + 4) % 4 === ((inBeat - b.downbeat) % 4 + 4) % 4;
+  ctx.notes.unshift(
+    `Wortspiel (${wp.kind === 'gleich' ? 'gleiches Wort' : 'Reim'}): „${wp.out.text}“ → „${wp.in.text}“`,
+    `Übergabe genau auf dem Beat nach „${wp.out.text}“${aligned ? '' : ' (Takt-Position verschoben)'}`,
+  );
+  return { L, steps };
+}
+
 const COMPOSERS = {
+  wordplay: composeWordplay,
   handoff: composeHandoff,
   blend: composeBlend,
   loop: composeLoop,
@@ -801,6 +849,7 @@ function scoreStyles(ctx) {
     const outLines = va.vocalRuns(4).some((r) => r.to >= va.end * 0.5);
     const inLines = vb.vocalRuns(4).length > 0;
     if (outLines && inLines) c.handoff = 1.25 + (keyDist <= 0.35 ? 0.2 : -0.4);
+    if (ctx.wordplay) c.wordplay = 1.9 + (ctx.wordplay.kind === 'gleich' ? 0.3 : 0);
   } else {
     c.cut = rel.diff <= 0.2 ? 2.2 : 1.2;
     c.echo = rel.diff <= 0.2 ? 0.5 : 1.5;
@@ -819,7 +868,7 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [], outKeyShift = 0 }) {
+export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, wordplay = null }) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -836,6 +885,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     earliestBar, instant,
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
+    wordplay,
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);

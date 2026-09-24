@@ -8,7 +8,7 @@ import { extname, join, resolve } from 'node:path';
 const root = resolve(new URL('../app', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const music = resolve(process.argv[2] || '.');
 const port = +(process.argv[3] || 5174);
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
 const AUDIO = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a']);
 
 const SHIM = `<script>

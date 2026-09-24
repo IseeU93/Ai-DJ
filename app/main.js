@@ -9,6 +9,7 @@ import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
+import { LyricsService } from './lyrics/service.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -699,6 +700,39 @@ async function boot() {
     if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
   };
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
+  let lyricsService = null;
+  const enableWordplay = (on) => {
+    if (on && !lyricsService) {
+      lyricsService = new LyricsService();
+      lyricsService.addEventListener('progress', (e) => {
+        const { loaded, total } = e.detail;
+        if (total) toast(`Sprachmodell wird geladen (einmalig): ${Math.round((loaded / total) * 100)} %`);
+      });
+    }
+    if (lyricsService) lyricsService.language = $('#lyrics-lang').value;
+    conductor.setLyrics(on ? lyricsService : null);
+    $('#lyrics-lang').hidden = !on;
+    saveSettings({ wordplay: on });
+  };
+  $('#lyrics-lang').value = loadSettings().lyricsLang || 'german';
+  $('#lyrics-lang').onchange = (e) => {
+    saveSettings({ lyricsLang: e.target.value });
+    if (lyricsService) {
+      lyricsService.language = e.target.value;
+      conductor.setLyrics(lyricsService);
+    }
+  };
+  $('#wordplay').onchange = (e) => enableWordplay(e.target.checked);
+  conductor.addEventListener('lyrics', (e) => {
+    const d = e.detail;
+    if (d.state === 'running') toast(`Songtexte werden erkannt: ${d.out.title} → ${d.inc.title} …`);
+    else if (d.state === 'done') toast(d.wp ? `Wortspiel gefunden: „${d.wp.out.text}“ → „${d.wp.in.text}“` : `Kein Wortspiel zwischen ${d.out.title} und ${d.inc.title}`);
+    else if (d.state === 'error') toast(`Songtext-Erkennung fehlgeschlagen: ${d.error}`);
+  });
+  if (loadSettings().wordplay) {
+    $('#wordplay').checked = true;
+    enableWordplay(true);
+  }
   $('#autopilot').onchange = (e) => {
     conductor.setAutopilot(e.target.checked);
     $('#automix').checked = conductor.automix;

@@ -5,12 +5,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
+    "dev": "node scripts/vendor.mjs && tauri dev",
+    "build": "node scripts/vendor.mjs && tauri build",
     "tauri": "tauri",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "vendor": "node scripts/vendor.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0"
   }
 }
