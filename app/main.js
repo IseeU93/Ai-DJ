@@ -76,7 +76,8 @@ function buildDeck(i) {
       <span class="lbl">Loop</span>
       ${LOOPS.map(([b, l]) => `<button class="btn loopbtn" data-bars="${b}" title="${b} Takt(e)">${l}</button>`).join('')}
       <button class="btn loopbtn exit" title="Loop verlassen">Exit</button>
-    </div>`;
+    </div>
+    <div class="pads" title="Hot Cues: Klick springt im Takt · leeres Pad setzt einen Cue · Rechtsklick löscht"></div>`;
   const ui = {
     root,
     title: $('.t', root),
@@ -91,8 +92,19 @@ function buildDeck(i) {
     loopBtns: [...root.querySelectorAll('.loopbtn[data-bars]')],
     wave: new DeckWaveform($('.wave', root), COLORS[i]),
     overview: $('.overview', root),
+    pads: $('.pads', root),
     lastTrack: undefined,
   };
+  for (let slot = 0; slot < 8; slot++) {
+    const pad = document.createElement('button');
+    pad.className = 'pad free';
+    pad.onclick = () => conductor.triggerCue(i, slot);
+    pad.oncontextmenu = (e) => {
+      e.preventDefault();
+      conductor.deleteCue(i, slot);
+    };
+    ui.pads.appendChild(pad);
+  }
   ui.play.onclick = () => conductor.togglePlay(i);
   $('.cue', root).onclick = () => conductor.cue(i);
   $('.sync', root).onclick = () => conductor.sync(i);
@@ -172,6 +184,20 @@ function planMarks(i) {
   return null;
 }
 
+function renderPads(i) {
+  const ui = decksUi[i];
+  const track = engine.decks[i].track;
+  const cues = conductor.cuesFor(track);
+  [...ui.pads.children].forEach((pad, slot) => {
+    const c = cues[slot];
+    pad.className = `pad ${c ? c.kind : 'free'}`;
+    pad.innerHTML = `<b>${slot + 1}</b>`;
+    pad.append(c ? c.label : track ? 'setzen' : '');
+    pad.title = c ? `${c.label} · ${fmtTime(c.sec)} – Klick springt (im Takt), Rechtsklick löscht` : 'Leeres Pad: Klick setzt einen Cue auf den aktuellen Beat';
+    pad.disabled = !track;
+  });
+}
+
 function updateDeck(i, now) {
   const d = engine.decks[i];
   const ui = decksUi[i];
@@ -183,6 +209,7 @@ function updateDeck(i, now) {
     ui.lastTrack = track;
     ui.title.textContent = track ? track.title : 'Leer';
     keyChip(ui.key, track?.analysis.key.camelot);
+    renderPads(i);
   }
   const loading = conductor.loading[i];
   ui.artist.textContent = loading
@@ -236,6 +263,8 @@ function updateTransition(now) {
   const typeSel = $('#tr-type');
   typeSel.disabled = !nextId || !!p?.committed;
   mixNow.disabled = !nextId || !!p?.committed || !engine.decks[conductor.master].status.playing;
+  const waitingLoad = conductor.forceSoon && !p && conductor.loading.some(Boolean);
+  mixNow.textContent = waitingLoad ? 'Lädt …' : conductor.forceSoon && !p?.committed ? 'Startet …' : 'Jetzt mixen';
 
   let shown = p;
   let progress = null;
@@ -286,6 +315,9 @@ function renderPlanInfo() {
   const shown = p || previewCache.get(nextId);
   $('#tr-title').textContent = next ? `Nächster Übergang → ${next.title}` : 'Nächster Übergang';
   $('#tr-name').textContent = shown ? shown.label + (p ? '' : ' (Vorschau)') : '–';
+  const notes = shown?.notes || [];
+  $('#tr-notes').textContent = notes.join(' · ');
+  $('#tr-notes').title = notes.join('\n');
   $('#tr-reason').textContent = shown ? shown.reason : next ? '' : 'Keine weiteren Tracks in der Queue';
   const sel = $('#tr-type');
   sel.value = (nextId && conductor.overrides.get(nextId)) || 'auto';
@@ -301,7 +333,7 @@ function drawStructure(canvas, a) {
   for (const ph of a.phrases) {
     const x1 = (barToSeconds(a, ph.bar) / dur) * w;
     const x2 = (barToSeconds(a, ph.bar + ph.bars) / dur) * w;
-    c.fillStyle = ph.label === 'main' ? '#5c5e64' : ph.label === 'break' ? '#34463c' : '#34363c';
+    c.fillStyle = ph.label === 'main' ? '#5c5e64' : ph.label === 'break' ? '#34463c' : ph.label === 'build' ? '#4a4536' : '#34363c';
     c.fillRect(x1, 10, Math.max(1, x2 - x1 - 1), 12);
   }
   a.vocals.forEach((v, bar) => {
@@ -390,6 +422,12 @@ function renderQueue() {
 
     if (!locked) {
       const acts = $('.acts', row);
+      const mixBtn = document.createElement('button');
+      mixBtn.className = 'mix';
+      mixBtn.textContent = 'Mix';
+      mixBtn.title = 'Jetzt sofort in diesen Track mixen';
+      mixBtn.onclick = () => conductor.mixInto(i);
+      acts.append(mixBtn);
       const nextBtn = document.createElement('button');
       nextBtn.textContent = '↑';
       nextBtn.title = 'Als Nächstes spielen';
@@ -489,6 +527,7 @@ async function loadFolder(path) {
     });
     if (failed) toast(`${failed} Datei(en) konnten nicht gelesen werden (Format/Codec).`);
     conductor.setLibrary(found);
+    if (conductor.autopilot && !engine.decks[conductor.master].status.playing) conductor.start();
   } catch (err) {
     toast(`Ordner konnte nicht geladen werden: ${err.message || err}`);
   } finally {
@@ -520,6 +559,12 @@ async function boot() {
   $('#btn-reorder').onclick = () => conductor.reorderAI();
   $('#btn-mixnow').onclick = () => conductor.mixNow();
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
+  $('#autopilot').onchange = (e) => {
+    conductor.setAutopilot(e.target.checked);
+    $('#automix').checked = conductor.automix;
+    $('#automix').disabled = e.target.checked;
+    saveSettings({ autopilot: e.target.checked });
+  };
 
   const typeSel = $('#tr-type');
   typeSel.innerHTML = '<option value="auto">Auto</option>' +
@@ -535,6 +580,10 @@ async function boot() {
     renderPlanInfo();
   });
   conductor.addEventListener('error', (e) => toast(e.detail));
+  conductor.addEventListener('cues', () => {
+    renderPads(0);
+    renderPads(1);
+  });
 
   document.addEventListener('pointerdown', () => engine.resume());
   document.addEventListener('keydown', (e) => {
@@ -547,8 +596,14 @@ async function boot() {
   renderQueue();
   requestAnimationFrame(frame);
 
-  const { folder } = loadSettings();
-  if (folder) loadFolder(folder);
+  const { folder, autopilot } = loadSettings();
+  if (autopilot) {
+    $('#autopilot').checked = true;
+    $('#automix').disabled = true;
+    conductor.autopilot = true;
+  }
+  if (folder) await loadFolder(folder);
+  if (conductor.autopilot && conductor.queue.length) conductor.start();
 }
 
 boot().catch((err) => {

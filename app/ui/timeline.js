@@ -1,7 +1,7 @@
 // Zeitleiste eines Übergangs: Lautstärkeverlauf beider Decks + die DJ-Aktionen in Takten.
 import { KILL } from '../mix/planner.js';
 
-const LOOP_NAMES = { 4: 'Loop 4', 2: 'Loop 2', 1: 'Loop 1', 0.5: '½', 0.25: '¼', 0.125: '⅛' };
+const LOOP_NAMES = { 16: 'Loop 16', 8: 'Loop 8', 4: 'Loop 4', 2: 'Loop 2', 1: 'Loop 1', 0.5: '½', 0.25: '¼', 0.125: '⅛' };
 
 function fit(canvas) {
   const dpr = window.devicePixelRatio || 1;

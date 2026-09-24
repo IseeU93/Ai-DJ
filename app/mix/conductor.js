@@ -6,7 +6,25 @@ import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
-const LEAD_SECONDS = 2.5; // Mindestvorlauf für "Jetzt mixen"
+const LEAD_SECONDS = 2.5; // Mindestvorlauf für normal geplante Übergänge
+const INSTANT_LEAD = 0.45; // s: "Jetzt mixen" startet auf dem nächsten Takt nach dieser Zeit
+const CUE_STORE = 'automix.cues';
+
+function loadCues() {
+  try {
+    return JSON.parse(localStorage.getItem(CUE_STORE)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCues(all) {
+  try {
+    localStorage.setItem(CUE_STORE, JSON.stringify(all));
+  } catch {
+    /* egal */
+  }
+}
 
 export class Conductor extends EventTarget {
   constructor(engine) {
@@ -25,6 +43,7 @@ export class Conductor extends EventTarget {
     this.rampUntil = 0;
     this.loading = [null, null];
     this.forceSoon = false;
+    this.autopilot = false;
     this.timer = setInterval(() => this.tick(), 40);
   }
 
@@ -110,11 +129,41 @@ export class Conductor extends EventTarget {
     this.emit('plan');
   }
 
+  /** Übergang sofort starten (nächster Takt) – wartet nicht auf das Outro. */
   mixNow() {
     if (this.plan?.committed) return;
     this.forceSoon = true;
     this.plan = null;
     this.emit('plan');
+  }
+
+  /** Track aus der Queue sofort reinmixen. */
+  mixInto(index) {
+    if (index < this.editableFrom) return;
+    this.playNext(index);
+    if (this.masterDeck.status.playing) this.mixNow();
+    else this.start();
+  }
+
+  setAutopilot(on) {
+    this.autopilot = on;
+    if (on) {
+      this.automix = true;
+      this.reorderAI();
+      if (!this.masterDeck.status.playing) this.start();
+    }
+    this.emit('plan');
+  }
+
+  /** Autopilot läuft endlos: länger zurückliegende Tracks wandern wieder ans Ende. */
+  recycleIfNeeded() {
+    if (this.queue.length - (this.pos + 1) >= 2) return false;
+    const old = this.queue.slice(0, Math.max(0, this.pos - 3));
+    if (!old.length) return false;
+    this.queue.splice(0, old.length);
+    this.pos -= old.length;
+    this.queue.push(...old);
+    return true;
   }
 
   invalidatePlan() {
@@ -202,6 +251,10 @@ export class Conductor extends EventTarget {
     if (md.track && md.status.playing && md.realAt(now) >= md.length) md.stopAt(now);
 
     if (!this.automix || !md.track || !md.status.playing) return;
+    if (this.autopilot && !this.plan?.committed && this.recycleIfNeeded()) {
+      this.reorderAI();
+      return;
+    }
     const nextId = this.queue[this.pos + 1];
     if (!nextId) return;
 
@@ -256,16 +309,18 @@ export class Conductor extends EventTarget {
     const nowBar = secondsToBar(a, md.realAt(now) / sr);
     const leadBars = 2 + (LEAD_SECONDS * rate) / barTrackSec; // Platz für Schritte vor T0
 
+    const instant = this.forceSoon;
     const opts = {
       out,
       inc,
       outRate: rate,
       type: this.overrides.get(inc.id) || 'auto',
       history: this.history,
-      earliestBar: this.forceSoon ? nowBar + leadBars : null,
+      earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : null,
+      instant,
     };
     let plan = planTransition(opts);
-    if (plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
+    if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: nowBar + leadBars });
 
     const barSec = (4 * 60) / plan.masterBpm;
     const realOut0 = barToSeconds(a, plan.outBar) * sr;
@@ -355,6 +410,10 @@ export class Conductor extends EventTarget {
     this.decks[p.outDeck].setNow('fader', 0);
     this.plan = null;
     this.forceSoon = false;
+    if (this.autopilot) {
+      this.recycleIfNeeded();
+      this.reorderAI();
+    }
     this.emit('queue');
     this.emit('plan');
   }
@@ -487,6 +546,85 @@ export class Conductor extends EventTarget {
     delta -= Math.round(delta);
     const jump = delta * 4 * a.beatInterval * sr;
     if (Math.abs(jump) > sr * 0.002) d.segment(Math.round(d.virtualAt(t)), d.realAt(t) + jump, 0);
+  }
+
+  // ------------------------------------------------------------------ Hot Cues
+
+  /** 8 Cue-Slots pro Track: automatisch aus der Analyse (Start, Drops, Break, Outro) + eigene. */
+  cuesFor(track) {
+    if (!track) return Array(8).fill(null);
+    const a = track.analysis;
+    const auto = [];
+    const add = (label, bar, kind) => {
+      if (bar === null || bar === undefined) return;
+      const sec = barToSeconds(a, bar);
+      if (sec < 0 || sec >= a.duration || auto.some((c) => Math.abs(c.sec - sec) < 0.5)) return;
+      auto.push({ label, sec, kind });
+    };
+    add('Start', a.points.startBar, 'start');
+    (a.points.drops?.length ? a.points.drops : [a.points.dropBar]).slice(0, 3)
+      .forEach((d, n) => add(n ? `Drop ${n + 1}` : 'Drop', d, 'drop'));
+    const brk = a.phrases.find((ph) => (ph.label === 'break' || ph.label === 'build') && ph.bar > a.points.dropBar);
+    if (brk) add(brk.label === 'build' ? 'Build' : 'Break', brk.bar, 'break');
+    add('Outro', a.points.outroBar, 'outro');
+    auto.sort((x, y) => x.sec - y.sec);
+    const slots = Array(8).fill(null);
+    auto.slice(0, 8).forEach((c, n) => (slots[n] = c));
+    const user = loadCues()[track.id] || {};
+    for (const [slot, sec] of Object.entries(user)) {
+      slots[+slot] = sec === null ? null : { label: `Cue ${+slot + 1}`, sec, kind: 'user' };
+    }
+    return slots;
+  }
+
+  /** Pad gedrückt: gesetzter Cue -> Sprung (im Takt), leerer Slot -> Cue auf aktuellen Beat setzen. */
+  triggerCue(i, slot) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    const cue = this.cuesFor(d.track)[slot];
+    if (cue) {
+      this.jumpTo(i, cue.sec);
+      return;
+    }
+    const a = d.track.analysis;
+    const secNow = d.realAt(this.engine.now) / this.engine.sr;
+    const beat = Math.round((secNow - a.firstBeat) / a.beatInterval);
+    const all = loadCues();
+    all[d.track.id] = { ...(all[d.track.id] || {}), [slot]: Math.max(0, a.firstBeat + beat * a.beatInterval) };
+    saveCues(all);
+    this.emit('cues');
+  }
+
+  deleteCue(i, slot) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    const all = loadCues();
+    all[d.track.id] = { ...(all[d.track.id] || {}), [slot]: null };
+    saveCues(all);
+    this.emit('cues');
+  }
+
+  /** Sprung an eine Stelle – bei laufendem Deck auf dem nächsten Beat, damit der Takt bleibt. */
+  jumpTo(i, sec) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    if (this.plan && (this.plan.outDeck === i || this.plan.inDeck === i)) {
+      if (this.plan.committed) this.abortPlan();
+      else this.invalidatePlan();
+    }
+    const sr = this.engine.sr;
+    const target = Math.max(0, sec) * sr;
+    if (!d.status.playing) {
+      d.seek(target);
+      return;
+    }
+    const a = d.track.analysis;
+    const t = this.engine.now + 0.06;
+    const realNow = d.realAt(t);
+    const beatF = a.beatInterval * sr;
+    const firstF = a.firstBeat * sr;
+    const realB = firstF + Math.ceil((realNow - firstF) / beatF) * beatF;
+    d.segment(d.virtualAt(t) + (realB - realNow), target, 0);
   }
 
   setParam(i, name, value) {

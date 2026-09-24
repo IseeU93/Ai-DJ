@@ -5,9 +5,10 @@ const SECTION_COLORS = {
   intro: '#3a3d44',
   main: null, // Deck-Farbe
   break: '#2b3a33',
+  build: '#4a4536',
   outro: '#3a3d44',
 };
-const SECTION_NAMES = { intro: 'Intro', main: 'Main', break: 'Break', outro: 'Outro' };
+const SECTION_NAMES = { intro: 'Intro', main: 'Main', break: 'Break', build: 'Build-up', outro: 'Outro' };
 
 function fit(canvas) {
   const dpr = window.devicePixelRatio || 1;
