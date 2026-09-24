@@ -579,3 +579,20 @@ test('Ab "jetzt" geplant: Ausstieg am nächsten Phrasenende, nie mitten im Absch
   const soon = planTransition({ out, inc, type: 'cut', earliestBar: 30.5, instant: true });
   assert.ok(isPhrase(soon.outBar), `Jetzt mixen: Takt ${soon.outBar}`);
 });
+
+import { planTeaser } from '../app/mix/teaser.js';
+
+test('Teaser: Hook des neuen Tracks 2 Takte im Break des alten, nie über seine Stimme', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const a = out.analysis;
+  const plan = planTransition({ out, inc, type: 'blend' });
+  const t = planTeaser(a, inc.analysis, plan.outBar, 0);
+  assert.ok(t, 'kein Teaser gefunden');
+  assert.equal(t.bars, 2);
+  assert.ok(t.bar + t.bars <= plan.outBar - 8, 'zu nah am Übergang');
+  for (let bar = t.bar; bar < t.bar + t.bars; bar++) assert.ok((a.vocals[bar] ?? 0) < 0.35, `über Gesang bei Takt ${bar}`);
+  assert.ok(inc.analysis.vocals[t.inFrom] >= 0.3 || t.what !== 'Refrain', 'Quelle ist kein Hook');
+  // kein Platz vor dem Übergang -> kein Teaser
+  assert.equal(planTeaser(a, inc.analysis, plan.outBar, plan.outBar - 6), null);
+});

@@ -892,6 +892,15 @@ async function boot() {
     conductor.setFreestyle(e.target.checked);
     saveSettings({ freestyle: e.target.checked });
   };
+  conductor.addEventListener('teaser', (e) => {
+    const el = $('#tr-trick');
+    const wait = Math.max(0, e.detail.at - engine.now);
+    setTimeout(() => {
+      el.textContent = `Teaser: ${e.detail.bars} Takte vom nächsten Track (${e.detail.what})`;
+      clearTimeout(el._t);
+      el._t = setTimeout(() => (el.textContent = ''), 6000);
+    }, wait * 1000);
+  });
   conductor.addEventListener('trick', (e) => {
     const el = $('#tr-trick');
     el.textContent = `Freestyle: ${e.detail.name}`;

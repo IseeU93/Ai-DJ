@@ -6,6 +6,8 @@ import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
 import { detectGenre } from './genre.js';
 import { planTrick } from './freestyle.js';
+import { planTeaser } from './teaser.js';
+import { KILL } from './planner.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
 const LEAD_SECONDS = 2.5; // Mindestvorlauf für normal geplante Übergänge
@@ -383,6 +385,7 @@ export class Conductor extends EventTarget {
 
     if (!this.automix || !md.track || !md.status.playing) return;
     if (this.freestyle) this.maybeTrick(now);
+    this.maybeTeaser(now);
     if (this.autopilot && !this.plan?.committed && this.recycleIfNeeded()) {
       this.reorderAI();
       return;
@@ -462,6 +465,12 @@ export class Conductor extends EventTarget {
     }
     const barSec = (4 * a.beatInterval) / rate;
     const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
+    // nicht zusammen mit dem Teaser des nächsten Tracks
+    const tw = this.teaserWindow;
+    if (tw && T(trick.bar) >= tw[0] && T(trick.bar) <= tw[1]) {
+      this.nextTrickAt = now + 4;
+      return;
+    }
     // Abstand zum geplanten Übergang: mindestens 8 Takte
     if (this.plan && T(this.plan.outBar) - T(trick.bar) < 8 * barSec) {
       this.nextTrickAt = now + 4;
@@ -483,6 +492,47 @@ export class Conductor extends EventTarget {
     // nächster Trick frühestens 16–32 Takte später
     this.nextTrickAt = T(trick.bar) + (16 + Math.floor(Math.random() * 5) * 4) * barSec;
     this.emit('trick', trick);
+  }
+
+  /**
+   * Einmal pro Übergang: gegen Ende des laufenden Tracks, wo er Luft lässt, 2 Takte den Hook des
+   * nächsten Tracks anspielen – im Takt, in der Tonart, ohne Bass, mit Echo-Ausklang.
+   */
+  maybeTeaser(now) {
+    const plan = this.plan;
+    if (!plan || plan.committed || !plan.beatmatch || this.teased === plan.inId) return;
+    if (this.forceSoon || this.soonWindow || now < this.rampUntil || now < (this.holdPlanningUntil || 0)) return;
+    const md = this.masterDeck;
+    const inn = this.decks[plan.inDeck];
+    if (md.status.loopLen > 0 || inn.status.playing || !inn.track || inn.track.id !== plan.inId) return;
+    const a = md.track.analysis;
+    const b = inn.track.analysis;
+    const sr = this.engine.sr;
+    const rate = md.status.rate || 1;
+    const sec = md.realAt(now) / sr;
+    this.teased = plan.inId; // nur einmal prüfen, auch wenn keine Stelle passt
+    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec));
+    if (!t) return;
+    const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
+    const barSec = (4 * a.beatInterval) / rate;
+    const t0 = T(t.bar);
+    const t1 = t0 + t.bars * barSec;
+    if (t0 - now < 1 || plan.firstStepTime - t1 < 4 * barSec) return; // zu knapp am Übergang
+    inn.setKeyShift(plan.keyShift || 0);
+    inn.rateAt(t0, plan.inRate, 0);
+    inn.playAt(t0, barToSeconds(b, t.inFrom) * sr);
+    inn.ramp('low', t0, KILL, t0, KILL);
+    inn.ramp('filter', t0, 0.15, t0, 0.15);
+    inn.ramp('fader', t0, 0, t0 + 0.25 * barSec, 0.7);
+    inn.ramp('echo', t1 - 0.25 * barSec, 0, t1 - 0.2 * barSec, 0.4);
+    inn.ramp('fader', t1 - 0.25 * barSec, 0.7, t1, 0);
+    inn.stopAt(t1 + 0.05);
+    // danach alles zurück, damit der eigentliche Übergang sauber startet
+    inn.ramp('echo', t1 + barSec, 0.4, t1 + 1.5 * barSec, 0);
+    inn.ramp('low', t1 + 0.1, KILL, t1 + 0.1, 0);
+    inn.ramp('filter', t1 + 0.1, 0.15, t1 + 0.1, 0);
+    this.teaserWindow = [t0 - 8 * barSec, t1 + 8 * barSec]; // drumherum Ruhe, kein Trick-Gewimmel
+    this.emit('teaser', { ...t, at: t0 });
   }
 
   makePlan() {
