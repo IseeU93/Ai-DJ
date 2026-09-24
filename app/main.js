@@ -665,6 +665,118 @@ async function loadPlaylist(name) {
   }
 }
 
+// ------------------------------------------------------------------ Bibliothek-Fenster
+// Eigene Ordner-Ansicht: ändert nichts an der laufenden Musik, bis man etwas einreiht.
+
+const lib = { root: '', files: [], playlist: ALL_PLAYLISTS, tracks: [], loading: 0 };
+
+function libPlaylistOf(path) {
+  const rel = path.slice(lib.root.length).replace(/^[\\/]+/, '');
+  const parts = rel.split(/[\\/]/);
+  return parts.length > 1 ? parts[0] : ROOT_PLAYLIST;
+}
+
+async function openLibrary(root) {
+  $('#libwin').hidden = false;
+  if (!root) return;
+  lib.root = root;
+  $('#lib-root').textContent = root;
+  $('#lib-root').title = root;
+  $('#lib-status').textContent = 'Ordner wird gelesen …';
+  try {
+    lib.files = await scanFolder(root);
+  } catch (err) {
+    $('#lib-status').textContent = `Fehler: ${err.message || err}`;
+    return;
+  }
+  renderLibFolders();
+  await showLibPlaylist(ALL_PLAYLISTS);
+}
+
+function renderLibFolders() {
+  const box = $('#lib-folders');
+  const counts = new Map();
+  for (const f of lib.files) counts.set(libPlaylistOf(f.path), (counts.get(libPlaylistOf(f.path)) || 0) + 1);
+  const names = [...counts.keys()].filter((n) => n !== ROOT_PLAYLIST).sort((a, b) => a.localeCompare(b, 'de'));
+  const entries = [[ALL_PLAYLISTS, 'Alle', lib.files.length], ...names.map((n) => [n, n, counts.get(n)])];
+  if (counts.has(ROOT_PLAYLIST)) entries.push([ROOT_PLAYLIST, 'Ohne Unterordner', counts.get(ROOT_PLAYLIST)]);
+  box.innerHTML = '';
+  for (const [value, label, n] of entries) {
+    const el = document.createElement('div');
+    el.className = `lib-folder ${value === lib.playlist ? 'active' : ''}`;
+    el.textContent = label;
+    const small = document.createElement('small');
+    small.textContent = n;
+    el.appendChild(small);
+    el.onclick = () => showLibPlaylist(value);
+    box.appendChild(el);
+  }
+}
+
+async function showLibPlaylist(name) {
+  lib.playlist = name;
+  renderLibFolders();
+  const files = name === ALL_PLAYLISTS ? lib.files : lib.files.filter((f) => libPlaylistOf(f.path) === name);
+  const token = ++lib.loading;
+  lib.tracks = [];
+  renderLibTracks();
+  const found = [];
+  await analysis.analyzeAll(files, {
+    onTrack: (t) => found.push(t),
+    onProgress: (d, n) => {
+      if (token !== lib.loading) return;
+      $('#lib-status').textContent = d < n ? `Analysiere ${d}/${n} … (gründlich: Beatgrid, Struktur, Tonart, Gesang, Richtung)` : '';
+      lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
+      renderLibTracks();
+    },
+    onError: (f, err) => console.error('Analyse fehlgeschlagen:', f.path, err),
+  });
+  if (token !== lib.loading) return;
+  lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
+  $('#lib-status').textContent = `${lib.tracks.length} Tracks`;
+  renderLibTracks();
+}
+
+function renderLibTracks() {
+  const list = $('#lib-list');
+  const q = $('#lib-search').value.trim().toLowerCase();
+  list.innerHTML = '';
+  const queued = new Set(conductor.queue);
+  for (const t of lib.tracks) {
+    if (q && !`${t.title} ${t.artist}`.toLowerCase().includes(q)) continue;
+    const a = t.analysis;
+    const row = document.createElement('div');
+    row.className = `lrow ${queued.has(t.id) ? 'inqueue' : ''}`;
+    row.innerHTML = `<div><div class="t"></div><div class="a"></div></div>
+      <span class="num">${a.bpm.toFixed(1)}</span><span><span class="key"></span></span>
+      <span class="g">${GENRES[t.genre] || ''}</span><span class="num">${fmtTime(a.duration)}</span>
+      <span class="acts">
+        <button class="btn" data-a="next" title="Als Nächstes spielen (Hot-Queue)">Als Nächstes</button>
+        <button class="btn" data-a="add" title="Hinten an die Queue anhängen">+ Queue</button>
+        <button class="btn" data-a="mix" title="Jetzt reinmixen – mit gutem Übergang an der nächsten passenden Stelle, danach läuft diese Playlist weiter">Mix</button>
+      </span>`;
+    $('.t', row).textContent = t.title;
+    $('.a', row).textContent = t.artist || '';
+    keyChip($('.key', row), a.key.camelot);
+    row.querySelector('[data-a=next]').onclick = () => {
+      conductor.queueNext(t);
+      toast(`„${t.title}“ kommt als Nächstes`);
+      renderLibTracks();
+    };
+    row.querySelector('[data-a=add]').onclick = () => {
+      conductor.queueAppend(t);
+      toast(`„${t.title}“ an die Queue angehängt`);
+      renderLibTracks();
+    };
+    row.querySelector('[data-a=mix]').onclick = () => {
+      conductor.mixSoon(t, lib.tracks);
+      toast(`„${t.title}“ wird an der nächsten passenden Stelle eingemixt – danach läuft diese Playlist`);
+      renderLibTracks();
+    };
+    list.appendChild(row);
+  }
+}
+
 // ------------------------------------------------------------------ Start
 
 async function boot() {
@@ -680,6 +792,24 @@ async function boot() {
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
   $('#playlist').onchange = (e) => loadPlaylist(e.target.value);
+  $('#btn-library').onclick = () => {
+    if ($('#libwin').hidden) openLibrary(lib.root || folderRoot || null);
+    else $('#libwin').hidden = true;
+  };
+  $('#lib-close').onclick = () => ($('#libwin').hidden = true);
+  $('#lib-open').onclick = async () => {
+    const path = await pickFolder();
+    if (path) openLibrary(path);
+  };
+  $('#lib-search').oninput = renderLibTracks;
+  $('#lib-take').onclick = () => {
+    if (!lib.tracks.length) return;
+    conductor.switchPlaylist(lib.tracks);
+    toast('Nach dem aktuellen Track geht es mit dieser Playlist weiter');
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('#libwin').hidden = true;
+  });
   const pg = $('#playlist-genre');
   pg.innerHTML = '<option value="auto">Richtung: Auto</option>' +
     Object.entries(GENRES).map(([k, v]) => `<option value="${k}">Richtung: ${v}</option>`).join('');
@@ -727,7 +857,7 @@ async function boot() {
 
   document.addEventListener('pointerdown', () => engine.resume());
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !(e.target instanceof HTMLSelectElement)) {
+    if (e.code === 'Space' && !(e.target instanceof HTMLSelectElement) && !(e.target instanceof HTMLInputElement)) {
       e.preventDefault();
       conductor.togglePlay(conductor.master);
     }

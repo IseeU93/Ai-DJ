@@ -299,7 +299,8 @@ function choosePoints(ctx, lengths, allowFull = false) {
       .filter((L) => L >= 4 && L <= Math.max(...lengths));
     for (const L of Ls) {
       const inBar = Math.round(arrival - L * m);
-      for (let outBar = minOut; outBar <= E - 4; outBar += 4) {
+      const maxOut = ctx.latestBar !== null ? Math.min(E - 4, ctx.latestBar) : E - 4;
+      for (let outBar = minOut; outBar <= maxOut; outBar += 4) {
         const why = [];
         let sc = 0;
         const outEnd = outBar + L;
@@ -830,7 +831,7 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [], outKeyShift = 0 }) {
+export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0 }) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -844,7 +845,7 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     a, b, va: new TrackView(a), vb: new TrackView(b),
     rel, keyDist, masterBpm,
     energyUp: (inc.energy ?? 0.5) - (out.energy ?? 0.5),
-    earliestBar, instant,
+    earliestBar, latestBar, instant,
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
