@@ -54,7 +54,10 @@ export class DeckCore {
     this.tailL = new Float32Array(this.OV);
     this.tailR = new Float32Array(this.OV);
     this.tailM = new Float32Array(this.OV);
-    const scratch = this.N + 2 * this.S + 8;
+    this.pitch = 1;
+    const scratch = Math.ceil(this.N * 1.3) + 2 * this.S + 8;
+    this.rawL = new Float32Array(scratch);
+    this.rawR = new Float32Array(scratch);
     this.tmpL = new Float32Array(scratch);
     this.tmpR = new Float32Array(scratch);
     this.tmpM = new Float32Array(scratch);
@@ -255,16 +258,35 @@ export class DeckCore {
 
   // ---------- Time-Stretch ----------
 
+  /** Liest n Samples ab (evtl. gebrochener) virtueller Position mit Schrittweite step (Tonhöhe). */
+  _readRes(start, n, step, outL, outR) {
+    if (step === 1 && Number.isInteger(start)) {
+      this.readBlock(start, n, outL, outR);
+      return;
+    }
+    const base = Math.floor(start);
+    const need = Math.ceil((n - 1) * step + (start - base)) + 2;
+    this.readBlock(base, need, this.rawL, this.rawR);
+    for (let j = 0; j < n; j++) {
+      const pos = start - base + j * step;
+      const i = Math.floor(pos);
+      const f = pos - i;
+      outL[j] = this.rawL[i] + (this.rawL[i + 1] - this.rawL[i]) * f;
+      outR[j] = this.rawR[i] + (this.rawR[i + 1] - this.rawR[i]) * f;
+    }
+  }
+
   _generateGrain(emitFrame) {
     const { N, OV } = this;
     const rate = this.rateAt(emitFrame);
+    const p = this.pitch;
     const nom = Math.round(this.nominal);
     let actual = nom;
     const hasPrev = this.prevActual !== null;
-    // natürliche Fortsetzung = kein Suchen nötig (Tempo 1, kein Versatz) -> bitgenau transparent
-    if (hasPrev && this.prevActual + N - OV !== nom) actual = this._search(nom);
+    // natürliche Fortsetzung = kein Suchen nötig (Tempo 1, Tonhöhe 1) -> bitgenau transparent
+    if (hasPrev && (p !== 1 || this.prevActual + N - OV !== nom)) actual = this._search(nom, p);
 
-    this.readBlock(actual, N, this.tmpL, this.tmpR);
+    this._readRes(actual, N, p, this.tmpL, this.tmpR);
     const L = this.tmpL;
     const R = this.tmpR;
     const out = N - OV;
@@ -295,19 +317,24 @@ export class DeckCore {
   }
 
   /** Beste Anschlussstelle um `nom`: maximale normierte Korrelation mit dem Überblend-Material. */
-  _search(nom) {
+  _search(nom, p = 1) {
     const { OV, S } = this;
     const T = this.tailM;
-    const span = OV + 2 * S;
+    // Rohmaterial einmal lesen, Kandidaten (mit Tonhöhen-Schritt p) daraus interpolieren
+    const span = Math.ceil(2 * S + OV * p) + 2;
     this.readBlock(nom - S, span, this.tmpL, this.tmpR);
     const M = this.tmpM;
     for (let i = 0; i < span; i++) M[i] = this.tmpL[i] + this.tmpR[i];
+    const at = (x) => {
+      const i = Math.floor(x);
+      return M[i] + (M[i + 1] - M[i]) * (x - i);
+    };
 
     const score = (off, step) => {
       let c = 0;
       let e = 1e-9;
       for (let i = 0; i < OV; i += step) {
-        const x = M[off + i];
+        const x = p === 1 ? M[off + i] : at(off + i * p);
         c += T[i] * x;
         e += x * x;
       }
@@ -334,6 +361,11 @@ export class DeckCore {
       }
     }
     return nom - S + fine;
+  }
+
+  /** Tonhöhe (Faktor, z. B. 2^(1/12) = +1 Halbton) – nur im Keylock-Modus, Tempo bleibt. */
+  setPitch(p) {
+    this.pitch = p > 0 ? p : 1;
   }
 
   // ---------- Render ----------

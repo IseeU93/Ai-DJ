@@ -132,3 +132,16 @@ test('keylock: saubere Wiedergabe bei -3 % (kaum Obertöne/Knackser)', () => {
   const fs = zeroCrossFreq(src, SR, SR / 2, SR * 2);
   assert.ok(Math.abs(f - fs) < 3, `freq ${f} vs ${fs}`);
 });
+
+test('Key-Sync: +2 Halbtöne ändern Tonhöhe, nicht Tempo', () => {
+  const src = sine(1000, 4);
+  const core = new DeckCore(SR);
+  core.load(src, src);
+  core.setPitch(2 ** (2 / 12));
+  core.schedulePlay(0, 0);
+  const { L } = render(core, SR * 2);
+  const st = core.status(SR * 2);
+  assert.ok(Math.abs(st.v - SR * 2) < core.N, `virtual ${st.v}`);
+  const f = zeroCrossFreq(L, SR, SR / 2, SR * 2);
+  assert.ok(Math.abs(f - 1000 * 2 ** (2 / 12)) < 10, `freq ${f}`);
+});

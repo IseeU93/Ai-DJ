@@ -2,7 +2,7 @@ import { Engine } from './audio/engine.js';
 import { Conductor } from './mix/conductor.js';
 import { AnalysisService } from './analysis/service.js';
 import { TRANSITIONS, KILL, barToSeconds } from './mix/planner.js';
-import { parseCamelot } from './mix/order.js';
+import { parseCamelot, shiftCamelot } from './mix/order.js';
 import { Knob, Slider } from './ui/controls.js';
 import { DeckWaveform, drawOverview } from './ui/waveform.js';
 import { drawTimeline } from './ui/timeline.js';
@@ -31,9 +31,11 @@ const fmtTime = (s) => {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 };
 
-function keyChip(el, camelot) {
+function keyChip(el, camelot, shift = 0) {
+  if (shift) camelot = shiftCamelot(camelot, shift);
   const k = parseCamelot(camelot);
-  el.textContent = camelot || '–';
+  el.textContent = camelot ? `${camelot}${shift ? ` ${shift > 0 ? '+' : '−'}${Math.abs(shift)}` : ''}` : '–';
+  el.title = shift ? `Key-Sync: um ${shift > 0 ? '+' : ''}${shift} Halbton verschoben` : '';
   el.style.setProperty('--h', k ? (k.n - 1) * 30 : 0);
   el.classList.toggle('minor', k?.letter === 'A');
   el.classList.toggle('none', !k);
@@ -245,10 +247,11 @@ function updateDeck(i, now) {
   const track = d.track;
   const sr = engine.sr;
 
-  if (ui.lastTrack !== track) {
+  if (ui.lastTrack !== track || ui.lastShift !== (d.keyShift || 0)) {
     ui.lastTrack = track;
+    ui.lastShift = d.keyShift || 0;
     ui.title.textContent = track ? track.title : 'Leer';
-    keyChip(ui.key, track?.analysis.key.camelot);
+    keyChip(ui.key, track?.analysis.key.camelot, ui.lastShift);
     renderPads(i);
     ui.gridAnalysis = null;
   }

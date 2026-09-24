@@ -29,6 +29,9 @@ class DeckProcessor extends AudioWorkletProcessor {
       case 'segment':
         c.addSegment(msg.v, msg.real, msg.len || 0);
         break;
+      case 'pitch':
+        c.setPitch(msg.value);
+        break;
       case 'seek':
         c.seek(msg.real);
         break;

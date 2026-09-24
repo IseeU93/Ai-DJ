@@ -5,6 +5,28 @@ export function parseCamelot(code) {
   return m ? { n: +m[1], letter: m[2] } : null;
 }
 
+/** Camelot-Code um `semis` Halbtöne verschieben (1 Halbton = 7 Schritte auf dem Wheel). */
+export function shiftCamelot(code, semis) {
+  const k = parseCamelot(code);
+  if (!k || !semis) return code;
+  const n = ((((k.n - 1 + 7 * semis) % 12) + 12) % 12) + 1;
+  return `${n}${k.letter}`;
+}
+
+/**
+ * Bester Key-Sync: um wie viele Halbtöne (±2) muss der neue Track verschoben werden,
+ * damit er harmonisch zum alten passt? Liefert { semis, dist }.
+ */
+export function keySync(outKey, inKey, allow = true) {
+  let best = { semis: 0, dist: camelotDistance(outKey, inKey) };
+  if (!allow || best.dist < 0.3) return best;
+  for (const s of [1, -1, 2, -2]) {
+    const dist = camelotDistance(outKey, shiftCamelot(inKey, s));
+    if (dist + 0.05 * Math.abs(s) < best.dist - 0.15 && dist <= best.dist) best = { semis: s, dist };
+  }
+  return best;
+}
+
 /** 0 = perfekt, ~0.1 Nachbar, 0.15 Parallel-Dur/Moll, bis 1 = Clash. */
 export function camelotDistance(a, b) {
   const x = parseCamelot(a);
@@ -45,7 +67,9 @@ export function transitionCost(a, b) {
   const rel = tempoRelation(A.bpm, B.bpm);
   const d = rel.diff;
   const tempo = d <= 0.02 ? d * 5 : d <= BEATMATCH_LIMIT ? 0.1 + (d - 0.02) * 8 : 0.7 + (d - BEATMATCH_LIMIT) * 4;
-  const key = camelotDistance(A.key.camelot, B.key.camelot);
+  // Tonart: Key-Sync kann bis ±2 Halbtöne angleichen (klingt aber nicht ganz so natürlich)
+  const ks = keySync(A.key.camelot, B.key.camelot);
+  const key = ks.dist + 0.12 * Math.abs(ks.semis);
   const energy = Math.abs((a.energy ?? 0.5) - (b.energy ?? 0.5));
   // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
   const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);

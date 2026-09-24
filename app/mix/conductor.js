@@ -286,6 +286,19 @@ export class Conductor extends EventTarget {
       return;
     }
 
+    // Nach einem Sprung warten, bis er wirklich passiert ist (sonst Planung mit alter Position)
+    if (now < (this.holdPlanningUntil || 0)) return;
+
+    // Passt ein noch nicht eingeplanter Plan noch zur tatsächlichen Position? Sonst neu planen.
+    if (this.plan && !this.plan.committed && md.status.loopLen === 0 && now >= this.rampUntil) {
+      const st = md.status;
+      const t0 = st.time + (this.plan.realOut0 - st.real) / ((st.rate || 1) * this.engine.sr);
+      if (Math.abs(t0 - this.plan.T0) > 0.05) {
+        this.plan = null;
+        this.emit('plan');
+      }
+    }
+
     if (!this.plan) {
       if (now < this.rampUntil && this.forceSoon && !this.rampFrozen) {
         // "Jetzt mixen" während der Tempo-Rückfahrt: aktuelles Tempo einfrieren
@@ -338,6 +351,7 @@ export class Conductor extends EventTarget {
       type: this.overrides.get(inc.id) || 'auto',
       history: this.history,
       flavorHistory: this.flavorHistory || [],
+      outKeyShift: md.keyShift || 0,
       earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : null,
       instant,
     };
@@ -377,6 +391,7 @@ export class Conductor extends EventTarget {
 
     out.setEchoTime((plan.echoBeats * 60) / plan.masterBpm);
     inn.cancel({ transport: true, ratesAfter: this.engine.now });
+    inn.setKeyShift(plan.keyShift || 0);
     for (const name of PARAMS) inn.cancelFrom(name, this.engine.now);
 
     for (const s of plan.steps) {
@@ -659,6 +674,12 @@ export class Conductor extends EventTarget {
     const firstF = a.firstBeat * sr;
     const realB = firstF + Math.ceil((realNow - firstF) / beatF) * beatF;
     d.segment(d.virtualAt(t) + (realB - realNow), target, 0);
+    if (i === this.master) {
+      // erst neu planen, wenn der Sprung (auf dem nächsten Beat) passiert ist und gemeldet wurde
+      this.holdPlanningUntil = t + (realB - realNow) / ((d.status.rate || 1) * sr) + 0.12;
+      this.plan = null;
+      this.emit('plan');
+    }
   }
 
   setParam(i, name, value) {

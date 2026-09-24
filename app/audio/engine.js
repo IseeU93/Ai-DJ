@@ -232,6 +232,7 @@ export class Deck {
     this.length = length;
     this.status = { ...this.status, v: 0, real: 0, playing: false, loopLen: 0, rate: 1 };
     this.resetParams();
+    this.setKeyShift(0);
     const gainDb = track.analysis?.loudness?.gainDb ?? 0;
     this.trim.gain.setValueAtTime(10 ** (gainDb / 20), this.engine.now);
   }
@@ -250,6 +251,12 @@ export class Deck {
 
   segment(v, real, len = 0) {
     this.post({ type: 'segment', v, real, len });
+  }
+
+  /** Key-Sync: Tonhöhe in Halbtönen verschieben (Tempo bleibt). */
+  setKeyShift(semis) {
+    this.keyShift = semis;
+    this.post({ type: 'pitch', value: 2 ** (semis / 12) });
   }
 
   seek(real) {

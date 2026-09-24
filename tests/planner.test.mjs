@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeTrack } from '../app/analysis/analyze.js';
 import { planTransition } from '../app/mix/planner.js';
-import { assignEnergy, buildSetOrder, camelotDistance, tempoRelation } from '../app/mix/order.js';
+import { assignEnergy, buildSetOrder, camelotDistance, keySync, shiftCamelot, tempoRelation } from '../app/mix/order.js';
 import { synthSong } from './synth.mjs';
 
 const SECTIONS = [
@@ -249,4 +249,13 @@ test('Reshuffle liefert andere, aber gültige Reihenfolgen', () => {
   const variants = new Set([1, 2, 3, 4, 5].map((s) => buildSetOrder(tracks, [], s * 7919).map((t) => t.id).join()));
   assert.ok([...variants].some((v) => v !== best), 'keine Variante');
   for (const v of variants) assert.equal(new Set(v.split(',')).size, tracks.length);
+});
+
+test('Key-Sync: Tonart-Clash wird per Halbton-Verschiebung harmonisch', () => {
+  assert.equal(shiftCamelot('8B', 1), '3B'); // C -> C#
+  assert.equal(shiftCamelot('8A', -1), '1A'); // Am -> G#m
+  const ks = keySync('8A', '3A'); // Am vs Bbm: 1 Halbton daneben
+  assert.equal(ks.semis, -1);
+  assert.ok(ks.dist <= 0.1);
+  assert.equal(keySync('8A', '9A').semis, 0); // passt schon -> nicht verschieben
 });

@@ -2,7 +2,7 @@
 // Songs (Phrasen, Drums, Bass, Gesang, Wiederholungen, Energie) – wie ein DJ, der die Tracks kennt.
 // Ergebnis ist eine deklarative Schrittliste (Takte relativ zu T0), die der Conductor sample-genau
 // ausführt, plus Notizen, warum der Übergang so gebaut wurde.
-import { BEATMATCH_LIMIT, camelotDistance, tempoRelation } from './order.js';
+import { BEATMATCH_LIMIT, camelotDistance, keySync, shiftCamelot, tempoRelation } from './order.js';
 
 export const TRANSITIONS = {
   blend: 'Blend',
@@ -721,12 +721,15 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
-export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [] }) {
+export function planTransition({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, instant = false, flavorHistory = [], outKeyShift = 0 }) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
   const rel = tempoRelation(masterBpm, b.bpm);
-  const keyDist = camelotDistance(a.key.camelot, b.key.camelot);
+  // Key-Sync: neuen Track notfalls um bis zu ±2 Halbtöne verschieben, damit beide harmonisch passen
+  const outKey = shiftCamelot(a.key.camelot, outKeyShift);
+  const ks = keySync(outKey, b.key.camelot, (b.key.confidence ?? 1) > 0.15 && (a.key.confidence ?? 1) > 0.15);
+  const keyDist = ks.dist;
   const forced = type !== 'auto' && type in TRANSITIONS;
   const ctx = {
     a, b, va: new TrackView(a), vb: new TrackView(b),
@@ -736,6 +739,9 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
     m: 1, notes: [], loopExt: null, maxL: 32,
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory,
   };
+  if (ks.semis) {
+    ctx.notes.push(`Key-Sync: neuer Track um ${ks.semis > 0 ? '+' : ''}${ks.semis} Halbton${Math.abs(ks.semis) > 1 ? 'e' : ''} angeglichen (${b.key.camelot} → ${shiftCamelot(b.key.camelot, ks.semis)} passt zu ${outKey})`);
+  }
   ctx.m = rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT) ? rel.m : 1;
 
   let chosen = type;
@@ -804,7 +810,8 @@ export function planTransition({ out, inc, outRate = 1, type = 'auto', history =
         .filter(Boolean).map((x) => ` · ${x}`).join('')
       : ''),
     flavors: ctx.flavors || null,
-    reason: (note ? `${note} · ` : '') + describe(a, b, rel, keyDist, masterBpm),
+    reason: (note ? `${note} · ` : '') + describe(outKey, shiftCamelot(b.key.camelot, ks.semis), b.bpm, rel, keyDist, masterBpm),
+    keyShift: ks.semis,
     notes: ctx.notes,
     bars: L,
     endBars: end,
@@ -847,10 +854,10 @@ function clampOutBefore(steps, tEnd) {
   return out;
 }
 
-function describe(a, b, rel, keyDist, masterBpm) {
-  const parts = [`${masterBpm.toFixed(1)} → ${b.bpm.toFixed(1)} BPM`];
+function describe(outKey, inKey, inBpm, rel, keyDist, masterBpm) {
+  const parts = [`${masterBpm.toFixed(1)} → ${inBpm.toFixed(1)} BPM`];
   if (rel.m !== 1) parts.push(rel.m === 2 ? 'Doppeltempo' : 'Halbtempo');
-  parts.push(`${a.key.camelot} → ${b.key.camelot}${keyDist <= 0.15 ? ' (harmonisch)' : keyDist >= 0.6 ? ' (Tonart-Clash)' : ''}`);
+  parts.push(`${outKey} → ${inKey}${keyDist <= 0.15 ? ' (harmonisch)' : keyDist >= 0.6 ? ' (Tonart-Clash)' : ''}`);
   if (rel.diff > BEATMATCH_LIMIT) parts.push('Tempo zu weit für Beatmatch');
   return parts.join(' · ');
 }
