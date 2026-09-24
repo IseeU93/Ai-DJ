@@ -56,6 +56,8 @@ export class RainbowRing {
     // Abklingen statt hartem Sprung.
     this._pulse = 0;
     this._pulseVel = 0;
+    this._breath = 0;
+    this._level = 0;
   }
 
   render(ctx, W, H, audioData, config) {
@@ -91,13 +93,25 @@ export class RainbowRing {
     // Atmet leicht mit Bass/Lautstärke statt nur auf Kicks zu springen.
     const reactiveScale = 1 + amplitude * sensitivity * 0.07 + bass * sensitivity * 0.05;
 
+    // ── Atmen, auch ohne Beat ────────────────────────────────
+    // Im Break, bei reinem Gesang oder ganz ohne Kick stand der Ring
+    // sonst still. Er wächst und schrumpft jetzt ruhig: mit bekanntem
+    // Tempo über zwei Takte (8 Schläge), sonst in ~4 s. Die geglättete
+    // Lautstärke macht das Atmen in lauten Passagen etwas tiefer.
+    const bpm = Number(audioData?.bpm);
+    const breathPeriod = bpm > 40 ? (60 / bpm) * 8 : 4;
+    this._breath = (this._breath + dt * speed / breathPeriod) % 1;
+    this._level += (amplitude - this._level) * 0.05;
+    const breathDepth = clamp(rr.breathDepth ?? 0.14, 0, 0.4) * (0.7 + this._level * 0.6);
+    const breathScale = 1 + Math.sin(this._breath * Math.PI * 2) * breathDepth;
+
     // ── Position: derselbe wandernde Ursprung wie andere zentrierte
     // Effekte - der Ring bewegt sich also mit, statt starr in der
     // Mitte zu kleben.
     const { cx, cy } = effectOrigin(config, W, H);
 
     const baseRadius = Math.min(W, H) * clamp(rr.radius ?? 0.26, 0.05, 0.48);
-    const radius = baseRadius * beatScale * reactiveScale;
+    const radius = baseRadius * beatScale * reactiveScale * breathScale;
 
     const thickness = clamp(rr.thickness ?? 2.6, 0.5, 8) * (config.thicknessMul || 1);
     const intensity = clamp01(
