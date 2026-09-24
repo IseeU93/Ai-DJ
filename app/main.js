@@ -10,6 +10,7 @@ import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
 import { REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
+import { initCompanion } from './lib/companion.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -847,7 +848,7 @@ async function boot() {
   buildStrip(0);
   buildStrip(1);
 
-  new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
+  const masterSlider = new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
   $('#playlist').onchange = (e) => loadPlaylist(e.target.value);
@@ -930,6 +931,63 @@ async function boot() {
     toast(verdict === 'up' ? 'Gemerkt – öfter so' : 'Gemerkt – wird angepasst');
   };
   $('#rate-up').onclick = () => save('up');
+
+  // Handy-App: Status/Befehle über den Companion-Server, Playlist-Warnung auch als Push aufs Handy
+  const companion = initCompanion({
+    engine,
+    conductor,
+    actions: {
+      setSwitch: (sel, on) => {
+        const el = $(sel);
+        if (!el || el.disabled || el.checked === on) return;
+        el.checked = on;
+        el.dispatchEvent(new Event('change'));
+      },
+      setMaster: (v) => {
+        engine.setMasterVolume(v);
+        masterSlider.set(v);
+      },
+      rate: (verdict, reason) => save(verdict, reason ? [reason] : []),
+      lastTransition: () => (lastTransition ? { label: lastTransition.label, title: lastTransition.inc?.title || '' } : null),
+    },
+    onWarning: (text) => {
+      toast(text);
+      const w = $('#queue-warn');
+      w.textContent = text;
+      w.hidden = false;
+    },
+  });
+  conductor.addEventListener('queue', () => {
+    const left = conductor.queue.length - (conductor.pos + 1);
+    if (left > 10) $('#queue-warn').hidden = true;
+  });
+  let phoneTimer = 0;
+  const showPhone = async () => {
+    const info = await companion?.info();
+    if (!info) {
+      $('#phone-addr').textContent = 'nur in der Desktop-App verfügbar';
+      return;
+    }
+    $('#phone-addr').textContent = `${info.ip}:${info.port}`;
+    $('#phone-pin').textContent = info.pin;
+    $('#phone-status').textContent = info.connected ? '● Handy verbunden' : '○ noch kein Handy verbunden';
+    $('#phone-status').classList.toggle('ok', info.connected);
+    $('#btn-phone').classList.toggle('on', info.connected);
+  };
+  $('#btn-phone').onclick = () => {
+    const win = $('#phonewin');
+    win.hidden = !win.hidden;
+    clearInterval(phoneTimer);
+    if (!win.hidden) {
+      showPhone();
+      phoneTimer = setInterval(showPhone, 2000);
+    }
+  };
+  $('#phone-close').onclick = () => {
+    $('#phonewin').hidden = true;
+    clearInterval(phoneTimer);
+  };
+  setInterval(() => $('#phonewin').hidden && showPhone(), 10000); // Button zeigt Verbindung an
   $('#rate-down').onclick = () => {
     reasonsBox.hidden = !reasonsBox.hidden;
   };

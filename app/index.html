@@ -21,6 +21,7 @@
         <span></span>
       </div>
       <div class="spacer"></div>
+      <button class="btn" id="btn-phone" title="Handy-App (AI-DJ Companion) verbinden: Adresse und PIN">Handy</button>
       <button class="btn" id="btn-laser" title="Lasershow einblenden – synchron zur Musik, gesteuert aus der Track-Analyse (Taste L)">Lasershow</button>
       <label class="switch" title="Übergänge automatisch planen und fahren – deine Queue-Reihenfolge bleibt">
         <input type="checkbox" id="automix" checked /><i></i><span>Automix</span>
@@ -78,6 +79,19 @@
       </div>
     </section>
 
+    <div class="phonewin" id="phonewin" hidden>
+      <div class="libwin-head"><b>Handy verbinden</b><div class="spacer"></div><button class="btn small" id="phone-close">×</button></div>
+      <div class="phone-body">
+        <p>In der App <b>AI-DJ Companion</b> auf „Suchen“ tippen oder die Adresse eingeben:</p>
+        <div class="phone-addr" id="phone-addr">–</div>
+        <p>PIN</p>
+        <div class="phone-pin" id="phone-pin">–</div>
+        <p class="phone-status" id="phone-status"></p>
+        <p class="phone-hint">Handy und PC müssen im selben WLAN sein. Beim ersten Start fragt Windows, ob Automix
+        im privaten Netzwerk erreichbar sein darf – bitte zulassen.</p>
+      </div>
+    </div>
+
     <div class="libwin" id="libwin" hidden>
       <div class="libwin-head">
         <b>Bibliothek</b>
@@ -101,6 +115,7 @@
       <div class="queue-head">
         <h2>Queue</h2>
         <span class="info" id="queue-info"></span>
+        <span class="queue-warn" id="queue-warn" hidden></span>
         <div class="spacer"></div>
         <button class="btn" id="btn-reorder" title="Beste Reihenfolge für die Übergänge (Tempo, Tonart, Intros/Outros, Energie-Verlauf)">KI-Reihenfolge</button>
         <button class="btn" id="btn-reshuffle" title="Andere Reihenfolge, die ebenfalls gut ineinander passt">Reshuffle</button>

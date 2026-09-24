@@ -5,7 +5,10 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::ipc::Response;
+use std::sync::Arc;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+mod companion;
 
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus"];
 const MAX_DEPTH: usize = 4;
@@ -105,9 +108,40 @@ async fn show_laser_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Status für die Handy-App (JSON aus dem Mixer-Fenster).
+#[tauri::command]
+fn companion_push(state: String, comp: tauri::State<'_, Arc<companion::Companion>>) {
+    comp.push_state(state);
+}
+
+/// Ereignis für die Handy-App (z. B. Playlist-Warnung) – dort als Benachrichtigung.
+#[tauri::command]
+fn companion_event(event: String, comp: tauri::State<'_, Arc<companion::Companion>>) {
+    comp.push_event(event);
+}
+
+/// Adresse, PIN und ob gerade ein Handy verbunden ist (für die Anzeige im Mixer).
+#[tauri::command]
+fn companion_info(comp: tauri::State<'_, Arc<companion::Companion>>) -> companion::CompanionInfo {
+    comp.info()
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![scan_folder, read_file, pick_folder, show_laser_window])
+        .setup(|app| {
+            let comp = companion::start(app.handle());
+            app.manage(comp);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            scan_folder,
+            read_file,
+            pick_folder,
+            show_laser_window,
+            companion_push,
+            companion_event,
+            companion_info
+        ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der App");
 }

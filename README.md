@@ -50,6 +50,19 @@ Die Lasershow-Dateien unter `app/laser/src` stammen aus dem Beamer-Lasershow-Pro
 dort mit `npm run sync:laser` neu übernehmen (Pfad per `LASERSHOW_DIR`). Die Anbindung an den Mixer
 liegt in `app/laser/dj`.
 
+## Handy-App (AI-DJ Companion)
+
+Die Android-App (Projekt `AndroidStudioProjects/AIDJCompanion`) steuert den Mixer über das Heimnetz:
+läuft gerade, nächster Übergang, Queue (als Nächstes, verschieben, entfernen), Play/Pause, Jetzt mixen,
+Automix/Autopilot/Freestyle, Lautstärke, Lasershow/Blackout, 👍/👎 für Übergänge.
+
+- Mixer: oben **Handy** zeigt Adresse und 4-stellige PIN (bleibt gleich). Windows fragt beim ersten
+  Start, ob Automix im privaten Netzwerk erreichbar sein darf – zulassen.
+- App: **Im WLAN suchen** (UDP 7778) oder Adresse eingeben, PIN, Verbinden.
+- Playlist-Warnung bei noch 10, 3 und 1 Song(s): im Mixer als Hinweis und auf dem Handy als
+  Benachrichtigung (die App hält dafür im Hintergrund die Verbindung, ohne Cloud).
+- Server: `src-tauri/src/companion.rs` (HTTP 7777, Long-Polling), Brücke im Mixer: `app/lib/companion.js`.
+
 ## Entwicklung
 
 ```bash

@@ -70,6 +70,7 @@ export class Engine {
   }
 
   setMasterVolume(v) {
+    this.masterVolume = v;
     this.master.gain.setTargetAtTime(v, this.now, 0.01);
   }
 
