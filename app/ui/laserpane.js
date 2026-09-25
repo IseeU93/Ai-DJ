@@ -1,6 +1,7 @@
 // Lasershow-Bereich im Mixer: ein-/ausblenden, geteilt oder Vollbild, Seite und Breite frei
 // wählbar (wird gemerkt), Beamer-Fenster, und die Show-Einstellungen.
 import { LaserStage } from '../laser/dj/stage.js';
+import { addFeedback, learnLaser, LASER_REASONS } from '../mix/feedback.js';
 
 const $ = (sel) => document.querySelector(sel);
 const LAYOUT = 'automix.laser.layout';
@@ -138,7 +139,9 @@ export function initLaserPane({ engine, conductor }) {
   };
 
   // Statuszeile: was der Laser gerade über die Musik weiß
+  let ratedAt = 0;
   stage.addEventListener('status', ({ detail: st }) => {
+    if (Date.now() - ratedAt < 3000) return; // Bestätigung einer Bewertung kurz stehen lassen
     if (s.autopilot) {
       $('#lz-effect').value = stage.config.effect;
       if (PALETTES[stage.config.palette]) $('#lz-palette').value = stage.config.palette;
@@ -168,6 +171,29 @@ export function initLaserPane({ engine, conductor }) {
   render();
   // Auch ohne sichtbaren Bereich (nur Beamer-Fenster) soll mitgehört werden – ab dem ersten Klick
   document.addEventListener('pointerdown', () => engine.resume().then(() => stage.ensureRunning()), { once: true });
+  // Bewertung des gerade laufenden Effekts: beliebte kommen öfter, abgelehnte fliegen sofort raus
+  stage.setPrefs(learnLaser());
+  stage.effectLabel = () => EFFECTS[stage.config.effect] || stage.config.effect;
+  const reasonsBox = $('#lz-reasons');
+  reasonsBox.innerHTML = Object.entries(LASER_REASONS).map(([k, t]) => `<button class="btn small" data-r="${k}">${t}</button>`).join('');
+  const rate = (verdict, reason = null) => {
+    const cur = stage.current();
+    addFeedback({ kind: 'laser', ...cur, verdict, reasons: reason ? [reason] : [] });
+    stage.setPrefs(learnLaser());
+    reasonsBox.hidden = true;
+    const name = EFFECTS[cur.effect] || cur.effect;
+    ratedAt = Date.now();
+    $('#lz-status').textContent = verdict === 'up' ? `👍 ${name} – kommt öfter` : `👎 ${name} – wird ersetzt`;
+  };
+  $('#lz-up').onclick = () => rate('up');
+  $('#lz-down').onclick = () => {
+    reasonsBox.hidden = !reasonsBox.hidden;
+  };
+  reasonsBox.onclick = (e) => {
+    const r = e.target.closest('[data-r]')?.dataset.r;
+    if (r) rate('down', r);
+  };
+  window.__automixLaserRate = rate; // für die Handy-App
   window.__automixLaser = stage; // für Diagnose in den DevTools
   return stage;
 }

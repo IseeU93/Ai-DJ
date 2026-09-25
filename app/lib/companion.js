@@ -59,6 +59,8 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
         laser: document.querySelector('#shell')?.dataset.laser || 'off',
         blackout: !!laser?.manualBlackout,
       },
+      laserEffect: laser?.effectLabel?.() || null,
+      lastTrick: actions.lastTrick?.() || null,
       master: Math.round((engine.masterVolume ?? 1) * 100) / 100,
       lastTransition: actions.lastTransition?.() || null,
       learned: document.querySelector('#tr-learned')?.textContent?.replace(' · Protokoll kopieren', '') || '',
@@ -120,6 +122,8 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
     laser: () => document.querySelector('#btn-laser')?.click(),
     blackout: () => document.querySelector('#lz-blackout')?.click(),
     rate: ({ verdict, reason }) => actions.rate(verdict, reason),
+    rateTrick: ({ verdict }) => actions.rateTrick?.(verdict),
+    rateLaser: ({ verdict, reason }) => window.__automixLaserRate?.(verdict, reason),
   };
 
   window.__TAURI__.event?.listen('companion-cmd', (e) => {

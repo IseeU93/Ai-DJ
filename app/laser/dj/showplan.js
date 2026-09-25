@@ -37,10 +37,18 @@ function hash(str) {
   return h >>> 0;
 }
 
-function pick(list, seed, avoid) {
-  const opts = list.filter((e) => e !== avoid);
-  const from = opts.length ? opts : list;
-  return from[seed % from.length];
+function pick(list, seed, avoid, score = null) {
+  let opts = list.filter((e) => e !== avoid);
+  if (!opts.length) opts = list;
+  if (!score) return opts[seed % opts.length];
+  // Deine Bewertungen: klar abgelehnte Effekte raus (solange es Alternativen gibt), beliebte öfter
+  const liked = opts.filter((e) => score(e) > -0.7);
+  if (liked.length) opts = liked;
+  const ws = opts.map((e) => Math.exp(Math.max(-2, Math.min(2, score(e)))));
+  const total = ws.reduce((x, y) => x + y, 0);
+  let r = ((seed % 10007) / 10007) * total;
+  for (let i = 0; i < opts.length; i++) if ((r -= ws[i]) <= 0) return opts[i];
+  return opts[opts.length - 1];
 }
 
 /**
@@ -48,7 +56,7 @@ function pick(list, seed, avoid) {
  * Ein Abschnitt (gleiche Phase am Stück) behält seinen Effekt bis zu 16 Takte (ruhige Genres 32),
  * erst danach kommt der nächste – immer auf einer Phrasengrenze.
  */
-export function buildShowPlan(a, genre, id = '') {
+export function buildShowPlan(a, genre, id = '', prefs = null) {
   if (!a?.phrases?.length) return [];
   const g = genre || 'edm';
   const hold = CALM.has(g) ? 32 : 16;
@@ -64,13 +72,17 @@ export function buildShowPlan(a, genre, id = '') {
       continue;
     }
     n = (Math.imul(n, 1103515245) + 12345) >>> 0;
-    const pool = POOLS[phase]?.[g] || POOLS[phase]?.['*'] || POOLS.verse['*'];
-    const effect = pick(pool, n >>> 8, prevEffect);
+    let pool = POOLS[phase]?.[g] || POOLS[phase]?.['*'] || POOLS.verse['*'];
+    const s = prefs?.scores;
+    const score = s ? (e) => (s[e] ?? 0) + (s[`${e}@${g}`] ?? 0) + (s[`${e}@${phase}`] ?? 0) : null;
+    // alles in der Auswahl abgelehnt -> auf die allgemeine Auswahl für diesen Abschnitt ausweichen
+    if (score && pool.every((e) => score(e) <= -0.7)) pool = [...new Set([...pool, ...(POOLS[phase]?.['*'] || POOLS.verse['*'])])];
+    const effect = pick(pool, n >>> 8, prevEffect, score);
     let overlay = null;
     if (phase === 'drop' && !CALM.has(g)) {
       const ov = DROP_OVERLAY[g] || DROP_OVERLAY['*'];
       overlay = ov[(n >>> 4) % ov.length];
-      if (overlay === effect) overlay = null;
+      if (overlay === effect || (score && overlay && score(overlay) < -0.7)) overlay = null;
     }
     segs.push({ bar: ph.bar, bars: ph.bars, phase, effect, overlay, hard: phase === 'drop' && HARD.has(g) });
     prevEffect = effect;

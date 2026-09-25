@@ -123,6 +123,8 @@ export class LaserStage extends EventTarget {
     this.appliedAt = 0;
     this.lastConfigSent = 0;
     this.plans = new Map();
+    this.prefs = null; // aus deinen 👍/👎 (feedback.js learnLaser)
+    this.prefsVersion = 0;
     this.heldEffect = null;
     this.heldSince = -Infinity;
     this.status = { deck: -1, phase: '-', beatsToDrop: Infinity, bpm: 0, key: null, mixing: false };
@@ -366,7 +368,27 @@ export class LaserStage extends EventTarget {
 
   escalation(st) {
     if (this.settings.intensity !== 'auto') return Number(this.settings.intensity);
-    return GENRE_ESCALATION[st?.track.genre] ?? 0.5;
+    const shift = this.prefs?.intensityShift ?? 0; // "zu hektisch" / "zu langweilig"
+    return Math.max(0.1, Math.min(1, (GENRE_ESCALATION[st?.track.genre] ?? 0.5) + shift));
+  }
+
+  /** Gelernte Vorlieben übernehmen – Show-Pläne werden sofort neu gebaut. */
+  setPrefs(prefs) {
+    this.prefs = prefs;
+    this.prefsVersion++;
+    this.plans.clear();
+  }
+
+  /** Was läuft gerade (für eine Bewertung)? */
+  current() {
+    const st = this.settings.trackSync ? this.trackState() : null;
+    const seg = st ? this.segmentFor(st) : null;
+    return {
+      effect: this.config.effect,
+      overlay: this.config._overlayEffects?.[0] || null,
+      phase: seg?.phase || this.status.phase || null,
+      genre: st?.track.genre || null,
+    };
   }
 
   showIntelligence(data, st) {
@@ -453,10 +475,10 @@ export class LaserStage extends EventTarget {
   }
 
   planFor(t) {
-    const key = `${t.id}|${t.genre}|${t.analysis.bpm}|${t.analysis.firstBeat}`;
+    const key = `${t.id}|${t.genre}|${t.analysis.bpm}|${t.analysis.firstBeat}|${this.prefsVersion}`;
     let plan = this.plans.get(key);
     if (!plan) {
-      plan = buildShowPlan(t.analysis, t.genre, t.id);
+      plan = buildShowPlan(t.analysis, t.genre, t.id, this.prefs);
       this.plans.set(key, plan);
       if (this.plans.size > 40) this.plans.delete(this.plans.keys().next().value);
     }
@@ -491,6 +513,7 @@ export class LaserStage extends EventTarget {
     }
     if (genre === 'pop' || genre === 'rap') cfg.speed = Math.min(cfg.speed, 1);
     else if (genre === 'uptempo') cfg.speed = Math.max(cfg.speed, 1.15);
+    cfg.speed *= this.prefs?.speedScale ?? 1; // "zu hektisch" -> langsamer, "zu langweilig" -> schneller
   }
 
   punctuate(data) {

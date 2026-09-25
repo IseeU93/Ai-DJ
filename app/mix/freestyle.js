@@ -42,7 +42,7 @@ function build(kind, intoMain = false) {
  * Abschnitt (vor einem Drop eher Bass-Cut/Repeat, im Gesang eher A-cappella/Echo).
  * dice: 0..1 für Abwechslung, last: zuletzt gespielter Trick (nicht direkt wiederholen).
  */
-export function planTrick(a, barNow, dice = Math.random(), last = null) {
+export function planTrick(a, barNow, dice = Math.random(), last = null, weights = {}) {
   const phrases = a.phrases || [];
   const next = phrases.find((ph) => ph.bar >= barNow + 2 && ph.bar <= barNow + 12);
   if (!next) return null;
@@ -58,10 +58,13 @@ export function planTrick(a, barNow, dice = Math.random(), last = null) {
     repeat: (a.barDrums?.[next.bar - 1] ?? 0) > 0.4 ? (intoMain ? 0.6 : 0.3) : 0,
     acapella: vocalEnd >= 0.5 ? 1.1 : 0,
   };
+  // aus deinen 👍/👎: klar abgelehnte Tricks (mehrfach 👎) kommen gar nicht mehr
+  for (const k of Object.keys(w)) w[k] = (weights[k] ?? 1) < 0.2 ? 0 : w[k] * (weights[k] ?? 1);
   if (last && w[last]) w[last] *= 0.2;
   const total = Object.values(w).reduce((s, v) => s + v, 0);
+  if (total <= 0) return null;
   let r = dice * total;
-  let kind = 'echo';
+  let kind = Object.keys(w).filter((k) => w[k] > 0).pop(); // Rundungs-Rest: letzter erlaubter Trick
   for (const [k, v] of Object.entries(w)) {
     if ((r -= v) <= 0) {
       kind = k;

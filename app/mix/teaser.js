@@ -37,7 +37,7 @@ export function teaserSource(b) {
  * Sucht die Teaser-Stelle im alten Track `a` vor dem geplanten Ausstieg `outBar`.
  * Liefert { bar, bars, inFrom, what } (Takte des alten Tracks, inFrom = Takt im neuen) oder null.
  */
-export function planTeaser(a, b, outBar, nowBar, bars = 2) {
+export function planTeaser(a, b, outBar, nowBar, bars = 2, minScore = 0.6) {
   const src = teaserSource(b);
   if (!src) return null;
   const off = a.phraseOffset || 0;
@@ -60,5 +60,5 @@ export function planTeaser(a, b, outBar, nowBar, bars = 2) {
     sc -= Math.abs(outBar - end - 16) * 0.01; // grob 16 Takte vor dem Übergang ist ideal
     if (!best || sc > best.sc) best = { sc, bar: b0, bars, inFrom: src.bar, what: src.what };
   }
-  return best && best.sc > 0.6 ? best : null;
+  return best && best.sc > minScore ? best : null;
 }

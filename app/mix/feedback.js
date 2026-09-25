@@ -16,6 +16,13 @@ export const REASONS = {
   mismatch: 'passt nicht zusammen',
 };
 
+/** Gründe für ein 👎 bei der Lasershow. */
+export const LASER_REASONS = {
+  hectic: 'zu hektisch',
+  boring: 'zu langweilig',
+  mismatch: 'passt nicht zur Musik',
+};
+
 export function loadFeedback() {
   try {
     return JSON.parse(localStorage.getItem(STORE)) || [];
@@ -53,6 +60,8 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export function learn(entries = loadFeedback()) {
   const bias = {};
   const count = {};
+  const all = entries;
+  entries = entries.filter((e) => !e.kind || e.kind === 'transition');
   const recent = entries.slice(-120);
   recent.forEach((e, i) => {
     const w = 0.5 + (0.5 * (i + 1)) / recent.length; // neuere stärker
@@ -69,7 +78,53 @@ export function learn(entries = loadFeedback()) {
     exitShift: clamp(0.15 * (c('early') - c('late')), -0.8, 0.8),
     hardness: clamp(0.2 * c('hard'), 0, 1.2),
   };
-  return { bias, tune, n: entries.length };
+  return { bias, tune, n: entries.length, trick: learnFreestyle(all), laser: learnLaser(all) };
+}
+
+/**
+ * Freestyle-Tricks und Teaser: Gewicht pro Trick (Multiplikator auf seine Häufigkeit) und eine
+ * Verschiebung der Teaser-Schwelle (👍 -> öfter und an mehr Stellen, 👎 -> seltener bis aus).
+ */
+export function learnFreestyle(entries = loadFeedback()) {
+  const list = entries.filter((e) => e.kind === 'trick').slice(-120);
+  const sum = {};
+  let teaser = 0;
+  list.forEach((e, i) => {
+    const w = 0.5 + (0.5 * (i + 1)) / list.length;
+    if (e.trick === 'teaser') teaser += (e.verdict === 'up' ? -0.1 : 0.2) * w;
+    else sum[e.trick] = (sum[e.trick] ?? 0) + (e.verdict === 'up' ? 0.3 : -0.5) * w;
+  });
+  const weights = {};
+  for (const [k, v] of Object.entries(sum)) weights[k] = clamp(Math.exp(v), 0.03, 3);
+  return { weights, teaserShift: clamp(teaser, -0.4, 1.2), n: list.length };
+}
+
+/**
+ * Lasershow: Bewertung pro Effekt (auch pro Musikrichtung und Abschnitt), dazu Tempo und
+ * Intensität aus "zu hektisch" / "zu langweilig".
+ */
+export function learnLaser(entries = loadFeedback()) {
+  const list = entries.filter((e) => e.kind === 'laser').slice(-150);
+  const scores = {};
+  const count = {};
+  const add = (k, v) => (scores[k] = (scores[k] ?? 0) + v);
+  list.forEach((e, i) => {
+    const w = 0.5 + (0.5 * (i + 1)) / list.length;
+    const d = (e.verdict === 'up' ? 0.3 : -0.5) * w;
+    add(e.effect, d);
+    add(`${e.effect}@${e.genre}`, 1.5 * d);
+    add(`${e.effect}@${e.phase}`, 1.2 * d);
+    if (e.overlay && e.verdict === 'down') add(e.overlay, 0.5 * d);
+    for (const r of e.reasons || []) count[r] = (count[r] ?? 0) + w;
+  });
+  for (const k of Object.keys(scores)) scores[k] = clamp(scores[k], -2, 1.5);
+  const c = (k) => count[k] ?? 0;
+  return {
+    scores,
+    speedScale: clamp(1 - 0.08 * c('hectic') + 0.08 * c('boring'), 0.6, 1.4),
+    intensityShift: clamp(-0.08 * c('hectic') + 0.08 * c('boring'), -0.4, 0.4),
+    n: list.length,
+  };
 }
 
 /** Kurzfassung für die Anzeige: was hat die App aus deinen Bewertungen gelernt? */

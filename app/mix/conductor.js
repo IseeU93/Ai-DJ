@@ -483,7 +483,7 @@ export class Conductor extends EventTarget {
     const sr = this.engine.sr;
     const rate = md.status.rate || 1;
     const sec = md.realAt(now) / sr;
-    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick);
+    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick, this.learned.trick?.weights);
     if (!trick) {
       this.nextTrickAt = now + 2;
       return;
@@ -516,7 +516,7 @@ export class Conductor extends EventTarget {
     this.lastTrick = trick.kind;
     // nächster Trick frühestens 16–32 Takte später
     this.nextTrickAt = T(trick.bar) + (16 + Math.floor(Math.random() * 5) * 4) * barSec;
-    this.emit('trick', trick);
+    this.emit('trick', { ...trick, at: T(trick.bar) });
   }
 
   /**
@@ -536,7 +536,9 @@ export class Conductor extends EventTarget {
     const rate = md.status.rate || 1;
     const sec = md.realAt(now) / sr;
     this.teased = plan.inId; // nur einmal prüfen, auch wenn keine Stelle passt
-    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec));
+    const shift = this.learned.trick?.teaserShift ?? 0;
+    if (shift >= 1) return; // Teaser nach vielen 👎 aus
+    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec), 2, 0.6 + shift);
     if (!t) return;
     const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
     const barSec = (4 * a.beatInterval) / rate;

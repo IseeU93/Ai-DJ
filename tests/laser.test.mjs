@@ -107,3 +107,45 @@ test('Show-Plan: vorhersehbar, harte Drops mit Balken, Pop ohne Zusatzebenen', (
   assert.ok(buildShowPlan(a, 'pop', 'x').every((s) => !s.overlay && !s.hard));
   assert.ok(!['liquidSky', 'snake', 'lissajous'].includes(segmentAt(up, 34).effect), 'Uptempo-Break schwebt');
 });
+
+import { learnLaser, learnFreestyle } from '../app/mix/feedback.js';
+import { planTrick } from '../app/mix/freestyle.js';
+
+test('Laser-Bewertung: 👎 Effekt fliegt aus dem Show-Plan, 👍 kommt öfter, "zu hektisch" bremst', () => {
+  const a = fakeTrack();
+  const base = buildShowPlan(a, 'edm', 't1');
+  const hated = base.find((s) => s.phase === 'verse' || s.phase === 'drop')?.effect || base[0].effect;
+  const prefs = learnLaser(Array.from({ length: 3 }, () => ({ kind: 'laser', effect: hated, genre: 'edm', phase: 'drop', verdict: 'down', reasons: ['hectic'] })));
+  assert.ok(prefs.scores[hated] < -0.7);
+  assert.ok(prefs.speedScale < 1 && prefs.intensityShift < 0);
+  for (let i = 0; i < 20; i++) {
+    const plan = buildShowPlan(a, 'edm', `t${i}`, prefs);
+    assert.ok(plan.every((s) => s.effect !== hated), `${hated} trotz 👎 in Plan ${i}`);
+  }
+  const love = learnLaser(Array.from({ length: 4 }, () => ({ kind: 'laser', effect: 'tunnel', genre: 'edm', phase: 'build', verdict: 'up' })));
+  let withLove = 0;
+  let without = 0;
+  for (let i = 0; i < 40; i++) {
+    withLove += buildShowPlan(a, 'edm', `x${i}`, love).filter((s) => s.effect === 'tunnel').length;
+    without += buildShowPlan(a, 'edm', `x${i}`, { scores: {} }).filter((s) => s.effect === 'tunnel').length;
+  }
+  assert.ok(withLove > without, `Tunnel mit 👍 ${withLove}x, ohne ${without}x`);
+  // Uptempo-Drop hat nur den Balken – nach 👎 gibt es trotzdem einen Effekt
+  const noBar = learnLaser(Array.from({ length: 3 }, () => ({ kind: 'laser', effect: 'beamSweep', genre: 'uptempo', phase: 'drop', verdict: 'down' })));
+  assert.notEqual(segmentAt(buildShowPlan(a, 'uptempo', 'u', noBar), 20).effect, 'beamSweep');
+});
+
+test('Freestyle-Bewertung: 👎 Trick kommt nicht mehr, Teaser seltener bis aus', () => {
+  const a = fakeTrack();
+  const fs = learnFreestyle([
+    ...Array.from({ length: 5 }, () => ({ kind: 'trick', trick: 'echo', verdict: 'down' })),
+    ...Array.from({ length: 5 }, () => ({ kind: 'trick', trick: 'teaser', verdict: 'down' })),
+  ]);
+  assert.ok(fs.weights.echo < 0.2);
+  assert.ok(fs.teaserShift >= 0.6);
+  let echos = 0;
+  for (let d = 0; d < 1; d += 0.02) if (planTrick(a, 10, d, null, fs.weights)?.kind === 'echo') echos++;
+  assert.ok(echos <= 1, `Echo-Wurf trotz 👎 ${echos}x`);
+  const up = learnFreestyle(Array.from({ length: 4 }, () => ({ kind: 'trick', trick: 'teaser', verdict: 'up' })));
+  assert.ok(up.teaserShift < 0);
+});

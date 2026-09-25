@@ -10,6 +10,7 @@ import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
 import { REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
+import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -902,6 +903,7 @@ async function boot() {
   const applyLearned = () => {
     const l = learn();
     conductor.setLearned(l);
+    window.__automixLaser?.setPrefs(l.laser);
     $('#tr-learned').innerHTML = `Gelernt: ${describeLearned(l, TRANSITIONS)} · <a href="#" id="fb-copy">Protokoll kopieren</a>`;
     $('#fb-copy').onclick = async (ev) => {
       ev.preventDefault();
@@ -935,6 +937,37 @@ async function boot() {
   };
   $('#rate-up').onclick = () => save('up');
 
+  // Freestyle-Tricks und Teaser anzeigen, sobald sie wirklich passieren – und bewertbar machen
+  let lastTrick = null;
+  const trickRow = $('#trick-row');
+  const showTrick = (info, text) => {
+    lastTrick = { ...info, shownAt: Date.now() };
+    $('#tr-trick').textContent = text;
+    trickRow.hidden = false;
+    clearTimeout(trickRow._t);
+    trickRow._t = setTimeout(() => {
+      trickRow.hidden = true;
+      lastTrick = null;
+    }, 30000);
+  };
+  const rateTrick = (verdict) => {
+    if (!lastTrick) return;
+    addFeedback({ kind: 'trick', trick: lastTrick.kind, name: lastTrick.name, verdict, genre: conductor.masterDeck.track?.genre || null });
+    trickRow.hidden = true;
+    lastTrick = null;
+    applyLearned();
+    toast(verdict === 'up' ? 'Gemerkt – kommt öfter' : 'Gemerkt – kommt seltener');
+  };
+  $('#trick-up').onclick = () => rateTrick('up');
+  $('#trick-down').onclick = () => rateTrick('down');
+  conductor.addEventListener('teaser', (e) => {
+    const wait = Math.max(0, e.detail.at - engine.now);
+    setTimeout(() => showTrick({ kind: 'teaser', name: 'Teaser' }, `Teaser: ${e.detail.bars} Takte vom nächsten Track (${e.detail.what})`), wait * 1000);
+  });
+  conductor.addEventListener('trick', (e) => {
+    const wait = Math.max(0, (e.detail.at ?? engine.now) - engine.now);
+    setTimeout(() => showTrick({ kind: e.detail.kind, name: e.detail.name }, `Freestyle: ${e.detail.name}`), wait * 1000);
+  });
   // Handy-App: Status/Befehle über den Companion-Server, Playlist-Warnung auch als Push aufs Handy
   const companion = initCompanion({
     engine,
@@ -952,6 +985,8 @@ async function boot() {
       },
       rate: (verdict, reason) => save(verdict, reason ? [reason] : []),
       lastTransition: () => (lastTransition ? { label: lastTransition.label, title: lastTransition.inc?.title || '' } : null),
+      lastTrick: () => (lastTrick ? { kind: lastTrick.kind, name: lastTrick.name || TRICKS[lastTrick.kind] || '' } : null),
+      rateTrick,
     },
     onWarning: (text) => {
       toast(text);
@@ -1003,21 +1038,6 @@ async function boot() {
     $('#rate-name').textContent = `${e.detail.label} (${e.detail.inc?.title || ''})`;
     rateBox.hidden = false;
     reasonsBox.hidden = true;
-  });
-  conductor.addEventListener('teaser', (e) => {
-    const el = $('#tr-trick');
-    const wait = Math.max(0, e.detail.at - engine.now);
-    setTimeout(() => {
-      el.textContent = `Teaser: ${e.detail.bars} Takte vom nächsten Track (${e.detail.what})`;
-      clearTimeout(el._t);
-      el._t = setTimeout(() => (el.textContent = ''), 6000);
-    }, wait * 1000);
-  });
-  conductor.addEventListener('trick', (e) => {
-    const el = $('#tr-trick');
-    el.textContent = `Freestyle: ${e.detail.name}`;
-    clearTimeout(el._t);
-    el._t = setTimeout(() => (el.textContent = ''), 8000);
   });
   $('#autopilot').onchange = (e) => {
     conductor.setAutopilot(e.target.checked);

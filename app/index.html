@@ -60,7 +60,11 @@
         <div class="name" id="tr-name">–</div>
         <div class="notes" id="tr-notes"></div>
         <div class="reason" id="tr-reason"></div>
-        <div class="trick" id="tr-trick"></div>
+        <div class="trick-row" id="trick-row" hidden>
+          <span class="trick" id="tr-trick"></span>
+          <button class="btn small" id="trick-up" title="Gut – öfter so">👍</button>
+          <button class="btn small" id="trick-down" title="Nicht gut – seltener">👎</button>
+        </div>
         <div class="tr-rate" id="tr-rate" hidden>
           <span class="lbl">Letzter Übergang</span>
           <span class="rate-name" id="rate-name"></span>
@@ -132,6 +136,11 @@
     <div class="lz-head">
       <b>Lasershow</b>
       <span class="lz-status" id="lz-status"></span>
+      <span class="lz-rate">
+        <button class="btn small" id="lz-up" title="Dieser Effekt passt gerade – öfter so">👍</button>
+        <button class="btn small" id="lz-down" title="Passt nicht – Grund wählen">👎</button>
+        <span class="lz-reasons" id="lz-reasons" hidden></span>
+      </span>
       <div class="spacer"></div>
       <div class="seg" id="lz-mode">
         <button data-mode="split" title="Mixer und Laser nebeneinander">Geteilt</button>

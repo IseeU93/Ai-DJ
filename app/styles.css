@@ -412,3 +412,9 @@ select.sel:disabled { opacity: 0.5; }
 .phone-hint { font-size: 11px !important; color: var(--faint) !important; }
 #btn-phone.on { border-color: var(--ok); color: var(--ok); }
 .queue-warn { color: var(--warn); font-size: 12px; font-weight: 600; }
+
+.trick-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.trick-row .btn.small { height: 22px; padding: 0 6px; }
+.lz-rate { display: flex; align-items: center; gap: 4px; }
+.lz-rate .btn.small { height: 24px; padding: 0 6px; }
+.lz-reasons { display: flex; gap: 4px; }
