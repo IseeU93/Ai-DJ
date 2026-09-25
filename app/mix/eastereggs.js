@@ -1,16 +1,23 @@
 // Easter Eggs: bekannte DJ-Übergänge, die für ein bestimmtes Song-Paar fest eingebaut sind.
 //
-// Starships (Nicki Minaj) -> One More Time (Daft Punk): das "... one more time" aus dem Refrain von
-// Starships wird 7 Takte geloopt, dann geht es hart auf den Anfang von One More Time.
-// Liegt der Loop daneben (andere Version/Edit): auf Starships Hot Cue 8 genau auf "one more time"
-// setzen – dann wird dieser Takt geloopt. Hot Cue 8 auf One More Time legt den Einstieg fest.
+// Starships (Nicki Minaj) -> One More Time (Daft Punk): das "one more time" aus dem Refrain von
+// Starships (ca. 2:08) wird 7 Takte geloopt, dann geht es hart genau auf das erste "One more time"
+// von Daft Punk (ca. 0:31 – davor ist nur Intro).
+// Liegt es daneben (andere Version/Edit): Hot Cue 8 auf Starships genau auf "one" von "one more
+// time" setzen, und/oder Hot Cue 8 auf One More Time auf den Einsatz des Gesangs.
 
-import { secondsToBar, localBpm } from './planner.js';
+import { barToSeconds, secondsToBeat, localBpm } from './planner.js';
 
 const EGG_LOOP_BARS = 7;
 const CUE_SLOT = 7; // Hot Cue 8
 
+// Zeitpunkte aus synchronisierten Lyrics (Album-/Single-Version). Starships 3:30: die Zeile beginnt
+// bei 0:50.2 / 2:07.1 / 2:53.2, das "one" folgt ~2 Schläge später. One More Time: Gesang ab 0:30.75.
+const STARSHIPS = { duration: [204, 217], ones: [128.0, 174.1, 51.1] };
+const ONE_MORE_TIME = { duration: [190, 335], vocal: 30.75 };
+
 const norm = (t) => `${t?.title || ''} ${t?.name || ''} ${t?.artist || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+const inRange = (x, [lo, hi]) => x >= lo && x <= hi;
 
 export function isStarshipsToOneMoreTime(out, inc) {
   const a = norm(out);
@@ -18,55 +25,73 @@ export function isStarshipsToOneMoreTime(out, inc) {
   return /\bstarships\b/.test(a) && !/one more time/.test(a) && /\bone more time\b/.test(b) && !/\bstarships\b/.test(b);
 }
 
+/** Zeit -> Takt (gebrochen), auf den nächsten Schlag gerastet. */
+const barOnBeat = (a, sec) => (Math.round(secondsToBeat(a, sec)) - a.downbeat) / 4;
+
 /**
  * Plan für den Starships-Übergang oder null (dann plant der normale Planer).
- * opts wie planTransition, dazu outCues/inCues (vom Nutzer gesetzte Hot Cues in Sekunden).
+ * opts wie planTransition, dazu outCues/inCues (vom Nutzer gesetzte Hot Cues in Sekunden) und
+ * minBar (frühester Takt, ab dem noch geplant werden kann).
  */
 export function planEasterEgg(opts) {
   const { out, inc, outRate = 1, earliestBar = null, latestBar = null, instant = false, type = 'auto' } = opts;
   if (type !== 'auto' || !out?.analysis || !inc?.analysis || !isStarshipsToOneMoreTime(out, inc)) return null;
+  if (instant) return null;
   const a = out.analysis;
   const b = inc.analysis;
   const end = a.points.lastBar + 1;
-
-  // Takt mit "one more time": vom Nutzer per Hot Cue 8, sonst der Takt vor einem Drop (Ende des
-  // Refrains "... let's do this one more time") – bevorzugt der letzte, damit Starships ausgespielt ist
-  const cue = opts.outCues?.[CUE_SLOT];
   const from = Math.max(earliestBar ?? 0, opts.minBar ?? 0);
-  const fits = (bar) => bar + 1 >= from && (latestBar === null || bar + 1 <= latestBar) && bar + 1 + EGG_LOOP_BARS <= end + 8;
+  const fits = (bar) => Math.floor(bar) >= from && (latestBar === null || bar <= latestBar) && bar + EGG_LOOP_BARS <= end + 8;
+
+  // Stelle mit "one more time" in Starships (Takt, gebrochen – "one" liegt nicht auf der Eins)
+  const cue = opts.outCues?.[CUE_SLOT];
+  let source;
   let cands;
   if (typeof cue === 'number') {
-    cands = [Math.round(secondsToBar(a, cue))].filter(fits);
+    source = 'Hot Cue 8';
+    cands = [barOnBeat(a, cue)];
+  } else if (inRange(a.duration, STARSHIPS.duration)) {
+    source = 'bekannte Stelle';
+    cands = STARSHIPS.ones.map((t) => barOnBeat(a, t));
   } else {
-    const drops = a.points.drops?.length ? a.points.drops : [a.points.dropBar];
-    const before = drops.filter((d) => d !== undefined && d !== null).map((d) => d - 1).filter((bar) => bar >= 0 && fits(bar));
+    // andere Version: Takt vor einem Drop (Ende des Refrains), bevorzugt mit Gesang
+    source = 'geschätzt';
+    const drops = (a.points.drops?.length ? a.points.drops : [a.points.dropBar]).filter((d) => d !== undefined && d !== null);
+    const before = drops.map((d) => d - 1).filter((bar) => bar >= 0);
     const sung = before.filter((bar) => (a.vocals?.[bar] ?? 0) >= 0.3);
-    cands = sung.length ? sung : before; // Gesangserkennung unsicher -> trotzdem vor einem Drop
+    cands = (sung.length ? sung : before).reverse();
   }
-  if (!cands.length || instant) return null;
-  const phraseBar = earliestBar !== null ? cands[0] : cands[cands.length - 1];
-  const outBar = phraseBar + 1; // Phrase läuft einmal normal, ab dem nächsten Takt wird sie geloopt
+  const phrase = cands.find(fits);
+  if (phrase === undefined) return null;
+  const outBar = Math.floor(phrase);
+  const off = phrase - outBar; // "one" liegt so weit hinter der Eins
+  const L = EGG_LOOP_BARS;
+  const sw = off + L; // Wechsel genau dort, wo das nächste "one" käme
 
+  // Einsatz "One more time" bei Daft Punk
   const inCue = opts.inCues?.[CUE_SLOT];
-  const inBar = typeof inCue === 'number' ? Math.round(secondsToBar(b, inCue)) : Math.max(0, Math.floor(b.points.startBar ?? 0));
+  let inBar;
+  if (typeof inCue === 'number') inBar = barOnBeat(b, inCue);
+  else if (inRange(b.duration, ONE_MORE_TIME.duration)) inBar = barOnBeat(b, ONE_MORE_TIME.vocal);
+  else inBar = b.points.vocalFirst ?? b.points.startBar ?? 0;
 
   const outBpm = (a.beats ? localBpm(a, outBar) : a.bpm) * outRate;
   const inBpm = b.beats ? localBpm(b, inBar) : b.bpm;
   const ratio = outBpm / inBpm;
   const beatmatch = Math.abs(ratio - 1) <= 0.08;
   const inRate = beatmatch ? ratio : 1;
-  const L = EGG_LOOP_BARS;
 
   const steps = [
-    { at: 0, deck: 'out', action: 'loop', bars: 1, anchor: -1 },
     { at: 0, deck: 'in', param: 'fader', to: 0, dur: 0 },
-    { at: L, deck: 'in', param: 'fader', to: 1, dur: 0 },
-    { at: L, deck: 'in', action: 'play' },
-    { at: L, deck: 'out', param: 'fader', to: 0, dur: 0 },
-    { at: L, deck: 'out', action: 'stop' },
+    { at: off, deck: 'out', action: 'loop', bars: 1, anchor: off },
+    { at: sw, deck: 'in', param: 'fader', to: 1, dur: 0 },
+    { at: sw, deck: 'in', action: 'play' },
+    { at: sw, deck: 'out', param: 'fader', to: 0, dur: 0 },
+    { at: sw, deck: 'out', action: 'stop' },
   ];
-  if (beatmatch && Math.abs(inRate - 1) > 0.001) steps.push({ at: L + 1, deck: 'in', action: 'rate', to: 1, dur: 16 });
+  if (beatmatch && Math.abs(inRate - 1) > 0.001) steps.push({ at: sw + 1, deck: 'in', action: 'rate', to: 1, dur: 16 });
 
+  const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   return {
     type: 'loop',
     label: 'Easter Egg: Starships → One More Time',
@@ -76,12 +101,12 @@ export function planEasterEgg(opts) {
     keyShift: 0,
     genres: [out.genre || 'pop', inc.genre || 'edm'],
     notes: [
-      `🥚 Easter Egg: „one more time“ aus Starships (Takt ${phraseBar}) läuft ${L} Takte im Loop`,
-      'dann hart auf der Eins zu One More Time',
-      typeof cue === 'number' ? 'Loop-Stelle aus Hot Cue 8' : 'Loop-Stelle daneben? Auf Starships Hot Cue 8 auf „one more time“ setzen',
+      `🥚 Easter Egg: „one more time“ aus Starships bei ${mmss(barToSeconds(a, phrase))} (${source}) läuft ${L} Takte im Loop`,
+      'dann hart auf das erste „One more time“ von Daft Punk',
+      source === 'Hot Cue 8' ? 'Loop-Stelle aus Hot Cue 8' : 'Stelle daneben? Auf Starships Hot Cue 8 genau auf „one“ setzen',
     ],
-    bars: L,
-    endBars: L,
+    bars: sw,
+    endBars: sw,
     masterBpm: outBpm,
     beatmatch,
     m: 1,

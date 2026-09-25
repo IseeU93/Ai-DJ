@@ -20,24 +20,35 @@ test('Easter Egg erkennt nur Starships -> One More Time', () => {
   assert.ok(isStarshipsToOneMoreTime({ name: 'Nicki Minaj - Starships (Clean).mp3' }, { name: 'daft_punk-one_more_time.mp3' }));
 });
 
-test('Easter Egg: "one more time" 7 Takte im Loop, dann harter Wechsel', () => {
-  const plan = planEasterEgg({ out: starships, inc: omt });
+test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesang von Daft Punk (0:31)', () => {
+  const s = { ...starships, analysis: { ...starships.analysis, duration: 210 } };
+  const o = { ...omt, analysis: { ...omt.analysis, duration: 320 } };
+  const plan = planEasterEgg({ out: s, inc: o });
   assert.equal(plan.egg, 'starships');
-  assert.equal(plan.outBar, 80); // letzter Refrain vor einem Drop
-  const loop = plan.steps.find((s) => s.action === 'loop');
-  assert.deepEqual([loop.at, loop.anchor, loop.bars], [0, -1, 1]);
-  const play = plan.steps.find((s) => s.action === 'play');
-  assert.equal(play.at, 7);
-  assert.ok(plan.steps.some((s) => s.deck === 'out' && s.action === 'stop' && s.at === 7));
+  const a = s.analysis;
+  const b = o.analysis;
+  // Loop beginnt auf dem Schlag bei ~2:08, genau dort, wo er im Song läuft (nahtlos)
+  const loop = plan.steps.find((x) => x.action === 'loop');
+  assert.equal(loop.at, loop.anchor);
+  assert.equal((plan.outBar + loop.anchor) * 4, Math.round((128.0 - a.firstBeat) / a.beatInterval));
+  assert.equal(loop.bars, 1);
+  const play = plan.steps.find((x) => x.action === 'play');
+  assert.equal(play.at, loop.at + 7);
+  assert.ok(plan.steps.some((x) => x.deck === 'out' && x.action === 'stop' && x.at === play.at));
+  // Einstieg beim ersten "One more time" (Schlag bei ~30.75 s)
+  assert.equal(plan.inBar * 4, Math.round((30.75 - b.firstBeat) / b.beatInterval));
   assert.ok(plan.beatmatch && Math.abs(plan.inRate - 125 / 122.7) < 1e-6);
+  // schon über 2:08 hinaus -> die nächste Stelle (~2:54)
+  const later = planEasterEgg({ out: s, inc: o, minBar: 70 });
+  assert.equal((later.outBar + later.steps.find((x) => x.action === 'loop').anchor) * 4, Math.round((174.1 - a.firstBeat) / a.beatInterval));
 });
 
-test('Easter Egg: Hot Cue 8, Mindest-Takt, erzwungene Technik', () => {
+test('Easter Egg: andere Version -> Takt vor Drop, Hot Cue 8, Mindest-Takt, erzwungene Technik', () => {
+  assert.equal(planEasterEgg({ out: starships, inc: omt }).outBar, 79); // letzter Refrain vor einem Drop
   const cued = planEasterEgg({ out: starships, inc: omt, outCues: { 7: 0.1 + 40 * 4 * (60 / 125) } });
-  assert.equal(cued.outBar, 41);
+  assert.equal(cued.outBar, 40);
   assert.equal(planEasterEgg({ out: starships, inc: omt, minBar: 90 }), null);
   assert.equal(planEasterEgg({ out: starships, inc: omt, type: 'blend' }), null);
-  assert.equal(planEasterEgg({ out: starships, inc: omt, earliestBar: 30 }).outBar, 56);
 });
 
 test('Wiedergabeliste: One More Time direkt hinter Starships', async () => {
