@@ -445,32 +445,23 @@
                     android:textColor="@color/text"
                     android:textSize="15sp" />
 
-                <LinearLayout
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPlaylists"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="48dp"
                     android:layout_marginTop="8dp"
-                    android:baselineAligned="false"
-                    android:orientation="horizontal">
+                    android:text="Playlists auswählen"
+                    android:textColor="@color/accent" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPlaylists"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="0dp"
-                        android:layout_height="48dp"
-                        android:layout_weight="1"
-                        android:text="Auswählen"
-                        android:textColor="@color/accent" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPlGenre"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="0dp"
-                        android:layout_height="48dp"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1"
-                        android:text="Richtung: Auto"
-                        android:textColor="@color/text" />
-                </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPlGenre"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:maxLines="1"
+                    android:text="Richtung: Auto"
+                    android:textColor="@color/text" />
             </LinearLayout>
 
             <!-- Queue -->
