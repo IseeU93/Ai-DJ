@@ -87,11 +87,17 @@ export class Tunnel {
       if (this._frames.length >= maxConcurrent) return;
       this._frames.push({ time: this._time, colorIdx: this._colorIdx, rotation: (Math.random() - 0.5) * 0.3 });
     };
+    // Nicht auf JEDEM Beat ein neuer Rahmen - das wirkte hart und
+    // aggressiv (bei 200 BPM über drei grelle Rahmen pro Sekunde).
+    // Jetzt alle 2 Beats, ab 150 BPM alle 4 Beats: ruhiger Flug durch
+    // den Tunnel statt Dauerfeuer.
+    const every = Number(bpm) >= 150 ? 4 : 2;
     if (isBeat) {
-      spawnFrame();
+      this._beatCount = (this._beatCount || 0) + 1;
+      if (this._beatCount % every === 0) spawnFrame();
       this._spawnAcc = 0;
     } else {
-      this._spawnAcc += 0.016 * speed * beatsPerSecond * 0.5;
+      this._spawnAcc += (0.016 * speed * beatsPerSecond * 0.5) / (every / 2);
       if (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
         spawnFrame();
@@ -105,7 +111,9 @@ export class Tunnel {
     // entsprechend fixer, bei einem langsamen entsprechend
     // gemächlicher. Vorher 4 Beats - wirkte als "n bisschen zu
     // schnell" zurückgemeldet.
-    const lifetime = clamp(6 / beatsPerSecond, 0.4, 6) / Math.max(0.3, speed);
+    // 8 Beats (vorher 6) und nie schneller als 1,6 s: gemächlicheres
+    // Wachsen, auch wenn der Show-Takt die Geschwindigkeit hochdreht.
+    const lifetime = Math.max(1.6, clamp(8 / beatsPerSecond, 0.4, 8) / Math.max(0.3, Math.min(speed, 1.3)));
     // Deutlich über die Bildfläche hinaus (Diagonale statt kurzer
     // Kante) - vorher blendete das Ausfaden den Rahmen genau dann
     // weg, wenn er eigentlich den Rand erreicht hätte.
@@ -116,7 +124,7 @@ export class Tunnel {
     // Deutlich kräftiger als vorher (1.5 fest, kein Regler) - "man
     // sieht die quasi nicht" war eine berechtigte Rückmeldung. Jetzt
     // ein eigener, einstellbarer Wert wie bei jedem anderen Effekt.
-    const baseThick = clamp(tunnel.thickness ?? 2.6, 0.5, 8) * (config.thicknessMul || 1.0);
+    const baseThick = clamp(tunnel.thickness ?? 2.2, 0.5, 8) * Math.min(1.2, config.thicknessMul || 1.0);
 
     this._frames = this._frames.filter((f) => (this._time - f.time) < lifetime);
 
@@ -139,12 +147,16 @@ export class Tunnel {
       // noch kleiner Rahmen war dadurch kaum zu sehen ("man sieht die
       // quasi nicht"). Jetzt 0.6..1.0: deutlich präsenter von Anfang
       // an, der Tiefeneffekt bleibt als leichtes Nachdunkeln erhalten.
-      const fadeIn = clamp01(age / 0.1);
+      // Weich einblenden (0,2 s statt eines 0,1-s-Blitzes) und auf dem
+      // letzten Viertel sanft ausblenden, damit kein Rahmen hart
+      // aufpoppt oder abrupt verschwindet; Spitzen etwas gedämpft.
+      const fadeIn = clamp01(age / 0.2);
+      const fadeOut = 1 - clamp01((t - 0.75) / 0.25);
       const depthFade = 0.6 + eased * 0.4;
-      const intensity = clamp01(
-        brightness * fadeIn * depthFade
-        * (0.65 + amplitude * sensitivity * 0.35 + bass * sensitivity * 0.15),
-      );
+      const intensity = Math.min(0.9, clamp01(
+        brightness * fadeIn * fadeOut * depthFade
+        * (0.6 + amplitude * sensitivity * 0.3 + bass * sensitivity * 0.1),
+      ));
       if (intensity <= 0.02) continue;
 
       const color = colors[(this._colorIdx + frame.colorIdx) % colors.length];

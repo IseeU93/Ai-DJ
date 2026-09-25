@@ -2,7 +2,7 @@
 import { ANALYSIS_SR, ANALYSIS_VERSION } from './analyze.js';
 import { readFile } from '../lib/tauri.js';
 import { cacheGet, cachePut, gridOverride } from '../lib/store.js';
-import { readMetadata } from '../lib/metadata.js';
+import { readMetadata, tidyMeta, fromFilename } from '../lib/metadata.js';
 
 class WorkerPool {
   constructor(size) {
@@ -86,7 +86,15 @@ export class AnalysisService {
     if (hint && !(override?.bpm > 0)) override = { ...hint, ...(override || {}) };
     const key = cacheKey(file, override);
     const cached = await cacheGet(key);
-    if (cached) return { ...file, id: file.path, ...cached };
+    if (cached) {
+      const meta = tidyMeta(cached);
+      // ältere Cache-Einträge ohne Merker: stimmt der Name mit dem Dateinamen überein, gab es keine Tags
+      if (meta.tagged === undefined) {
+        const f = tidyMeta(fromFilename(file.name));
+        meta.tagged = !(f.title === meta.title && f.artist === meta.artist);
+      }
+      return { ...file, id: file.path, ...meta };
+    }
 
     const bytes = await readFile(file.path);
     const meta = readMetadata(bytes, file.name);

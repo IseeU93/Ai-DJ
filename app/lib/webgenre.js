@@ -7,6 +7,7 @@
 //   style    – feiner Stil zum Gruppieren der Reihenfolge (z. B. "Schlager", "Techno", "Deutschrap")
 
 import { detectGenre } from '../mix/genre.js';
+import { tidyMeta } from './metadata.js';
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const STORE = 'automix.webgenre.v1';
@@ -54,7 +55,7 @@ export function trackKey(t) {
 // Reihenfolge wichtig: spezifisch vor allgemein ("dance-pop" ist Pop, nicht Dance)
 const TAG_RULES = [
   [/uptempo|terror|frenchcore|speedcore|gabber|hardcore techno|^hardcore$|happy hardcore/, 'uptempo'],
-  [/hardstyle|rawstyle|jumpstyle|hard dance|hardstyle/, 'hardstyle'],
+  [/hardstyle|rawstyle|jumpstyle|hard dance|hardtekk|hard ?tek|^tekk|tekk$|hard techno|schranz|krach|hardbass|puzzycore|hard house/, 'hardstyle'],
   [/dance[- ]?pop|electropop|synth[- ]?pop|europop|teen pop|k-pop|schlager|volksmusik|pop|rock|indie|ballad|singer|soul|r&b|rnb|latin|reggaeton|country|folk|disco|funk/, 'pop'],
   [/hip[- ]?hop|rap|trap|drill|grime|boom bap/, 'rap'],
   [/house|techno|trance|edm|electro|big room|dubstep|drum and bass|drum & bass|dnb|bass music|future bass|eurodance|dance|electronic|club|garage/, 'edm'],
@@ -84,8 +85,12 @@ export function combineGenre(a, web) {
   const audio = detectGenre(a);
   score[audio] += 1;
   const ff = a.fourFloor ?? 0.5;
+  // Eindeutig harte Musik im Audio (durchgehende Kick ab 142 BPM): ein "Rap"/"Pop"-Tag aus dem Netz
+  // ist dann meist eine Verwechslung (gleichnamiger Künstler, zu wenige Stimmen) – zählt kaum
+  const hardAudio = ff >= 0.6 && a.bpm >= 142;
   const add = (g, w) => {
     if (!g) return;
+    if (hardAudio && (g === 'rap' || g === 'pop')) w *= 0.25;
     // Four-on-the-floor zwischen 115 und 140 BPM: kein Rap, sondern Dance-Pop/Club
     if (g === 'rap' && ff >= 0.6 && a.bpm >= 112 && a.bpm < 142) g = 'pop';
     // harte Familie: Tempo entscheidet
@@ -95,7 +100,8 @@ export function combineGenre(a, web) {
   if (web.itunes) add(ITUNES_MAP[web.itunes.toLowerCase()] ?? bucketOf(web.itunes), 0.9);
   const tags = (web.tags || []).filter((t) => bucketOf(t.name)); // "2010s", "french" usw. zählen nicht
   const total = tags.reduce((s, t) => s + t.count, 0) || 1;
-  for (const t of tags) add(bucketOf(t.name), (1.4 * t.count) / total);
+  const trust = Math.min(1, total / 4); // ein einzelner Tag mit 1 Stimme ist kaum belastbar
+  for (const t of tags) add(bucketOf(t.name), (1.4 * trust * t.count) / total);
   const [best, bestScore] = Object.entries(score).sort((x, y) => y[1] - x[1])[0];
   return { genre: best, confidence: bestScore / (1 + 0.9 + 1.4) };
 }
@@ -139,7 +145,7 @@ async function itunes(t) {
     const sc = Math.min(hit, back);
     if (!best || sc > best.sc) best = { sc, r };
   }
-  return best && best.sc >= 0.5 ? { genre: best.r.primaryGenreName, artist: best.r.artistName } : null;
+  return best && best.sc >= 0.5 ? { genre: best.r.primaryGenreName, artist: best.r.artistName, name: best.r.trackName, sc: best.sc } : null;
 }
 
 /** MusicBrainz: Genres/Tags des Interpreten (gewichtet), gecacht pro Interpret. */
@@ -173,6 +179,15 @@ export function createWebGenre({ onUpdate }) {
     t.genreWeb = genre;
     t.style = style;
     t.webInfo = e;
+    // Datei ohne Tags: Namen aus dem Dateinamen nur geraten -> sicheren Online-Treffer übernehmen
+    if (t.tagged === false && e.name && e.artist) {
+      const title = tidyMeta({ title: e.name, artist: e.artist });
+      if (t.title !== title.title || t.artist !== title.artist) {
+        t.title = title.title;
+        t.artist = title.artist;
+        return true;
+      }
+    }
     return changed;
   };
 
@@ -208,10 +223,12 @@ export function createWebGenre({ onUpdate }) {
         await sleep(1100); // MusicBrainz: höchstens 1 Anfrage pro Sekunde
         // bei "A & B" den Interpreten nehmen, der auch in der eigenen Datei steht
         const want = new Set(tokens(`${t.artist || ''} ${t.title || ''}`));
-        const parts = String(it?.artist || t.artist || '').split(/\s*(?:,|&| x | feat\.? | ft\.? | und | and | vs\.? )\s*/i).filter(Boolean);
+        const parts = String(it?.artist || t.artist || '').split(/\s*(?:,|&|\/|;| x | feat\.? | ft\.? | und | and | vs\.? )\s*/i).filter(Boolean);
         const artist = parts.find((x) => tokens(x).some((w) => want.has(w))) || parts[0] || '';
         const tags = await musicbrainz(artist, artists);
         const e = { itunes: it?.genre || null, artist: it?.artist || t.artist || '', tags: tags.slice(0, 8), at: Date.now() };
+        // sicherer Treffer: richtiger Titel/Interpret für Dateien ohne Tags ("Titel - Interpret.mp3")
+        if (it && it.sc >= 0.75) e.name = it.name;
         if (!e.itunes && !e.tags.length) e.failed = true;
         cache[key] = e;
         save(STORE, cache);

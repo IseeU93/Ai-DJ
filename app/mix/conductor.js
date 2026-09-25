@@ -44,6 +44,7 @@ export class Conductor extends EventTarget {
     this.automix = true;
     this.plan = null;
     this.history = [];
+    this.played = new Set(); // in dieser Session schon gelaufen (für die Warnung beim Nochmal-Spielen)
     this.overrides = new Map();
     this.rampUntil = 0;
     this.loading = [null, null];
@@ -212,10 +213,33 @@ export class Conductor extends EventTarget {
     return list.map((t) => this.tracks.get(t.id));
   }
 
+  /** Lief der Track in dieser Session schon (oder steht er im Verlauf)? */
+  wasPlayed(id) {
+    const i = this.queue.indexOf(id);
+    return this.played.has(id) || (i >= 0 && i < this.pos);
+  }
+
+  /**
+   * Bereits gespielten Track nochmal einreihen: wandert aus dem Verlauf an Position `to`
+   * (Standard: als Nächstes). Die Warnung fragt die Oberfläche vorher ab.
+   */
+  replay(id, to = null) {
+    const i = this.queue.indexOf(id);
+    if (i < 0 || i >= this.pos) return false;
+    this.queue.splice(i, 1);
+    this.pos--;
+    const at = to === null ? this.editableFrom : Math.max(this.editableFrom, Math.min(to, this.queue.length));
+    this.queue.splice(at, 0, id);
+    this.invalidatePlan();
+    this.emit('queue');
+    return true;
+  }
+
   /** Als Nächstes spielen (Hot-Queue). */
   queueNext(track) {
     const [t] = this.addTracks([track]);
     const i = this.queue.indexOf(t.id);
+    if (i >= 0 && i < this.pos) return this.replay(t.id);
     if (i >= 0 && i < this.editableFrom) return;
     if (i >= 0) this.queue.splice(i, 1);
     this.removed = this.removed.filter((x) => x !== t.id);
@@ -227,6 +251,7 @@ export class Conductor extends EventTarget {
   /** Hinten an die Queue anhängen. */
   queueAppend(track) {
     const [t] = this.addTracks([track]);
+    if (this.queue.indexOf(t.id) >= 0 && this.queue.indexOf(t.id) < this.pos) return this.replay(t.id, this.queue.length);
     if (this.queue.includes(t.id)) return;
     this.removed = this.removed.filter((x) => x !== t.id);
     this.queue.push(t.id);
@@ -314,8 +339,7 @@ export class Conductor extends EventTarget {
     this.autopilot = on;
     if (on) {
       this.automix = true;
-      this.reorderAI();
-      if (!this.masterDeck.status.playing) this.start();
+      this.reorderAI(); // spielt erst los, wenn Start gedrückt wird
     }
     this.emit('plan');
   }
@@ -342,6 +366,11 @@ export class Conductor extends EventTarget {
   previewTransitions() {
     const out = new Map();
     const history = [...this.history];
+    // Vorschau-Cache: nur Paare neu planen, bei denen sich etwas geändert hat (Genre, Analyse,
+    // Technik, Vorlieben, Hot Cues, Vorgeschichte) – sonst plant jede Kleinigkeit die ganze Queue neu
+    const cache = (this.previewCache ||= new Map());
+    const cues = loadCues();
+    const used = new Set();
     for (let i = Math.max(1, this.pos + 1); i < this.queue.length; i++) {
       const a = this.track(this.queue[i - 1]);
       const b = this.track(this.queue[i]);
@@ -352,11 +381,19 @@ export class Conductor extends EventTarget {
         continue;
       }
       const o = { out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
-      const cues = loadCues();
-      const p = planEasterEgg({ ...o, outCues: cues[a.id], inCues: cues[b.id] }) || planTransition(o);
+      const key = [a.id, b.id, o.type, a.genre, b.genre, o.freestyle, history.slice(-2).join(','), JSON.stringify(cues[a.id] || ''), JSON.stringify(cues[b.id] || '')].join('|');
+      const hit = cache.get(key);
+      let p;
+      if (hit && hit.aa === a.analysis && hit.ba === b.analysis && hit.learned === this.learned) p = hit.p;
+      else {
+        p = planEasterEgg({ ...o, outCues: cues[a.id], inCues: cues[b.id] }) || planTransition(o);
+        cache.set(key, { p, aa: a.analysis, ba: b.analysis, learned: this.learned });
+      }
+      used.add(key);
       out.set(b.id, p);
       history.push(p.type);
     }
+    for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
     return out;
   }
 
@@ -527,8 +564,8 @@ export class Conductor extends EventTarget {
       }
     }
     this.lastTrick = trick.kind;
-    // nächster Trick frühestens 16–32 Takte später
-    this.nextTrickAt = T(trick.bar) + (16 + Math.floor(Math.random() * 5) * 4) * barSec;
+    // nächster Trick frühestens 24–40 Takte später (lieber selten und passend als oft)
+    this.nextTrickAt = T(trick.bar) + (24 + Math.floor(Math.random() * 5) * 4) * barSec;
     this.emit('trick', { ...trick, at: T(trick.bar) });
   }
 
@@ -723,6 +760,7 @@ export class Conductor extends EventTarget {
     });
     this.master = p.inDeck;
     this.lastPlan = p;
+    this.played.add(p.outId);
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));
     this.history.push(p.type);
     this.flavorHistory = [

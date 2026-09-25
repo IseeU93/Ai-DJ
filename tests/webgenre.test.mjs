@@ -34,3 +34,16 @@ test('Titel säubern: Download-Seiten, (Lyrics), Emojis; Schlüssel unabhängig 
   assert.equal(trackKey({ artist: 'Daft Punk', title: 'One More Time' }), trackKey({ artist: 'One More Time', title: 'Daft Punk' }));
   assert.equal(trackKey({ artist: 'Beyoncé', title: 'Crazy in Love (Official Video)' }), 'beyonce crazy in love');
 });
+
+test('Harte Szene: eindeutiges Audio schlägt dünne Online-Tags; Hardtekk/Krach erkannt', () => {
+  // Zensery: MusicBrainz sagt "hip hop:1", das Audio 180 BPM mit durchgehender Kick
+  assert.equal(combineGenre({ bpm: 180, fourFloor: 0.9 }, { itunes: null, tags: tags([['hip hop', 1]]) }).genre, 'uptempo');
+  assert.equal(combineGenre({ bpm: 160, fourFloor: 0.9, bassWeight: -6 }, { itunes: null, tags: tags([['hardtekk', 3]]) }).genre, 'hardstyle');
+  assert.equal(combineGenre({ bpm: 190, fourFloor: 0.9 }, { itunes: null, tags: tags([['krach', 2], ['hard techno', 2]]) }).genre, 'uptempo');
+});
+
+test('Interpreten: "A/B" wird "A, B", "AC/DC" bleibt', async () => {
+  const { tidyMeta } = await import('../app/lib/metadata.js');
+  assert.equal(tidyMeta({ title: 'x', artist: 'Outsiders/De Kraaien' }).artist, 'Outsiders, De Kraaien');
+  assert.equal(tidyMeta({ title: 'x', artist: 'AC/DC' }).artist, 'AC/DC');
+});

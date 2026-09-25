@@ -53,8 +53,13 @@ function build(kind, intoMain = false) {
 }
 
 /**
- * Nächster Trick im Track `a` ab Takt `barNow`: Phrasengrenze 2–12 Takte voraus, Trick passend zum
- * Abschnitt (vor einem Drop eher Bass-Cut/Repeat, im Gesang eher A-cappella/Echo).
+ * Nächster Trick im Track `a` ab Takt `barNow`: Phrasengrenze 2–12 Takte voraus. Ein Trick kommt nur,
+ * wenn er an genau dieser Stelle musikalisch Sinn ergibt – sonst klingt er wie ein Fehler im Track:
+ *  - nur an echten Abschnittswechseln (in den Drop, in den Break, deutlicher Energie-Wechsel),
+ *    nie mitten in einem durchlaufenden Teil
+ *  - Echo-/Hall-Wurf nur, wenn eine Gesangszeile genau an der Grenze endet (oder dort gar keiner
+ *    singt) und danach etwas Neues/Ruhigeres kommt – nie über eine durchlaufende Zeile
+ *  - Build-up-Tricks (Filter, Riser, Stutter, Flanger) nur aus einem Build-up in den Drop
  * dice: 0..1 für Abwechslung, last: zuletzt gespielter Trick (nicht direkt wiederholen).
  */
 export function planTrick(a, barNow, dice = Math.random(), last = null, weights = {}) {
@@ -64,18 +69,34 @@ export function planTrick(a, barNow, dice = Math.random(), last = null, weights 
   const i = phrases.indexOf(next);
   const prev = phrases[i - 1];
   if (!prev || next.bar > (a.points?.lastBar ?? Infinity) - 4) return null;
-  const vocalEnd = a.vocals?.[next.bar - 1] ?? 0;
+  const at = (arr, bar, def = 0) => arr?.[bar] ?? def;
+  const b = next.bar;
+  const vBefore = at(a.vocals, b - 1);
+  const vAfter = at(a.vocals, b);
+  const eBefore = at(a.barEnergy, b - 1, -10);
+  const eAfter = at(a.barEnergy, b, -10);
+  const drumsBefore = at(a.barDrums, b - 1) > 0.4;
   const intoMain = next.label === 'main' && prev.label !== 'main';
+  const fromBuild = prev.label === 'build' && next.label === 'main';
+  const intoBreak = prev.label === 'main' && next.label !== 'main';
+  const calmer = eAfter < eBefore - 2;
+  const sectionChange = prev.label !== next.label || calmer || eAfter > eBefore + 2;
+  if (!sectionChange) return null; // mitten in einem durchlaufenden Teil: kein Einwurf
+  const lineEnds = vBefore >= 0.5 && vAfter < 0.35; // Zeile endet genau hier
+  const noLine = vBefore < 0.3;
+  const lineRuns = vBefore >= 0.5 && vAfter >= 0.5; // Zeile läuft über die Grenze
+  const loud = eBefore > -6; // in leisen Stellen fällt ein Effekt als Störung auf
+  const throwOk = (lineEnds || noLine) && !lineRuns && loud && (intoBreak || calmer || intoMain);
   const w = {
-    echo: 1,
-    sweep: prev.label === 'main' || prev.label === 'build' ? 1 : 0.4,
-    bassCut: intoMain ? 1.6 : next.label === 'main' ? 0.8 : 0.2,
-    repeat: (a.barDrums?.[next.bar - 1] ?? 0) > 0.4 ? (intoMain ? 0.6 : 0.3) : 0,
-    acapella: vocalEnd >= 0.5 ? 1.1 : 0,
-    reverb: 0.7,
-    flanger: prev.label === 'main' || prev.label === 'build' ? 0.6 : 0.3,
-    stutter: intoMain && (a.barDrums?.[next.bar - 1] ?? 0) > 0.4 ? 0.5 : 0,
-    riser: intoMain ? 0.6 : 0,
+    echo: throwOk && lineEnds ? 0.9 : 0,
+    reverb: throwOk && (intoBreak || calmer) ? 0.7 : 0,
+    sweep: fromBuild ? 1 : intoBreak && loud ? 0.4 : 0,
+    bassCut: intoMain && drumsBefore ? 1.4 : 0,
+    repeat: intoMain && drumsBefore && !lineRuns ? 0.4 : 0,
+    acapella: intoMain && vBefore >= 0.6 ? 0.9 : 0,
+    flanger: fromBuild && vBefore < 0.4 ? 0.5 : 0,
+    stutter: fromBuild && drumsBefore && !lineRuns ? 0.5 : 0,
+    riser: fromBuild ? 0.6 : 0,
   };
   // aus deinen 👍/👎: klar abgelehnte Tricks (mehrfach 👎) kommen gar nicht mehr
   for (const k of Object.keys(w)) w[k] = (weights[k] ?? 1) < 0.2 ? 0 : w[k] * (weights[k] ?? 1);

@@ -60,6 +60,38 @@ function toast(msg) {
   toastTimer = setTimeout(() => (el.hidden = true), 5000);
 }
 
+/** Kleine Rückfrage (Ja/Abbrechen) im App-Stil – liefert true bei Ja. */
+function ask(msg, okLabel = 'Ja') {
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'ask';
+    box.innerHTML = `<div class="ask-card"><p></p><div class="ask-btns"><button class="btn" data-no>Abbrechen</button><button class="btn primary" data-yes></button></div></div>`;
+    $('p', box).textContent = msg;
+    $('[data-yes]', box).textContent = okLabel;
+    const done = (v) => {
+      box.remove();
+      document.removeEventListener('keydown', key, true);
+      resolve(v);
+    };
+    const key = (e) => {
+      if (e.key === 'Escape') done(false);
+      if (e.key === 'Enter') done(true);
+    };
+    $('[data-yes]', box).onclick = () => done(true);
+    $('[data-no]', box).onclick = () => done(false);
+    box.onclick = (e) => e.target === box && done(false);
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(box);
+    $('[data-yes]', box).focus();
+  });
+}
+
+/** Warnung, wenn ein Track in dieser Session schon lief. true = trotzdem spielen. */
+async function okToReplay(t) {
+  if (!conductor.wasPlayed(t.id)) return true;
+  return ask(`„${t.title}“ wurde heute schon gespielt. Trotzdem nochmal spielen?`, 'Nochmal spielen');
+}
+
 // ------------------------------------------------------------------ Decks
 
 function buildDeck(i) {
@@ -564,6 +596,23 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
         row.classList.remove('dragging');
       });
       row.addEventListener('dblclick', () => conductor.playNext(i));
+    } else if (i < conductor.pos) {
+      // schon gespielt: mit Warnung nochmal einreihen (Knopf oder nach vorne ziehen)
+      const again = document.createElement('button');
+      again.textContent = '↻';
+      again.title = 'Nochmal spielen (als Nächstes) – lief schon';
+      again.onclick = async () => (await okToReplay(t)) && conductor.replay(id);
+      $('.acts', row).append(again);
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        dragFrom = i;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      row.addEventListener('dragend', () => {
+        dragFrom = -1;
+        row.classList.remove('dragging');
+      });
     }
     row.addEventListener('dragover', (e) => {
       if (dragFrom < 0 || i < editable) return;
@@ -576,7 +625,13 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
       e.preventDefault();
       row.classList.remove('drop-before');
       if (dragFrom < 0) return;
-      conductor.move(dragFrom, dragFrom < i ? i - 1 : i);
+      const from = dragFrom;
+      if (from < conductor.pos) {
+        const t2 = conductor.track(q[from]);
+        okToReplay(t2).then((ok) => ok && conductor.replay(t2.id, i - 1));
+        return;
+      }
+      conductor.move(from, from < i ? i - 1 : i);
     });
     list.appendChild(row);
   });
@@ -585,7 +640,16 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
   const tail = document.createElement('div');
   tail.style.height = '40px';
   tail.addEventListener('dragover', (e) => dragFrom >= 0 && e.preventDefault());
-  tail.addEventListener('drop', () => dragFrom >= 0 && conductor.move(dragFrom, q.length - 1));
+  tail.addEventListener('drop', () => {
+    if (dragFrom < 0) return;
+    const from = dragFrom;
+    if (from < conductor.pos) {
+      const t2 = conductor.track(q[from]);
+      okToReplay(t2).then((ok) => ok && conductor.replay(t2.id, q.length));
+      return;
+    }
+    conductor.move(from, q.length - 1);
+  });
   list.appendChild(tail);
 
   $('#queue-info').textContent = (filter ? `${hits} Treffer · ` : '') + `${q.length} Tracks · ${fmtTime(total)} gesamt · ${fmtTime(remaining)} verbleibend`;
@@ -747,7 +811,6 @@ async function loadPlaylist(names) {
     webGenre.attach(found); // schon bekannte Online-Genres gleich fürs erste Sortieren
     conductor.setLibrary(found, resolveGenre);
     webGenre.lookup(conductor.queue.map((id) => conductor.track(id)).filter(Boolean));
-    if (conductor.autopilot && !engine.decks[conductor.master].status.playing) conductor.start();
   } catch (err) {
     toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
   } finally {
@@ -868,7 +931,8 @@ function renderLibTracks() {
     shown.add(t.path);
     const a = t.analysis;
     const row = document.createElement('div');
-    row.className = `lrow ${queued.has(t.id) ? 'inqueue' : ''}`;
+    const wasPlayed = conductor.wasPlayed(t.id);
+    row.className = `lrow ${queued.has(t.id) && !wasPlayed ? 'inqueue' : ''} ${wasPlayed ? 'played' : ''}`;
     row.innerHTML = `<div><div class="t"></div><div class="a"></div></div>
       <span class="num">${a.bpm.toFixed(1)}</span><span><span class="key"></span></span>
       <span class="g">${GENRES[t.genre] || ''}</span><span class="num">${fmtTime(a.duration)}</span>
@@ -880,17 +944,22 @@ function renderLibTracks() {
     $('.t', row).textContent = t.title;
     $('.a', row).textContent = t.artist || '';
     keyChip($('.key', row), a.key.camelot);
-    row.querySelector('[data-a=next]').onclick = () => {
+    if (wasPlayed) row.title = 'Lief heute schon';
+    row.querySelector('[data-a=next]').onclick = async () => {
+      if (!(await okToReplay(t))) return;
       conductor.queueNext(t);
       toast(`„${t.title}“ kommt als Nächstes`);
       renderLibTracks();
     };
-    row.querySelector('[data-a=add]').onclick = () => {
+    row.querySelector('[data-a=add]').onclick = async () => {
+      if (!(await okToReplay(t))) return;
       conductor.queueAppend(t);
       toast(`„${t.title}“ an die Queue angehängt`);
       renderLibTracks();
     };
-    row.querySelector('[data-a=mix]').onclick = () => {
+    row.querySelector('[data-a=mix]').onclick = async () => {
+      if (!(await okToReplay(t))) return;
+      if (conductor.wasPlayed(t.id)) conductor.replay(t.id);
       conductor.mixSoon(t, lib.tracks);
       toast(`„${t.title}“ wird an der nächsten passenden Stelle eingemixt – danach läuft diese Playlist`);
       renderLibTracks();
@@ -1294,7 +1363,7 @@ async function boot() {
     conductor.autopilot = true;
   }
   if (folder) await loadFolder(folder);
-  if (conductor.autopilot && conductor.queue.length) conductor.start();
+  // Nicht von selbst losspielen – erst, wenn du auf Start tippst
 }
 
 boot().catch((err) => {

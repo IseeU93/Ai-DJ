@@ -985,7 +985,8 @@ function chorusExit(ctx) {
   const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(E * 0.4, 4);
   // Nicht bis ins leere Ende: spätestens, solange noch Musik/Gesang da ist
   const vocalEnd = (va.a.points.vocalLast ?? E) + 1;
-  const last = Math.min(E - 4, Math.max(from, vocalEnd));
+  // (Gesangserkennung verpasst manchmal späte Zeilen/Samples – bis 80 % darf es immer gehen)
+  const last = Math.min(E - 4, Math.max(from, vocalEnd, Math.floor(E * 0.8)));
   let best = null;
   for (let bar = from; bar <= last; bar += 4) {
     if (!va.isPhraseStart(bar) && bar % 8 !== (va.a.phraseOffset ?? 0) % 8) continue;
@@ -1002,9 +1003,14 @@ function chorusExit(ctx) {
     // Wo es musikalisch passt – kein fester Prozentwert. Nur: nicht zu früh (weniger als die
     // Hälfte gespielt) und nicht ins ausklingende Ende, wo nur noch Leerlauf käme.
     const frac = bar / E;
-    if (frac < 0.5 && ctx.earliestBar === null) sc -= (0.5 - frac) * 2;
+    // Pop/Rap auf der Party: frühestens nach dem zweiten Refrain (~60 %) – nach dem ersten Refrain
+    // raus klingt, als würde der Song abgewürgt
+    const minFrac = ctx.profile.shortForm ? 0.58 : 0.5;
+    if (frac < minFrac && ctx.earliestBar === null) sc -= (minFrac - frac) * (ctx.profile.shortForm ? 8 : 2);
+    // danach nur noch Leerlauf? Für einen kurzen Refrain-Wechsel reichen ein paar Takte Outro
     const tail = E - bar;
-    if (tail <= 8) sc -= 0.6;
+    if (tail <= 4) sc -= 0.6;
+    else if (tail <= 8) sc -= 0.2;
     if (bar >= vocalEnd - 2) sc -= 0.3;
     sc -= 0.05 * frac; // bei Gleichstand lieber den früheren passenden Refrain-Schluss
     sc += ctx.tune.exitShift * frac; // gelernt: "zu früh" -> später, "zu spät" -> früher
@@ -1467,7 +1473,8 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     }
     for (const k of ['cut', 'roll', 'mashin']) if (k in c) c[k] -= ctx.tune.hardness;
     ranked = Object.entries(c)
-      .map(([k, score]) => [k, score - (k === last ? 0.3 : 0) - (k === prev ? 0.15 : 0)])
+      // Abwechslung: dieselbe Technik direkt nochmal kostet (bei Pop/Rap mehr – dort fällt es auf)
+      .map(([k, score]) => [k, score - (k === last ? (ctx.profile.shortForm ? 0.5 : 0.3) : 0) - (k === prev ? (ctx.profile.shortForm ? 0.25 : 0.15) : 0)])
       .sort((x, y) => y[1] - x[1]);
     const picked = pick ? ranked.find(([k]) => k === pick) : ranked[0];
     if (picked) [chosen, chosenScore] = picked;

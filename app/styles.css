@@ -441,3 +441,21 @@ select.sel:disabled { opacity: 0.5; }
 .plpick-item span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plpick-item small { color: var(--faint); font-family: var(--mono); }
 .plpick-item input { accent-color: var(--a); }
+
+/* Rückfrage (z. B. "lief heute schon – trotzdem nochmal?") */
+.ask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.ask-card { background: var(--panel, #1c1c1f); border: 1px solid var(--line-2, #444); border-radius: 6px; padding: 16px 18px; max-width: 380px; margin: 0 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.ask-card p { margin: 0 0 14px; font-size: 13px; line-height: 1.45; }
+.ask-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.lrow.played .t::after { content: ' · lief heute schon'; color: #e0a458; font-weight: 400; font-size: 11px; }
+.qrow.played .acts button { opacity: 0.9; }
+
+/* Laser-Bewertung oben neben dem Lasershow-Knopf */
+.lz-top { display: inline-flex; align-items: center; gap: 4px; position: relative; }
+.lz-top[hidden] { display: none; }
+.lz-top-fx { font-size: 12px; color: var(--muted, #aaa); max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lz-top-reasons { position: absolute; top: 100%; right: 0; margin-top: 4px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--panel, #1c1c1f); border: 1px solid var(--line-2, #444); border-radius: 4px; z-index: 60; }
+.lz-top-reasons[hidden] { display: none; }
+.lz-top-reasons .btn { white-space: nowrap; }
+/* Obere Leiste: bei wenig Platz (z. B. Lasershow im Split) umbrechen statt Schalter abzuschneiden */
+.topbar { flex-wrap: wrap; row-gap: 6px; }

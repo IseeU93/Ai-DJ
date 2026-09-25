@@ -193,6 +193,42 @@ export function initLaserPane({ engine, conductor }) {
     const r = e.target.closest('[data-r]')?.dataset.r;
     if (r) rate('down', r);
   };
+  // Dasselbe oben neben dem Lasershow-Knopf – samt Name des laufenden Effekts
+  const top = $('#lz-top');
+  const topReasons = $('#lz-top-reasons');
+  topReasons.innerHTML = reasonsBox.innerHTML;
+  $('#lz-top-up').onclick = () => {
+    rate('up');
+    showTopFx(true);
+  };
+  $('#lz-top-down').onclick = () => (topReasons.hidden = !topReasons.hidden);
+  topReasons.onclick = (e) => {
+    const r = e.target.closest('[data-r]')?.dataset.r;
+    if (!r) return;
+    rate('down', r);
+    topReasons.hidden = true;
+    showTopFx(true);
+  };
+  let topRatedAt = 0;
+  function showTopFx(rated = false) {
+    const on = layout.mode !== 'off' || stage.beamerOpen;
+    top.hidden = !on;
+    if (!on) return;
+    if (rated) topRatedAt = Date.now();
+    const cur = stage.current();
+    const name = EFFECTS[cur.effect] || cur.effect || '–';
+    const over = cur.overlay ? ` + ${EFFECTS[cur.overlay] || cur.overlay}` : '';
+    if (Date.now() - topRatedAt < 3000) return; // Bestätigung kurz stehen lassen
+    $('#lz-top-fx').textContent = `✦ ${name}${over}`;
+  }
+  stage.addEventListener('status', () => showTopFx());
+  setInterval(() => showTopFx(), 1000); // auch ohne Status-Ereignis (z. B. nur Beamer offen)
+  const confirmTop = (verdict) => {
+    const name = EFFECTS[stage.current().effect] || stage.current().effect;
+    $('#lz-top-fx').textContent = verdict === 'up' ? `👍 ${name} – kommt öfter` : `👎 ${name} – wird ersetzt`;
+  };
+  $('#lz-top-up').addEventListener('click', () => confirmTop('up'));
+  topReasons.addEventListener('click', (e) => e.target.closest('[data-r]') && confirmTop('down'));
   window.__automixLaserRate = rate; // für die Handy-App
   window.__automixLaser = stage; // für Diagnose in den DevTools
   return stage;

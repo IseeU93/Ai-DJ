@@ -157,7 +157,7 @@ export const DEFAULT_CONFIG = {
     // die frühere "Segmente pro Kante"-Einstellung gibt es deshalb
     // nicht mehr.
     ringCount: 4,   // maximal gleichzeitig wachsende Rahmen (Spawn-Gate)
-    thickness: 2.6, // Strichstärke der Rahmen - war vorher fest 1.5, kaum sichtbar
+    thickness: 2.2, // Strichstärke der Rahmen (2.6 wirkte zu hart, 1.5 kaum sichtbar)
   },
 
   // Sog-Tunnel für die Rampe vor dem Drop. Immer mittig, mit dunklem

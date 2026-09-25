@@ -694,3 +694,25 @@ test('KI-Reihenfolge: gleiche Richtung und gleicher Stil eher am Stück', () => 
     assert.ok(changes <= 2, `Seed ${seed}: ${changes} Richtungswechsel: ${order.map((t) => t.genre).join(' ')}`);
   }
 });
+
+test('Freestyle-Tricks nur an echten Abschnittswechseln, Echo/Hall nie über eine laufende Gesangszeile', () => {
+  const a = track('a', 128).analysis;
+  let n = 0;
+  for (let bar = 0; bar < a.points.lastBar; bar += 1) {
+    for (const d of [0.1, 0.5, 0.9]) {
+      const t = planTrick(a, bar, d);
+      if (!t) continue;
+      n++;
+      const i = a.phrases.findIndex((ph) => ph.bar === t.bar);
+      const prev = a.phrases[i - 1];
+      const next = a.phrases[i];
+      const eB = a.barEnergy[t.bar - 1];
+      const eA = a.barEnergy[t.bar];
+      assert.ok(prev.label !== next.label || Math.abs(eA - eB) > 2, `Trick ${t.kind} mitten im Abschnitt (Takt ${t.bar})`);
+      if (t.kind === 'echo' || t.kind === 'reverb') {
+        assert.ok(!(a.vocals[t.bar - 1] >= 0.5 && a.vocals[t.bar] >= 0.5), `${t.kind} über laufende Zeile`);
+      }
+    }
+  }
+  assert.ok(n > 0, 'gar keine Tricks mehr');
+});
