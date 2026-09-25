@@ -27,12 +27,49 @@ const FORCED_LIMIT = 0.16; // max. Tempoangleichung, wenn der Nutzer eine Techni
 
 // ------------------------------------------------------------------ Takt-Umrechnung
 
+/**
+ * Zeit des Schlags k (ab dem ersten erkannten Schlag, auch gebrochen). Bei schwankendem Tempo
+ * aus der Beat-Map (jeder Schlag einzeln erkannt), sonst aus dem festen Raster.
+ */
+export function beatToSeconds(a, k) {
+  const m = a.beats;
+  if (!m || m.length < 2) return a.firstBeat + k * a.beatInterval;
+  if (k <= 0) return m[0] + k * a.beatInterval;
+  if (k >= m.length - 1) return m[m.length - 1] + (k - (m.length - 1)) * a.beatInterval;
+  const i = Math.floor(k);
+  return m[i] + (m[i + 1] - m[i]) * (k - i);
+}
+
+/** Umkehrung: gebrochener Schlag-Index zur Zeit t. */
+export function secondsToBeat(a, t) {
+  const m = a.beats;
+  if (!m || m.length < 2) return (t - a.firstBeat) / a.beatInterval;
+  if (t <= m[0]) return (t - m[0]) / a.beatInterval;
+  if (t >= m[m.length - 1]) return m.length - 1 + (t - m[m.length - 1]) / a.beatInterval;
+  let lo = 0;
+  let hi = m.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (m[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  return lo + (t - m[lo]) / (m[hi] - m[lo]);
+}
+
 export function barToSeconds(a, bar) {
-  return a.firstBeat + (a.downbeat + 4 * bar) * a.beatInterval;
+  return beatToSeconds(a, a.downbeat + 4 * bar);
 }
 
 export function secondsToBar(a, t) {
-  return ((t - a.firstBeat) / a.beatInterval - a.downbeat) / 4;
+  return (secondsToBeat(a, t) - a.downbeat) / 4;
+}
+
+/** Tempo an einer Stelle (Takt) – bei schwankendem Tempo lokal über ±2 Takte, sonst das feste. */
+export function localBpm(a, bar) {
+  if (!a.beats) return a.bpm;
+  const t0 = barToSeconds(a, bar - 2);
+  const t1 = barToSeconds(a, bar + 2);
+  return t1 > t0 ? (16 * 60) / (t1 - t0) : a.bpm;
 }
 
 // ------------------------------------------------------------------ Track-Ansicht
@@ -1375,7 +1412,10 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
       if (L > tDrop) L = tDrop;
     }
   }
-  const inRate = beatmatch ? (ctx.m * masterBpm) / b.bpm : 1;
+  // Bei schwankendem Tempo zählt das Tempo genau an den Übergangsstellen, nicht der Schnitt
+  const outLocal = a.beats ? localBpm(a, ctx.outBar) * outRate : masterBpm;
+  const inLocal = b.beats ? localBpm(b, ctx.inBar) : b.bpm;
+  const inRate = beatmatch ? (ctx.m * outLocal) / inLocal : 1;
   if (beatmatch && Math.abs(inRate - 1) > 0.001) {
     // danach unmerklich zurück aufs Originaltempo (länger bei größerer Abweichung)
     steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: Math.abs(inRate - 1) > 0.03 ? 32 : 16 }));
@@ -1401,7 +1441,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     notes: ctx.notes,
     bars: L,
     endBars: end,
-    masterBpm,
+    masterBpm: outLocal,
     beatmatch,
     m: ctx.m,
     inRate,

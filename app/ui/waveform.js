@@ -1,5 +1,5 @@
 // Wellenformen: gezoomte Deck-Ansicht mit Beatgrid/Phrasen und Track-Übersicht.
-import { barToSeconds } from '../mix/planner.js';
+import { barToSeconds, beatToSeconds, secondsToBeat } from '../mix/planner.js';
 
 const SECTION_COLORS = {
   intro: '#3a3d44',
@@ -90,10 +90,10 @@ export class DeckWaveform {
     }
 
     // Beatgrid
-    const k0 = Math.max(0, Math.floor((t0 - a.firstBeat) / a.beatInterval));
-    const k1 = Math.ceil((t0 + w / pps - a.firstBeat) / a.beatInterval);
+    const k0 = Math.max(0, Math.floor(secondsToBeat(a, t0)));
+    const k1 = Math.ceil(secondsToBeat(a, t0 + w / pps));
     for (let k = k0; k <= k1; k++) {
-      const x = Math.round((a.firstBeat + k * a.beatInterval - t0) * pps);
+      const x = Math.round((beatToSeconds(a, k) - t0) * pps);
       const isBar = (k - a.downbeat) % 4 === 0;
       c.fillStyle = isBar ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.1)';
       if (isBar) c.fillRect(x, 0, dpr, h);

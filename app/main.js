@@ -1,7 +1,7 @@
 import { Engine } from './audio/engine.js';
 import { Conductor } from './mix/conductor.js';
 import { AnalysisService } from './analysis/service.js';
-import { TRANSITIONS, KILL, barToSeconds } from './mix/planner.js';
+import { TRANSITIONS, KILL, barToSeconds, beatToSeconds, secondsToBeat } from './mix/planner.js';
 import { parseCamelot, shiftCamelot } from './mix/order.js';
 import { Knob, Slider } from './ui/controls.js';
 import { DeckWaveform, drawOverview } from './ui/waveform.js';
@@ -221,8 +221,7 @@ async function editGrid(i, action, value = null) {
   }
   else if (action === 'one') {
     const sec = d.realAt(engine.now - (engine.ctx.outputLatency || 0)) / engine.sr;
-    const k = Math.round((sec - a.firstBeat) / a.beatInterval);
-    ov.downbeatSec = a.firstBeat + k * a.beatInterval;
+    ov.downbeatSec = beatToSeconds(a, Math.round(secondsToBeat(a, sec)));
   }
   const next = action === 'reset' ? null : ov;
   setGridOverride(t.path, next);

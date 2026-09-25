@@ -1,6 +1,6 @@
 // Conductor: Queue + Automix. Plant den nächsten Übergang, lädt den nächsten Track vor und
 // setzt den Plan kurz vor dem Einsatz sample-genau in Deck-Befehle und Parameter-Automation um.
-import { planTransition, barToSeconds, secondsToBar } from './planner.js';
+import { planTransition, barToSeconds, secondsToBar, beatToSeconds, secondsToBeat } from './planner.js';
 import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
@@ -796,9 +796,7 @@ export class Conductor extends EventTarget {
       vB = vNow + (st.loopLen - phase);
       realB = st.loopStart;
     } else {
-      const firstF = a.firstBeat * sr;
-      const k = Math.ceil((realNow - firstF) / beatF);
-      realB = firstF + k * beatF;
+      realB = beatToSeconds(a, Math.ceil(secondsToBeat(a, realNow / sr) - 1e-6)) * sr;
       vB = vNow + (realB - realNow);
     }
     d.segment(vB, realB, bars * 4 * beatF);
@@ -832,7 +830,7 @@ export class Conductor extends EventTarget {
 
     const t = now + 0.08;
     const barPhase = (x, secs) => {
-      const beats = (secs - x.firstBeat) / x.beatInterval - x.downbeat;
+      const beats = secondsToBeat(x, secs) - x.downbeat;
       return (((beats / 4) % 1) + 1) % 1;
     };
     const po = barPhase(b, o.realAt(t) / sr);
@@ -893,9 +891,9 @@ export class Conductor extends EventTarget {
     }
     const a = d.track.analysis;
     const secNow = d.realAt(this.engine.now) / this.engine.sr;
-    const beat = Math.round((secNow - a.firstBeat) / a.beatInterval);
+    const beat = Math.round(secondsToBeat(a, secNow));
     const all = loadCues();
-    all[d.track.id] = { ...(all[d.track.id] || {}), [slot]: Math.max(0, a.firstBeat + beat * a.beatInterval) };
+    all[d.track.id] = { ...(all[d.track.id] || {}), [slot]: Math.max(0, beatToSeconds(a, beat)) };
     saveCues(all);
     this.emit('cues');
   }
@@ -926,9 +924,7 @@ export class Conductor extends EventTarget {
     const a = d.track.analysis;
     const t = this.engine.now + 0.06;
     const realNow = d.realAt(t);
-    const beatF = a.beatInterval * sr;
-    const firstF = a.firstBeat * sr;
-    const realB = firstF + Math.ceil((realNow - firstF) / beatF) * beatF;
+    const realB = beatToSeconds(a, Math.ceil(secondsToBeat(a, realNow / sr) - 1e-6)) * sr;
     d.segment(d.virtualAt(t) + (realB - realNow), target, 0);
     if (i === this.master) {
       // erst neu planen, wenn der Sprung (auf dem nächsten Beat) passiert ist und gemeldet wurde

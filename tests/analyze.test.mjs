@@ -93,3 +93,31 @@ test('Uptempo-Playlist-Hinweis und getapptes Tempo', () => {
   assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { bpmMin: 170 }).bpm - 240) < 0.1);
   assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { bpm: 119.5 }).bpm - 120) < 0.1);
 });
+
+import { evaluate } from '../tools/beatbench.mjs';
+import { barToSeconds, secondsToBar, localBpm } from '../app/mix/planner.js';
+
+// Echte Drum-Patterns (Prüfstand tools/beatbench.mjs): Tempo, Beat-Timing und "Eins" müssen stimmen
+for (const c of [
+  { name: 'Rap 92 (Kicks auf Offbeats, Snare 2+4)', bpm: 92, pattern: { kick: [0, 6, 10], snare: [4, 12], hat: 8 } },
+  { name: 'Pop 100 (synkopierte Kick)', bpm: 100, pattern: { kick: [0, 3, 8, 11], snare: [4, 12], hat: 8 } },
+  { name: 'Half-Time 140 (nicht verdoppeln)', bpm: 140, pattern: { kick: [0, 10], snare: [8], hat: 8 } },
+  { name: 'Hip-Hop Swing 96', bpm: 96, pattern: { kick: [0, 7, 10], snare: [4, 12], hat: 16, swing: 0.3 } },
+  { name: 'Rap 94 live gespielt (Tempo ±1 %)', bpm: 94, pattern: { kick: [0, 6, 10], snare: [4, 12], hat: 8 }, drift: 0.01 },
+]) {
+  test(`Beat-Erkennung: ${c.name}`, () => {
+    const r = evaluate(c);
+    assert.ok(r.bpmErr < 0.01, `BPM ${r.bpm} statt ${r.truthBpm}`);
+    assert.ok(r.ok20 > 0.9, `nur ${(r.ok20 * 100).toFixed(0)} % der Schläge < 20 ms (Median ${r.med.toFixed(1)} ms)`);
+    assert.ok(r.downbeatOk, 'Eins falsch');
+  });
+}
+
+test('Beat-Map: Takt <-> Sekunden folgt dem schwankenden Tempo', () => {
+  const beats = Float64Array.from({ length: 200 }, (_, k) => 1 + k * 0.6 + 0.02 * Math.sin(k / 10));
+  const a = { beats, firstBeat: beats[0], beatInterval: 0.6, downbeat: 2, bpm: 100 };
+  assert.ok(Math.abs(barToSeconds(a, 10) - beats[42]) < 1e-9);
+  assert.ok(Math.abs(secondsToBar(a, beats[42]) - 10) < 1e-9);
+  assert.ok(Math.abs(secondsToBar(a, barToSeconds(a, 17.25)) - 17.25) < 1e-9);
+  assert.ok(Math.abs(localBpm(a, 20) - 100) < 5);
+});

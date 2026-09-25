@@ -2,7 +2,7 @@
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
 
-export const ANALYSIS_VERSION = 11;
+export const ANALYSIS_VERSION = 12;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -82,20 +82,28 @@ function onsetEnvelope(mid, sr) {
   const frames = Math.floor(mid.length / ONSET_HOP) + 1;
   const flux = new Float32Array(frames);
   const low = new Float32Array(frames);
+  const snr = new Float32Array(frames);
+  // Snare-Band (Körper ~180 Hz bis 2,5 kHz – darüber liegen vor allem Hi-Hats): die Snare auf 2 und 4 ist in Pop/Rap/
+  // Hip-Hop der verlässlichste Beat-Anker – die Kick sitzt dort oft auf Offbeats
+  const snLo = Math.round(180 / binHz);
+  const snHi = Math.min(maxBin, Math.round(2500 / binHz));
   stft(mid, ONSET_N, ONSET_HOP, (t, mag) => {
     let s = 0;
     let l = 0;
+    let m = 0;
     for (let k = 1; k <= maxBin; k++) {
       const lm = Math.log1p(100 * mag[k]);
       const d = lm - prev[k];
       if (d > 0 && t > 0) {
         s += d;
         if (k <= lowBins) l += d;
+        else if (k >= snLo && k <= snHi) m += d;
       }
       prev[k] = lm;
     }
     flux[t] = s;
     low[t] = l;
+    snr[t] = m;
   });
   const fr = sr / ONSET_HOP;
   const full = detrend(flux, Math.round(fr * 0.4));
@@ -105,7 +113,7 @@ function onsetEnvelope(mid, sr) {
   const ml = mean(lowEnv) || 1;
   const env = new Float32Array(frames);
   for (let t = 0; t < frames; t++) env[t] = full[t] / mf + 1.5 * (lowEnv[t] / ml);
-  return { env, low: lowEnv, flux, fr };
+  return { env, low: lowEnv, snare: detrend(snr, Math.round(fr * 0.4)), flux, fr };
 }
 
 function mean(a) {
@@ -131,15 +139,115 @@ function detrend(x, w) {
 }
 
 /** Entscheidet zwischen Phase und Phase + halber Beat anhand der Bassdrum-Onsets. */
-function resolveHalfBeat(lowEnv, P, phase) {
-  const score = (ph) => {
+function resolveHalfBeat(lowEnv, P, phase, snareEnv = null) {
+  const sum = (e, ph) => {
     let s = 0;
-    for (let t = ph; t < lowEnv.length; t += P) s += Math.max(interp(lowEnv, t - 1), interp(lowEnv, t), interp(lowEnv, t + 1));
+    for (let t = ph; t < e.length; t += P) s += Math.max(interp(e, t - 1), interp(e, t), interp(e, t + 1));
     return s;
+  };
+  // Backbeat: auf der richtigen Beat-Position wechselt die Snare von Schlag zu Schlag (2 und 4
+  // stark, 1 und 3 schwach). Einen halben Beat daneben verschwindet dieser Wechsel. Hi-Hats, die
+  // gleichmäßig auf Beat und Offbeat liegen, heben sich beim Vergleich gerade/ungerade auf.
+  const backbeat = (e, ph) => {
+    let even = 0;
+    let odd = 0;
+    let k = 0;
+    for (let t = ph; t < e.length; t += P, k++) {
+      const v = Math.max(interp(e, t - 1), interp(e, t), interp(e, t + 1));
+      if (k % 2) odd += v;
+      else even += v;
+    }
+    return Math.abs(even - odd) / (even + odd + 1e-9);
+  };
+  // Kick allein reicht nicht: im Rap/Pop liegen oft mehr Kicks auf Offbeats als auf Beats.
+  const score = (ph) => {
+    const k = sum(lowEnv, ph) / (sum(lowEnv, ph) + sum(lowEnv, ph + P / 2) + 1e-9);
+    if (!snareEnv) return k;
+    return k + 2 * backbeat(snareEnv, ph);
   };
   const a = score(phase);
   const b = score(phase + P / 2);
-  return b > a * 1.25 ? phase + P / 2 : phase;
+  return b > a * 1.1 ? phase + P / 2 : phase;
+}
+
+
+/**
+ * Beat-Tracker mit variablem Tempo (dynamische Programmierung, nach Ellis 2007): folgt jedem
+ * einzelnen Schlag, auch wenn das Tempo leicht schwankt (live eingespielt, ältere Produktionen).
+ * Pro Schritt darf sich der Abstand nur wenig ändern (±10 %), große Sprünge kosten viel.
+ * Liefert Beat-Positionen in Frames (Sub-Frame genau).
+ */
+function trackBeats(env, P) {
+  const n = env.length;
+  let m = 0;
+  for (let t = 0; t < n; t++) m += env[t];
+  m /= n || 1;
+  let v = 0;
+  for (let t = 0; t < n; t++) v += (env[t] - m) ** 2;
+  const sd = Math.sqrt(v / (n || 1)) || 1;
+  const alpha = 400;
+  const score = new Float64Array(n);
+  const back = new Int32Array(n).fill(-1);
+  const lo = Math.max(1, Math.round(P * 0.9));
+  const hi = Math.round(P * 1.1);
+  for (let t = 0; t < n; t++) {
+    let best = -Infinity;
+    let bi = -1;
+    for (let tau = Math.max(0, t - hi); tau <= t - lo; tau++) {
+      const d = Math.log((t - tau) / P);
+      const sc = score[tau] - alpha * d * d;
+      if (sc > best) {
+        best = sc;
+        bi = tau;
+      }
+    }
+    const o = env[t] / sd;
+    if (bi >= 0 && best > 0) {
+      score[t] = o + best;
+      back[t] = bi;
+    } else score[t] = o;
+  }
+  let end = n - 1;
+  for (let t = Math.max(0, n - hi); t < n; t++) if (score[t] > score[end]) end = t;
+  const beats = [];
+  for (let t = end; t >= 0; t = back[t]) {
+    const a = env[t - 1] ?? 0;
+    const b = env[t];
+    const c = env[t + 1] ?? 0;
+    const den = a - 2 * b + c;
+    beats.push(t + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / den)) : 0));
+    if (back[t] < 0) break;
+  }
+  return beats.reverse();
+}
+
+/**
+ * Glättet eine Beat-Liste (Frames): lokale Gerade über ±6 Schläge. Einzelne Ausreißer (auf eine
+ * synkopierte Kick gesprungen) verschwinden, ein echter Tempo-Verlauf bleibt erhalten.
+ */
+function smoothBeats(beats, w = 6) {
+  const out = new Float64Array(beats.length);
+  for (let k = 0; k < beats.length; k++) {
+    const i0 = Math.max(0, k - w);
+    const i1 = Math.min(beats.length - 1, k + w);
+    // robuste Gerade: Median der Steigungen um k, dann Median der Achsenabschnitte
+    const slopes = [];
+    for (let i = i0; i <= i1; i++) for (let j = i + 1; j <= i1; j++) slopes.push((beats[j] - beats[i]) / (j - i));
+    slopes.sort((x, y) => x - y);
+    const slope = slopes[Math.floor(slopes.length / 2)] || 0;
+    const inter = [];
+    for (let i = i0; i <= i1; i++) inter.push(beats[i] - slope * (i - k));
+    inter.sort((x, y) => x - y);
+    out[k] = inter[Math.floor(inter.length / 2)];
+  }
+  return out;
+}
+
+/** Summe einer Hüllkurve an (gebrochenen) Frame-Positionen, jeweils bestes aus ±1 Frame. */
+function envAt(e, positions) {
+  let s = 0;
+  for (const t of positions) s += Math.max(interp(e, t - 1), interp(e, t), interp(e, t + 1));
+  return s;
 }
 
 const BPM_MAX = 300; // Uptempo/Terror geht bis ~300
@@ -148,7 +256,7 @@ function estimateTempo(env, fr) {
   const minLag = Math.floor((fr * 60) / BPM_MAX);
   const maxLag = Math.ceil((fr * 60) / 60);
   const n = env.length;
-  const acf = new Float64Array(maxLag * 2 + 2);
+  const acf = new Float64Array(maxLag * 4 + 2);
   for (let lag = minLag; lag < acf.length; lag++) {
     let s = 0;
     for (let t = 0; t + lag < n; t++) s += env[t] * env[t + lag];
@@ -163,6 +271,21 @@ function estimateTempo(env, fr) {
     if (s > bestScore) {
       bestScore = s;
       best = lag;
+    }
+  }
+  // Synkopierte Kick (z. B. auf 1, 1e+, 3, 3e+) täuscht gern ein Tempo von 4/3 bzw. 3/4 des echten
+  // vor. Der echte Beat wiederholt sich über den ganzen Takt (4 Schläge) deutlich stärker – nur
+  // dann wechseln, wenn der Nachbar auch als einzelner Beat klar vorhanden ist.
+  const at = (l) => acf[Math.max(0, Math.min(acf.length - 1, Math.round(l)))];
+  // durchgehender schneller Puls (z. B. Uptempo mit Kick auf jedem Schlag) erzeugt dieselben
+  // Muster, ist aber kein Synkopen-Fall -> dann nicht wechseln
+  const steadyPulse = at(best / 2) >= 0.6 * at(best);
+  for (const ratio of steadyPulse ? [] : [4 / 3, 3 / 4]) {
+    const alt = best * ratio;
+    if (alt < minLag || alt > maxLag) continue;
+    if (at(alt) >= 0.5 * at(best) && at(4 * alt) > 1.3 * at(4 * best)) {
+      best = Math.round(alt);
+      break;
     }
   }
   // parabolische Verfeinerung
@@ -182,6 +305,21 @@ function estimateTempo(env, fr) {
  * Geschwindigkeit. Verräterisch: dann sitzt auf jedem "Offbeat" eine genauso kräftige Bassdrum wie
  * auf dem Beat. Bei normalem 4/4 ist dort höchstens eine Hi-Hat, im Bassband also fast nichts.
  */
+/** Anteil der Beats bzw. Offbeats mit deutlicher Kick (Abdeckung), für die Uptempo-Prüfung. */
+function kickCoverage(lowEnv, P, phase) {
+  const peaks = (ph) => {
+    const out = [];
+    for (let t = ph; t < lowEnv.length; t += P) out.push(Math.max(interp(lowEnv, t - 1), interp(lowEnv, t), interp(lowEnv, t + 1)));
+    return out;
+  };
+  const on = peaks(phase);
+  const off = peaks(phase + P / 2);
+  const all = [...on, ...off].sort((x, y) => y - x);
+  const ref = all[Math.floor(all.length * 0.1)] || 1e-9; // typische starke Kick
+  const cov = (arr) => arr.filter((v) => v > 0.35 * ref).length / (arr.length || 1);
+  return { on: cov(on), off: cov(off) };
+}
+
 function offbeatKickRatio(lowEnv, P, phase) {
   const score = (ph) => {
     let s = 0;
@@ -443,20 +581,21 @@ export function analyzeTrack(L, R, sr, override = null) {
   const duration = n / sr;
 
   // --- Beatgrid
-  const { env, low, fr } = onsetEnvelope(mid, sr);
+  const { env, low, snare, fr } = onsetEnvelope(mid, sr);
   // Tempo: getappt > geschätzt; Uptempo-Playlists falten ins Uptempo-Tempo
   let bpmCoarse = override?.bpm > 0 ? override.bpm : estimateTempo(env, fr);
   if (override?.bpmMin > 0 && !(override?.bpm > 0)) while (bpmCoarse < override.bpmMin && bpmCoarse * 2 <= BPM_MAX) bpmCoarse *= 2;
   let grid = fitGrid(env, fr, bpmCoarse);
-  let phase = resolveHalfBeat(low, grid.P, grid.phase);
-  if (!(override?.bpm > 0) && (60 * fr) / grid.P * 2 <= BPM_MAX && offbeatKickRatio(low, grid.P, phase) >= 0.8) {
+  let phase = resolveHalfBeat(low, grid.P, grid.phase, snare);
+  const cover = kickCoverage(low, grid.P, phase);
+  if (!(override?.bpm > 0) && (60 * fr) / grid.P * 2 <= BPM_MAX && offbeatKickRatio(low, grid.P, phase) >= 0.8 && cover.on >= 0.75 && cover.off >= 0.75) {
     grid = fitGrid(env, fr, ((60 * fr) / grid.P) * 2);
-    phase = resolveHalfBeat(low, grid.P, grid.phase);
+    phase = resolveHalfBeat(low, grid.P, grid.phase, snare);
   }
   const P = grid.P;
   let beatInterval = (P * ONSET_HOP) / sr;
   if (override?.bpmFactor) beatInterval /= override.bpmFactor;
-  const bpm = 60 / beatInterval;
+  let bpm = 60 / beatInterval;
   let firstBeat = (phase * ONSET_HOP) / sr + ONSET_CALIB_S;
 
   // --- Filterbänder (Energie, Wellenform, Anschläge)
@@ -469,9 +608,73 @@ export function analyzeTrack(L, R, sr, override = null) {
   firstBeat += refine.shift;
   if (override?.shiftSec) firstBeat += override.shiftSec;
   firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
-  const gridConfidence = Math.max(0, Math.min(1, 1 - (refine.jitterMs * 1.5 + Math.abs(refine.driftMs)) / 30));
-  const beatCount = Math.floor((duration - firstBeat) / beatInterval) + 1;
-  const beatTime = (k) => firstBeat + k * beatInterval;
+  let gridConfidence = Math.max(0, Math.min(1, 1 - (refine.jitterMs * 1.5 + Math.abs(refine.driftMs)) / 30));
+
+  // Schwankendes Tempo (live gespielt): festes Raster läuft weg -> jedem Schlag einzeln folgen.
+  // Nur übernehmen, wenn die Beat-Map die Anschläge klar besser trifft als das feste Raster.
+  let beatMap = null;
+  if (gridConfidence < 0.7 && !(override?.bpm > 0) && !override?.bpmFactor) {
+    const raw = trackBeats(env, beatInterval * fr); // Beat-Abstand in Frames
+    if (raw.length > 32) {
+      let map = smoothBeats(raw);
+      // halber Beat daneben? (gleiche Kick+Backbeat-Prüfung wie beim festen Raster)
+      const mids = Array.from({ length: map.length - 1 }, (_, k) => (map[k] + map[k + 1]) / 2);
+      const bb = (pos) => {
+        let even = 0;
+        let odd = 0;
+        pos.forEach((t, k) => {
+          const x = Math.max(interp(snare, t - 1), interp(snare, t), interp(snare, t + 1));
+          if (k % 2) odd += x;
+          else even += x;
+        });
+        return Math.abs(even - odd) / (even + odd + 1e-9);
+      };
+      const kFrac = (pos, other) => envAt(low, pos) / (envAt(low, pos) + envAt(low, other) + 1e-9);
+      const sOn = kFrac(map, mids) + 2 * bb(map);
+      const sMid = kFrac(mids, map) + 2 * bb(mids);
+      if (sMid > sOn * 1.1) map = Float64Array.from(mids);
+      // Vergleich mit dem festen Raster: trifft die Map die Anschläge besser?
+      const gridPos = [];
+      const ph0 = ((firstBeat - ONSET_CALIB_S) * sr) / ONSET_HOP;
+      const Pfr = (beatInterval * sr) / ONSET_HOP;
+      for (let t = ((ph0 % Pfr) + Pfr) % Pfr; t < env.length; t += Pfr) gridPos.push(t);
+      const perBeat = (pos) => envAt(env, pos) / (pos.length || 1);
+      if (perBeat(map) > perBeat(gridPos) * 1.05) {
+        beatMap = Float64Array.from(map, (f) => (f * ONSET_HOP) / sr + ONSET_CALIB_S);
+        // an den Kick-Anschlägen ausrichten (gemeinsamer Versatz)
+        const env2 = envelope(kickShare > 0.15 ? lowSig : mid, sr, 0.004);
+        const offs = [];
+        const win = Math.min(0.03, beatInterval * 0.15);
+        for (const t of beatMap) {
+          const i0 = Math.max(1, Math.floor((t - win) * sr));
+          const i1 = Math.min(env2.length - 1, Math.floor((t + win) * sr));
+          let best = -1;
+          let bestD = 0;
+          for (let i = i0 + 4; i < i1; i += 4) {
+            const d = env2[i] - env2[i - 4];
+            if (d > bestD) {
+              bestD = d;
+              best = i;
+            }
+          }
+          if (best > 0) offs.push(best / sr - t);
+        }
+        if (offs.length > 16) {
+          const shift = percentile(offs, 0.5);
+          for (let k = 0; k < beatMap.length; k++) beatMap[k] += shift;
+        }
+        if (override?.shiftSec) for (let k = 0; k < beatMap.length; k++) beatMap[k] += override.shiftSec;
+        beatInterval = (beatMap[beatMap.length - 1] - beatMap[0]) / (beatMap.length - 1);
+        bpm = 60 / beatInterval;
+        firstBeat = beatMap[0];
+        gridConfidence = Math.max(gridConfidence, 0.75); // folgt jetzt jedem Schlag
+      }
+    }
+  }
+  const beatCount = beatMap ? beatMap.length : Math.floor((duration - firstBeat) / beatInterval) + 1;
+  const beatTime = beatMap
+    ? (k) => (k < beatMap.length ? beatMap[Math.max(0, k)] + Math.min(0, k) * beatInterval : beatMap[beatMap.length - 1] + (k - beatMap.length + 1) * beatInterval)
+    : (k) => firstBeat + k * beatInterval;
   const highEnv = envelope(highSig, sr, 0.01);
 
   // --- Spektral-Features
@@ -778,6 +981,7 @@ export function analyzeTrack(L, R, sr, override = null) {
     bpm,
     beatInterval,
     firstBeat,
+    beats: beatMap, // nur bei schwankendem Tempo: exakte Zeit jedes Schlags
     gridConfidence,
     gridOverride: override || null,
     fourFloor,

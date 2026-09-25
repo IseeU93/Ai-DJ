@@ -3,6 +3,8 @@
 // Tonart). Anders als die Live-Analyse der Lasershow muss hier nichts geraten werden: Beatgrid,
 // Drops und Builds stehen vorher fest – der Laser kann auf den Punkt vorausplanen.
 
+import { secondsToBeat } from '../../mix/planner.js';
+
 const PHASE_OF_LABEL = { intro: 'intro', outro: 'outro', build: 'build', break: 'break' };
 
 /** Tonart -> Farbton: Quintenzirkel einmal rund ums Farbrad, Moll kühler/dunkler als Dur. */
@@ -67,7 +69,7 @@ function mainPhase(a, ph, genre) {
  */
 export function insightAt(a, seconds, genre = null) {
   if (!a || !(a.beatInterval > 0)) return null;
-  const beatPos = (seconds - a.firstBeat) / a.beatInterval - a.downbeat; // Schläge ab Takt 0
+  const beatPos = secondsToBeat(a, seconds) - a.downbeat; // Schläge ab Takt 0 (Beat-Map bei schwankendem Tempo)
   const bar = Math.floor(beatPos / 4);
   const beatInBar = ((beatPos % 4) + 4) % 4;
   const pi = phraseAt(a, Math.max(0, bar));
