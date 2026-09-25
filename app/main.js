@@ -512,6 +512,7 @@ function renderQueue() {
     row.className = filter ? 'qrow match' : 'qrow';
     if (i < conductor.pos) row.classList.add('played');
     if (i === conductor.pos) row.classList.add('playing');
+    if (conductor.pinned.includes(id) && i > conductor.pos) row.classList.add('wished');
     const locked = i < editable;
     if (locked) row.classList.add('locked');
     row.innerHTML = `
@@ -1093,6 +1094,38 @@ async function boot() {
   $('#btn-start').onclick = () => conductor.togglePlay(conductor.master);
   $('#btn-reorder').onclick = () => conductor.reorderAI();
   $('#queue-search').oninput = renderQueue;
+  // Musikwunsch: Text oder Schnellknopf -> passende Songs kommen als Nächstes
+  let wishUndo = null;
+  const doWish = (text) => {
+    if (!text.trim()) return;
+    const r = conductor.applyWish(text);
+    if (r.wish.empty) {
+      toast('Nicht verstanden – probier z. B. „ruhiger“, „Party“, „Schlager“, „härter“, „Hip-Hop“ oder einen Interpreten');
+      return;
+    }
+    if (!r.tracks.length) {
+      toast(`Nichts Passendes gefunden für: ${r.wish.summary.join(', ')}`);
+      return;
+    }
+    wishUndo = r.undo;
+    $('#wish-undo').hidden = false;
+    toast(`Verstanden: ${r.wish.summary.join(', ')} → als Nächstes: ${r.tracks.slice(0, 3).map((t) => t.title).join(', ')}${r.tracks.length > 3 ? ` (+${r.tracks.length - 3})` : ''}`);
+  };
+  $('#wish-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doWish(e.target.value);
+  });
+  $('#wish-go').onclick = () => doWish($('#wish-input').value);
+  $('#wish-chips').onclick = (e) => {
+    const w = e.target.closest('[data-w]')?.dataset.w;
+    if (w) doWish(w);
+  };
+  $('#wish-undo').onclick = () => {
+    if (!wishUndo) return;
+    if (wishUndo()) toast('Wunsch zurückgenommen – vorige Reihenfolge');
+    else toast('Geht nicht mehr – davon läuft schon etwas');
+    wishUndo = null;
+    $('#wish-undo').hidden = true;
+  };
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault();

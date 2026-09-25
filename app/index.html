@@ -151,6 +151,23 @@
         <button class="btn" id="btn-reshuffle" title="Andere Reihenfolge, die ebenfalls gut ineinander passt">Reshuffle</button>
         <button class="btn primary" id="btn-start" disabled>Start</button>
       </div>
+      <div class="wishbar">
+        <input class="wish-input" id="wish-input" type="text" placeholder="Was als Nächstes? z. B. „was Ruhigeres“, „Schlager“, „härter“, „Hip-Hop“, „130 BPM“, „Helene Fischer“ – Enter" title="Musikwunsch: die passendsten Songs kommen als Nächstes (auch aus anderen Ordnern der Bibliothek)" />
+        <button class="btn" id="wish-go">Wunsch</button>
+        <span class="wish-chips" id="wish-chips">
+          <button class="btn small" data-w="Party">Party</button>
+          <button class="btn small" data-w="ruhig">Ruhig</button>
+          <button class="btn small" data-w="härter">Härter</button>
+          <button class="btn small" data-w="weicher">Weicher</button>
+          <button class="btn small" data-w="schneller">Schneller</button>
+          <button class="btn small" data-w="langsamer">Langsamer</button>
+          <button class="btn small" data-w="Hip-Hop">Hip-Hop</button>
+          <button class="btn small" data-w="House">House</button>
+          <button class="btn small" data-w="Schlager">Schlager</button>
+          <button class="btn small" data-w="Hardstyle">Hardstyle</button>
+        </span>
+        <button class="btn small" id="wish-undo" hidden title="Wunsch zurücknehmen – vorige Reihenfolge wiederherstellen">↶ Rückgängig</button>
+      </div>
       <div class="qlist" id="queue"></div>
       <div class="removed" id="removed" hidden></div>
     </section>

@@ -460,3 +460,10 @@ select.sel:disabled { opacity: 0.5; }
 .lz-top-reasons .btn { white-space: nowrap; }
 /* Obere Leiste: bei wenig Platz (z. B. Lasershow im Split) umbrechen statt Schalter abzuschneiden */
 .topbar { flex-wrap: wrap; row-gap: 6px; }
+
+/* Musikwunsch über der Queue */
+.wishbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--line); }
+.wish-input { flex: 1 1 320px; min-width: 200px; height: 28px; padding: 0 10px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 3px; color: inherit; }
+.wish-input:focus { outline: none; border-color: var(--a); }
+.wish-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.qrow.wished .idx { color: var(--a); font-weight: 600; }

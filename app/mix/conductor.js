@@ -8,6 +8,7 @@ import { detectGenre } from './genre.js';
 import { planTrick } from './freestyle.js';
 import { planTeaser } from './teaser.js';
 import { pairEasterEggs, planEasterEgg } from './eastereggs.js';
+import { parseWish, pickWish } from './wish.js';
 import { KILL } from './planner.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
@@ -45,6 +46,7 @@ export class Conductor extends EventTarget {
     this.plan = null;
     this.history = [];
     this.played = new Set(); // in dieser Session schon gelaufen (für die Warnung beim Nochmal-Spielen)
+    this.pinned = []; // per Musikwunsch vorgezogen: bleiben vorne, bis sie gespielt sind
     this.overrides = new Map();
     this.rampUntil = 0;
     this.loading = [null, null];
@@ -99,6 +101,7 @@ export class Conductor extends EventTarget {
     const rest = list.filter((t) => !playing.includes(t.id));
     this.queue = this.pairEggs(buildSetOrder([...fixed, ...rest], fixed).map((t) => t.id), fixed.length);
     this.removed = [];
+    this.pinned = [];
     this.pos = playing.length - 1;
     this.invalidatePlan();
     this.emit('queue');
@@ -112,11 +115,48 @@ export class Conductor extends EventTarget {
   /** KI-Reihenfolge – jedes Mal eine eigene, gute Variante (nicht immer dieselbe). */
   reorderAI(seed = 1 + Math.floor(Math.random() * 1e9)) {
     const from = this.editableFrom;
-    const fixed = this.queue.slice(0, from).map((id) => this.track(id));
+    // per Musikwunsch vorgezogene Songs bleiben in ihrer Reihenfolge vorne
+    this.pinned = this.pinned.filter((id) => this.queue.indexOf(id) >= from);
+    const fixed = [...this.queue.slice(0, from), ...this.pinned].map((id) => this.track(id));
     const all = this.queue.map((id) => this.track(id));
     this.queue = this.pairEggs(buildSetOrder(all, fixed, seed, this.learned.order).map((t) => t.id), from);
     this.invalidatePlan();
     this.emit('queue');
+  }
+
+  /**
+   * Musikwunsch ("was Ruhigeres", "Schlager", "härter" …): passende Songs aus der Queue und allen
+   * bekannten Tracks (auch anderen Ordnern) kommen als Nächstes, in gut mixbarer Reihenfolge.
+   * Liefert { wish, tracks, undo } – undo stellt die vorige Queue wieder her.
+   */
+  applyWish(text, max = 8) {
+    const wish = parseWish(text);
+    if (wish.empty) return { wish, tracks: [] };
+    const from = this.editableFrom;
+    const cur = this.track(this.queue[Math.min(from, this.queue.length) - 1]) || null;
+    const locked = new Set(this.queue.slice(0, from));
+    const candidates = [...this.tracks.values()].filter((t) => t.analysis && !locked.has(t.id) && !this.played.has(t.id));
+    const picked = pickWish(candidates, wish, cur, max);
+    if (!picked.length) return { wish, tracks: [] };
+    const before = { queue: [...this.queue], removed: [...this.removed], pinned: [...this.pinned] };
+    const ids = picked.map((t) => t.id);
+    const rest = this.queue.slice(from).filter((id) => !ids.includes(id));
+    this.queue = [...this.queue.slice(0, from), ...ids, ...rest];
+    this.removed = this.removed.filter((id) => !ids.includes(id));
+    this.pinned = ids;
+    this.invalidatePlan();
+    this.emit('queue');
+    const undo = () => {
+      // nur, wenn inzwischen nichts davon gespielt wurde
+      if (this.queue.slice(0, this.editableFrom).some((id) => ids.includes(id) && !before.queue.slice(0, from).includes(id))) return false;
+      this.queue = before.queue;
+      this.removed = before.removed;
+      this.pinned = before.pinned;
+      this.invalidatePlan();
+      this.emit('queue');
+      return true;
+    };
+    return { wish, tracks: picked, undo };
   }
 
   /** Easter Egg: One More Time folgt in der Wiedergabeliste direkt auf Starships. */
@@ -274,6 +314,7 @@ export class Conductor extends EventTarget {
     const pool = tracks.filter((t) => !fixed.includes(t));
     this.queue = this.pairEggs(buildSetOrder([...fixed, ...pool], fixed).map((t) => t.id), fixed.length);
     this.removed = [];
+    this.pinned = [];
     this.invalidatePlan();
     this.emit('queue');
   }
