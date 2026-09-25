@@ -69,6 +69,21 @@ class MainActivity : AppCompatActivity() {
         v.laserUp.setOnClickListener { DjRepo.send("rateLaser", mapOf("verdict" to "up")) }
         v.laserDown.setOnClickListener { askLaserReason() }
         v.btnPlaylists.setOnClickListener { pickPlaylists() }
+        v.orderUp.setOnClickListener {
+            DjRepo.send("rateOrder", mapOf("verdict" to "up"))
+            v.orderRow.visibility = View.GONE
+        }
+        v.orderDown.setOnClickListener {
+            val keys = arrayOf("energy", "style", "tempo")
+            val labels = arrayOf("Energie passt nicht", "Stil passt nicht", "Tempo-Sprung")
+            AlertDialog.Builder(this)
+                .setTitle("Warum passte der Song nicht?")
+                .setItems(labels) { _, which ->
+                    DjRepo.send("rateOrder", mapOf("verdict" to "down", "reason" to keys[which]))
+                    v.orderRow.visibility = View.GONE
+                }
+                .show()
+        }
         v.btnPlGenre.setOnClickListener { pickPlaylistGenre() }
 
         bindSwitch(v.swAutomix, "automix")
@@ -224,6 +239,10 @@ class MainActivity : AppCompatActivity() {
         v.rateRow.visibility = if (last != null) View.VISIBLE else View.GONE
         if (last != null) v.rateText.text = "Wie war: ${last.optString("label")}?"
         v.learnedText.text = s.optString("learned")
+
+        val pair = s.optJSONObject("lastPair")
+        v.orderRow.visibility = if (pair != null) View.VISIBLE else View.GONE
+        if (pair != null) v.orderText.text = "Reihenfolge: ${pair.optString("title")} – passte?"
 
         val trick = s.optJSONObject("lastTrick")
         v.trickRow.visibility = if (trick != null) View.VISIBLE else View.GONE
@@ -432,6 +451,10 @@ class MainActivity : AppCompatActivity() {
         val btnDown: MaterialButton = a.findViewById(R.id.btnDown)
         val learnedText: TextView = a.findViewById(R.id.learnedText)
         val plCard: View = a.findViewById(R.id.plCard)
+        val orderRow: View = a.findViewById(R.id.orderRow)
+        val orderText: TextView = a.findViewById(R.id.orderText)
+        val orderUp: MaterialButton = a.findViewById(R.id.orderUp)
+        val orderDown: MaterialButton = a.findViewById(R.id.orderDown)
         val plSummary: TextView = a.findViewById(R.id.plSummary)
         val btnPlaylists: MaterialButton = a.findViewById(R.id.btnPlaylists)
         val btnPlGenre: MaterialButton = a.findViewById(R.id.btnPlGenre)
