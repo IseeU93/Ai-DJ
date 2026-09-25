@@ -1328,25 +1328,43 @@ function composeRoll(ctx) {
 function composePingPong(ctx) {
   const { va, vb, b, m } = ctx;
   if (ctx.keyDist > 0.35 || ctx.instant) return null;
-  const U = 4;
+  // Pop/Rap kürzer (8 Takte), Clubmusik 16 – sonst läuft der alte Track zu weit in den nächsten Teil
+  const U = ctx.profile.shortForm ? 2 : 4;
   const L = 4 * U;
-  // Pop/Rap: nach einem Refrain; Clubmusik: am Ende, wo sonst das Outro gemischt würde
+  const end = L + 1.5; // bis der alte Track ganz weg ist
+  // Wunschstelle: Pop/Rap nach einem Refrain, Clubmusik dort, wo sonst das Outro gemischt würde
   const exit = ctx.profile.shortForm ? chorusExit(ctx) : null;
   const clubEnd = Math.min(va.end - 2, (outroStart(va) ?? va.end - 8) + 8);
-  const from = exit ? exit.bar - L : va.grid(clubEnd - L, 4, 'floor');
-  const outBar = Math.max(ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0, from);
-  if (outBar + L > va.end) return null;
-  if (va.mean(va.drums, outBar, outBar + L) < 0.35) return null;
+  const target = exit ? exit.bar - L : va.grid(clubEnd - L, 4, 'floor');
+  const minBar = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0;
+  // Fenster suchen, in dem der alte Track im selben Teil bleibt: kein neuer Abschnitt, keine neue
+  // Gesangszeile, solange er noch hörbar ist, und das Ende in einem Takt ohne Gesang
+  let best = null;
+  for (let bar = va.grid(target - 16, 4); bar <= target + 8; bar += 4) {
+    if (bar < minBar || bar + end > va.end || va.mean(va.drums, bar, bar + L) < 0.35) continue;
+    let sc = -Math.abs(bar - target) * 0.03;
+    for (let x = bar + 1; x < bar + end; x++) {
+      if (va.label(x) !== va.label(x - 1)) sc -= va.label(x) === 'main' ? 3 : 1;
+      if (va.vocal(x) >= 0.5 && va.vocal(x - 1) < 0.35) sc -= 3;
+    }
+    if (!lineSafe(va, bar + L)) sc -= 1.5;
+    if (!best || sc > best.sc) best = { bar, sc };
+  }
+  if (!best || best.sc < -2.5) return null; // kein ruhiges Fenster -> andere Technik
+  const outBar = best.bar;
   const start = b.points.startBar ?? 0;
   const inBar = vb.mean(vb.drums, start, start + L * m) >= 0.35 ? start : beatWithoutVocal(vb, start, vb.end - L, L * m) ?? start;
   ctx.outBar = outBar;
   ctx.inBar = inBar;
+  // Beim Zurückspringen den Gesang des alten Tracks nur zurückholen, wenn dort gerade keiner
+  // singt – sonst käme eine Zeile zurück, die gleich wieder verschwindet
+  const backVocal = va.mean(va.vocal, outBar + 2 * U, outBar + 3 * U) >= 0.4 ? 1 : 0;
   const steps = [
     p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), act(0, 'in', 'play'), p(0, 'in', 'fader', 0.85, 1),
     // 1: neuer Groove übernimmt
     p(U, 'out', 'low', KILL, 0.1), p(U, 'in', 'low', 0, 0.1), p(U, 'out', 'vocal', 1, 0.25),
     // 2: zurück zum alten – der neue wird dünn gefiltert
-    p(2 * U, 'in', 'low', KILL, 0.1), p(2 * U, 'out', 'low', 0, 0.1), p(2 * U, 'out', 'vocal', 0, 0.25),
+    p(2 * U, 'in', 'low', KILL, 0.1), p(2 * U, 'out', 'low', 0, 0.1), p(2 * U, 'out', 'vocal', backVocal, 0.25),
     p(2 * U, 'in', 'filter', 0.3, 0.5),
     // 3: endgültig zum neuen
     p(3 * U, 'in', 'filter', 0, 0.1), p(3 * U, 'in', 'low', 0, 0.1), p(3 * U, 'in', 'fader', 1, 0.1),
@@ -1357,8 +1375,9 @@ function composePingPong(ctx) {
   ctx.notes.unshift(
     `Hin und her: der Groove springt alle ${U} Takte zwischen beiden Tracks`,
     `ab Takt ${3 * U} gehört er endgültig dem neuen Track`,
+    ...(backVocal ? ['beim Zurückspringen bleibt der alte Gesang weg (sonst käme eine Zeile nur kurz zurück)'] : []),
   );
-  return { L: L + 1.5, steps };
+  return { L: end, steps };
 }
 
 /**

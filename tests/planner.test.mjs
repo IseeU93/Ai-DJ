@@ -748,3 +748,15 @@ test('KI-Reihenfolge: Ballade kommt nie direkt nach einem Party-Kracher (gleiche
     assert.ok(i === 0 || i === order.length - 1, `Seed ${seed}: Ballade mitten im Party-Block (Pos ${i + 1})`);
   }
 });
+
+test('Hin und her: alter Track läuft nicht in einen neuen Teil oder eine neue Gesangszeile, Pop kürzer', () => {
+  const out = popTrack('pp1', 96, 57);
+  const inc = popTrack('pp2', 98, 60);
+  const plan = planTransition({ out, inc, type: 'pingpong' });
+  if (plan.type !== 'pingpong') return; // kein ruhiges Fenster -> andere Technik ist auch richtig
+  const a = out.analysis;
+  assert.ok(plan.bars <= 10, `zu lang für Pop: ${plan.bars} Takte`);
+  for (let x = plan.outBar + 1; x < plan.outBar + plan.bars - 1.5; x++) {
+    assert.ok(!(a.vocals[x] >= 0.5 && a.vocals[x - 1] < 0.35), `neue Gesangszeile bei Takt ${x}`);
+  }
+});
