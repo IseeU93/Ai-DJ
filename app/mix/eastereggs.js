@@ -23,7 +23,7 @@ const STARSHIPS = [
 ];
 const ONE_MORE_TIME = [
   { duration: [233, 238], vocal: 62.88 }, // Radio Edit 3:55
-  { duration: [300, 330], vocal: 30.35 }, // Album 5:20 (gemessen; Lyrics-Daten sagen 30.75 = einen Schlag zu spät)
+  { duration: [300, 330], vocal: 45.98 }, // Album 5:20: das zweite "One more time" (das erste bei 30.35, 8 Takte früher)
 ];
 const version = (list, dur) => list.find((v) => dur >= v.duration[0] && dur <= v.duration[1]) || null;
 

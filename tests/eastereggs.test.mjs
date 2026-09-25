@@ -35,8 +35,8 @@ test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesa
   const play = plan.steps.find((x) => x.action === 'play');
   assert.equal(play.at, loop.at + 7);
   assert.ok(plan.steps.some((x) => x.deck === 'out' && x.action === 'stop' && x.at === play.at));
-  // Einstieg beim ersten "One more time" (Schlag bei ~30.35 s)
-  assert.equal(plan.inBar * 4, Math.round((30.35 - b.firstBeat) / b.beatInterval));
+  // Einstieg beim zweiten "One more time" (Schlag bei ~45.98 s)
+  assert.equal(plan.inBar * 4, Math.round((45.98 - b.firstBeat) / b.beatInterval));
   assert.ok(plan.beatmatch && Math.abs(plan.inRate - 125 / 122.7) < 1e-6);
   // schon über 2:08 hinaus -> die nächste Stelle (~2:54)
   const later = planEasterEgg({ out: s, inc: o, minBar: 70 });
