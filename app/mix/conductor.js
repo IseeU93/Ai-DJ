@@ -9,6 +9,7 @@ import { planTrick } from './freestyle.js';
 import { planTeaser } from './teaser.js';
 import { pairEasterEggs, planEasterEgg } from './eastereggs.js';
 import { parseWish, pickWish } from './wish.js';
+import { looseKey } from './dedupe.js';
 import { KILL } from './planner.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
@@ -135,12 +136,27 @@ export class Conductor extends EventTarget {
     const from = this.editableFrom;
     const cur = this.track(this.queue[Math.min(from, this.queue.length) - 1]) || null;
     const locked = new Set(this.queue.slice(0, from));
-    const candidates = [...this.tracks.values()].filter((t) => t.analysis && !locked.has(t.id) && !this.played.has(t.id));
+    // derselbe Song liegt oft in mehreren Ordnern: nur einmal, bevorzugt die Fassung aus der Queue,
+    // und nie ein Song, der gerade läuft oder schon lief
+    const lockedSongs = new Set([...locked, ...this.played].map((id) => this.track(id)).filter(Boolean).map(looseKey));
+    const inQueue = new Set(this.queue);
+    const all = [...this.tracks.values()]
+      .filter((t) => t.analysis && !locked.has(t.id) && !this.played.has(t.id) && !lockedSongs.has(looseKey(t)))
+      .sort((x, y) => inQueue.has(y.id) - inQueue.has(x.id));
+    const seenSongs = new Set();
+    const candidates = all.filter((t) => {
+      const k = looseKey(t);
+      if (seenSongs.has(k)) return false;
+      seenSongs.add(k);
+      return true;
+    });
     const picked = pickWish(candidates, wish, cur, max);
     if (!picked.length) return { wish, tracks: [] };
     const before = { queue: [...this.queue], removed: [...this.removed], pinned: [...this.pinned] };
     const ids = picked.map((t) => t.id);
-    const rest = this.queue.slice(from).filter((id) => !ids.includes(id));
+    // auch andere Dateien desselben Songs aus dem Rest der Queue nehmen
+    const pickedSongs = new Set(picked.map(looseKey));
+    const rest = this.queue.slice(from).filter((id) => !ids.includes(id) && !pickedSongs.has(looseKey(this.track(id) || {})));
     this.queue = [...this.queue.slice(0, from), ...ids, ...rest];
     this.removed = this.removed.filter((id) => !ids.includes(id));
     this.pinned = ids;

@@ -50,8 +50,27 @@ test('Doppelte Songs aus mehreren Playlists nur einmal', async () => {
     t('Banger/Titanium', 'David Guetta, Sia', 'Titanium', 246),
     t('Silvester/Titanium (feat. Sia)', 'David Guetta, Sia', 'Titanium (feat. Sia)', 245),
     t('x/Radio Edit', 'Artist', 'Song', 180),
-    t('y/Extended', 'Artist', 'Song', 330), // andere Fassung (viel länger) bleibt
+    t('y/Extended', 'Artist', 'Song (Extended Mix)', 330), // andere Fassung desselben Songs: nur einmal
+    t('z/Remix', 'Artist', 'Song - Noiseflow Remix', 200), // eigener Remix bleibt
+    t('Stimmung/Starships (Lyrics)', 'Starships', 'Nicki Minaj', 229),
+    t('Silvester/Starships', 'Nicki Minaj', 'Starships', 210),
   ]);
-  assert.deepEqual(tracks.map((x) => x.id), ['Banger/Mr. Brightside', 'Banger/Titanium', 'x/Radio Edit', 'y/Extended']);
-  assert.equal(dropped.length, 3);
+  assert.deepEqual(tracks.map((x) => x.id), ['Banger/Mr. Brightside', 'Banger/Titanium', 'x/Radio Edit', 'z/Remix', 'Stimmung/Starships (Lyrics)']);
+  assert.equal(dropped.length, 5);
+});
+
+test('Musikwunsch: derselbe Song aus zwei Ordnern (andere Fassung, ohne Tags) kommt nur einmal', async () => {
+  globalThis.localStorage ??= { getItem: () => null, setItem() {} };
+  const { Conductor } = await import('../app/mix/conductor.js');
+  const c = Object.create(Conductor.prototype);
+  const tr = (id, artist, title, dur) => ({ id, artist, title, genre: 'pop', energy: 0.6, analysis: { bpm: 125, duration: dur, key: { camelot: '8A' }, gridConfidence: 0.9, fourFloor: 0.8, points: { dropBar: 16, startBar: 0, lastBar: 90 } } });
+  const list = [
+    tr('Silvester 2024/Starships.mp3', 'Nicki Minaj', 'Starships', 210),
+    tr('Anfang/Other.mp3', 'Someone', 'Other Song', 200),
+    tr('Stimmung/Starships - Nicki Minaj (Lyrics).wav', 'Starships', 'Nicki Minaj', 229),
+  ];
+  Object.assign(c, { tracks: new Map(list.map((t) => [t.id, t])), queue: list.map((t) => t.id), pos: -1, removed: [], pinned: [], played: new Set(), plan: null, emit() {}, invalidatePlan() {} });
+  const r = c.applyWish('Starships');
+  assert.equal(r.tracks.length, 1);
+  assert.equal(c.queue.filter((id) => /starships/i.test(id)).length, 1, c.queue.join(' | '));
 });
