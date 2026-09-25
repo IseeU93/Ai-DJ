@@ -68,6 +68,8 @@ class MainActivity : AppCompatActivity() {
         }
         v.laserUp.setOnClickListener { DjRepo.send("rateLaser", mapOf("verdict" to "up")) }
         v.laserDown.setOnClickListener { askLaserReason() }
+        v.btnPlaylists.setOnClickListener { pickPlaylists() }
+        v.btnPlGenre.setOnClickListener { pickPlaylistGenre() }
 
         bindSwitch(v.swAutomix, "automix")
         bindSwitch(v.swAutopilot, "autopilot")
@@ -246,7 +248,60 @@ class MainActivity : AppCompatActivity() {
         v.btnBlackout.setTextColor(getColor(if (f.optBoolean("blackout")) R.color.warn else R.color.text))
         if (!userDragsVolume) v.seekMaster.progress = (s.optDouble("master", 1.0) * 100).toInt()
 
+        val pl = s.optJSONObject("playlists")
+        v.plCard.visibility = if (pl != null && (pl.optJSONArray("items")?.length() ?: 0) > 1) View.VISIBLE else View.GONE
+        if (pl != null) {
+            v.plSummary.text = pl.optString("label")
+            val g = pl.optString("genre", "auto")
+            v.btnPlGenre.text = "Richtung: " + (GENRES[g] ?: "Auto")
+        }
+
         renderQueue(s)
+    }
+
+    /** Playlists (Unterordner) an-/abwählen – wie oben im Mixer, mit Alle/Keine und Übernehmen. */
+    private fun pickPlaylists() {
+        val items = DjRepo.state?.optJSONObject("playlists")?.optJSONArray("items") ?: return
+        val names = Array(items.length()) { items.getJSONObject(it).optString("name") }
+        val labels = Array(items.length()) {
+            val o = items.getJSONObject(it)
+            "${o.optString("label")}  (${o.optInt("count")})"
+        }
+        val checked = BooleanArray(items.length()) { items.getJSONObject(it).optBoolean("selected") }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Playlists")
+            .setMultiChoiceItems(labels, checked) { _, which, on -> checked[which] = on }
+            .setPositiveButton("Übernehmen") { _, _ ->
+                val pick = names.filterIndexed { i, _ -> checked[i] }
+                if (pick.isEmpty()) {
+                    android.widget.Toast.makeText(this, "Mindestens eine Playlist anhaken", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    DjRepo.send("setPlaylists", mapOf("names" to org.json.JSONArray(pick)))
+                }
+            }
+            .setNeutralButton("Alle / Keine", null)
+            .setNegativeButton("Abbrechen", null)
+            .create()
+        dialog.setOnShowListener {
+            // "Alle / Keine" schaltet um, ohne den Dialog zu schließen
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val all = !checked.all { it }
+                for (i in checked.indices) {
+                    checked[i] = all
+                    dialog.listView.setItemChecked(i, all)
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun pickPlaylistGenre() {
+        val keys = arrayOf("auto") + GENRES.keys.toTypedArray()
+        val labels = arrayOf("Auto (erkennen)") + GENRES.values.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Musikrichtung der gewählten Playlists")
+            .setItems(labels) { _, which -> DjRepo.send("setPlaylistGenre", mapOf("genre" to keys[which])) }
+            .show()
     }
 
     private fun renderQueue(s: JSONObject) {
@@ -376,6 +431,10 @@ class MainActivity : AppCompatActivity() {
         val btnUp: MaterialButton = a.findViewById(R.id.btnUp)
         val btnDown: MaterialButton = a.findViewById(R.id.btnDown)
         val learnedText: TextView = a.findViewById(R.id.learnedText)
+        val plCard: View = a.findViewById(R.id.plCard)
+        val plSummary: TextView = a.findViewById(R.id.plSummary)
+        val btnPlaylists: MaterialButton = a.findViewById(R.id.btnPlaylists)
+        val btnPlGenre: MaterialButton = a.findViewById(R.id.btnPlGenre)
         val trickRow: View = a.findViewById(R.id.trickRow)
         val trickText: TextView = a.findViewById(R.id.trickText)
         val trickUp: MaterialButton = a.findViewById(R.id.trickUp)
