@@ -39,3 +39,19 @@ test('Musikwunsch: passende Songs, gut mixbar sortiert', () => {
   assert.ok(!pickWish(tracks, parseWish('ruhig'), cur).some((t) => t.id === 'uptempo'));
   assert.deepEqual(pickWish(tracks, parseWish('Reggae'), cur), []);
 });
+
+test('Doppelte Songs aus mehreren Playlists nur einmal', async () => {
+  const { dedupeTracks } = await import('../app/mix/dedupe.js');
+  const t = (id, artist, title, duration) => ({ id, artist, title, analysis: { duration } });
+  const { tracks, dropped } = dedupeTracks([
+    t('Banger/Mr. Brightside', 'The Killers', 'Mr. Brightside', 224),
+    t('Silvester/Mr. Brightside', 'The Killers', 'Mr. Brightside', 224),
+    t('Anfang/Mr Brightside (Lyrics)', 'The Killers', 'Mr Brightside', 223),
+    t('Banger/Titanium', 'David Guetta, Sia', 'Titanium', 246),
+    t('Silvester/Titanium (feat. Sia)', 'David Guetta, Sia', 'Titanium (feat. Sia)', 245),
+    t('x/Radio Edit', 'Artist', 'Song', 180),
+    t('y/Extended', 'Artist', 'Song', 330), // andere Fassung (viel länger) bleibt
+  ]);
+  assert.deepEqual(tracks.map((x) => x.id), ['Banger/Mr. Brightside', 'Banger/Titanium', 'x/Radio Edit', 'y/Extended']);
+  assert.equal(dropped.length, 3);
+});

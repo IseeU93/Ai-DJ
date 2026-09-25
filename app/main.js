@@ -13,6 +13,7 @@ import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedba
 import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 import { createWebGenre } from './lib/webgenre.js';
+import { dedupeTracks } from './mix/dedupe.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -810,7 +811,10 @@ async function loadPlaylist(names) {
       if (d.track && d.status.playing && !found.some((t) => t.id === d.track.id)) found.unshift(d.track);
     }
     webGenre.attach(found); // schon bekannte Online-Genres gleich fürs erste Sortieren
-    conductor.setLibrary(found, resolveGenre);
+    // derselbe Song in mehreren gewählten Playlists: nur einmal in die Queue
+    const { tracks: unique, dropped } = dedupeTracks(found);
+    if (dropped.length) toast(`${dropped.length} doppelte Song${dropped.length > 1 ? 's' : ''} (in mehreren Playlists) nur einmal eingereiht`);
+    conductor.setLibrary(unique, resolveGenre);
     webGenre.lookup(conductor.queue.map((id) => conductor.track(id)).filter(Boolean));
   } catch (err) {
     toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
@@ -1073,7 +1077,7 @@ async function boot() {
   $('#lib-search').oninput = renderLibTracks;
   $('#lib-take').onclick = () => {
     if (!lib.tracks.length) return;
-    conductor.switchPlaylist(lib.tracks);
+    conductor.switchPlaylist(dedupeTracks(lib.tracks).tracks);
     toast('Nach dem aktuellen Track geht es mit dieser Playlist weiter');
   };
   document.addEventListener('keydown', (e) => {
