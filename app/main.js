@@ -901,7 +901,13 @@ async function boot() {
   const checked = () => [...$('#pl-list').querySelectorAll('input:checked')].map((i) => i.value);
   $('#pl-btn').onclick = (e) => {
     e.stopPropagation();
-    if (plMenu.hidden) renderPlaylists(currentPlaylists);
+    if (plMenu.hidden) {
+      renderPlaylists(currentPlaylists);
+      // direkt unter dem Knopf aufklappen, über allem anderen (Decks, Laser)
+      const r = $('#pl-btn').getBoundingClientRect();
+      plMenu.style.top = `${r.bottom + 4}px`;
+      plMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 290))}px`;
+    }
     plMenu.hidden = !plMenu.hidden;
   };
   plMenu.onclick = (e) => e.stopPropagation();
