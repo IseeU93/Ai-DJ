@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -22,6 +23,7 @@ import org.json.JSONObject
 class MainActivity : AppCompatActivity() {
     private val listener: () -> Unit = { render() }
     private var userDragsVolume = false
+    private var wishSentAt = 0L
     private var suppressSwitch = false
 
     private val v by lazy { Views(this) }
@@ -85,6 +87,34 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
         v.btnPlGenre.setOnClickListener { pickPlaylistGenre() }
+
+        // Musikwunsch: Text oder Schnellknopf -> passende Songs kommen als Nächstes
+        val sendWish = { text: String ->
+            if (text.isNotBlank()) {
+                DjRepo.send("wish", mapOf("text" to text))
+                v.wishResult.visibility = View.VISIBLE
+                v.wishResult.setTextColor(getColor(R.color.muted))
+                v.wishResult.text = "Wunsch gesendet: \u201E$text\u201C …"
+                wishSentAt = System.currentTimeMillis()
+            }
+        }
+        v.wishSend.setOnClickListener {
+            sendWish(v.wishInput.text.toString())
+            v.wishInput.text.clear()
+            hideKeyboard()
+        }
+        v.wishInput.setOnEditorActionListener { _, _, _ ->
+            sendWish(v.wishInput.text.toString())
+            v.wishInput.text.clear()
+            hideKeyboard()
+            true
+        }
+        for ((id, text) in listOf(
+            R.id.wParty to "Party", R.id.wRuhig to "ruhig", R.id.wHaerter to "härter", R.id.wWeicher to "weicher",
+            R.id.wSchneller to "schneller", R.id.wLangsamer to "langsamer", R.id.wHiphop to "Hip-Hop",
+            R.id.wHouse to "House", R.id.wSchlager to "Schlager", R.id.wHardstyle to "Hardstyle",
+        )) findViewById<View>(id).setOnClickListener { sendWish(text) }
+        v.wishUndo.setOnClickListener { DjRepo.send("undoWish") }
 
         bindSwitch(v.swAutomix, "automix")
         bindSwitch(v.swAutopilot, "autopilot")
@@ -192,6 +222,12 @@ class MainActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------ Anzeige
 
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(v.wishInput.windowToken, 0)
+        v.wishInput.clearFocus()
+    }
+
     private fun render() {
         if (v.connectView.visibility == View.VISIBLE) {
             if (DjRepo.error == "PIN falsch") status("PIN falsch – bitte im Mixer unter „Handy“ nachsehen")
@@ -243,6 +279,16 @@ class MainActivity : AppCompatActivity() {
         val pair = s.optJSONObject("lastPair")
         v.orderRow.visibility = if (pair != null) View.VISIBLE else View.GONE
         if (pair != null) v.orderText.text = "Reihenfolge: ${pair.optString("title")} – passte?"
+
+        // Musikwunsch: Karte zeigen, Rückmeldung vom Mixer (was verstanden wurde)
+        v.wishCard.visibility = View.VISIBLE
+        val wish = s.optJSONObject("lastWish")
+        if (wish != null && wishSentAt > 0 && wish.optLong("at") >= wishSentAt - 5_000) {
+            v.wishResult.visibility = View.VISIBLE
+            v.wishResult.text = wish.optString("message")
+            v.wishResult.setTextColor(getColor(if (wish.optBoolean("ok")) R.color.ok else R.color.warn))
+            v.wishUndo.visibility = if (wish.optBoolean("canUndo")) View.VISIBLE else View.GONE
+        }
 
         val trick = s.optJSONObject("lastTrick")
         v.trickRow.visibility = if (trick != null) View.VISIBLE else View.GONE
@@ -476,5 +522,10 @@ class MainActivity : AppCompatActivity() {
         val btnReorder: TextView = a.findViewById(R.id.btnReorder)
         val btnReshuffle: TextView = a.findViewById(R.id.btnReshuffle)
         val queueList: LinearLayout = a.findViewById(R.id.queueList)
+        val wishCard: View = a.findViewById(R.id.wishCard)
+        val wishInput: EditText = a.findViewById(R.id.wishInput)
+        val wishSend: MaterialButton = a.findViewById(R.id.wishSend)
+        val wishResult: TextView = a.findViewById(R.id.wishResult)
+        val wishUndo: MaterialButton = a.findViewById(R.id.wishUndo)
     }
 }

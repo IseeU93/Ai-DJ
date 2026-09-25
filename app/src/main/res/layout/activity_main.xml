@@ -463,6 +463,221 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- Musikwunsch -->
+            <LinearLayout
+                android:id="@+id/wishCard"
+                style="@style/Card"
+                android:layout_marginTop="10dp"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Label"
+                    android:text="MUSIKWUNSCH – WAS ALS NÄCHSTES?" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:baselineAligned="false"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/wishInput"
+                        style="@style/Field"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:hint="z. B. was Ruhigeres, Schlager, härter"
+                        android:imeOptions="actionSend"
+                        android:inputType="text"
+                        android:maxLines="1" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/wishSend"
+                        android:layout_width="wrap_content"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:backgroundTint="@color/accent"
+                        android:text="Wunsch"
+                        android:textAllCaps="false"
+                        android:textColor="@color/black" />
+                </LinearLayout>
+
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wParty"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Party"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wRuhig"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Ruhig"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wHaerter"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Härter"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wWeicher"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Weicher"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wSchneller"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Schneller"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wLangsamer"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Langsamer"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wHiphop"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Hip-Hop"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wHouse"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="House"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wSchlager"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Schlager"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wHardstyle"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:layout_marginEnd="6dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Hardstyle"
+                            android:textAllCaps="false"
+                            android:textColor="@color/text" />
+                    </LinearLayout>
+                </HorizontalScrollView>
+
+                <TextView
+                    android:id="@+id/wishResult"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/wishUndo"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:layout_marginTop="4dp"
+                    android:text="↶ Wunsch zurücknehmen"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text"
+                    android:visibility="gone" />
+            </LinearLayout>
+
             <!-- Playlists -->
             <LinearLayout
                 android:id="@+id/plCard"
