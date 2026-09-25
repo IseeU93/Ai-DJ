@@ -60,6 +60,7 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
         blackout: !!laser?.manualBlackout,
       },
       laserEffect: laser?.effectLabel?.() || null,
+      playlists: actions.playlists?.() || null,
       lastTrick: actions.lastTrick?.() || null,
       master: Math.round((engine.masterVolume ?? 1) * 100) / 100,
       lastTransition: actions.lastTransition?.() || null,
@@ -123,6 +124,8 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
     blackout: () => document.querySelector('#lz-blackout')?.click(),
     rate: ({ verdict, reason }) => actions.rate(verdict, reason),
     rateTrick: ({ verdict }) => actions.rateTrick?.(verdict),
+    setPlaylists: ({ names }) => actions.setPlaylists?.(names),
+    setPlaylistGenre: ({ genre }) => actions.setPlaylistGenre?.(genre),
     rateLaser: ({ verdict, reason }) => window.__automixLaserRate?.(verdict, reason),
   };
 

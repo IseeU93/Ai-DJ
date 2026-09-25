@@ -1046,6 +1046,27 @@ async function boot() {
     engine,
     conductor,
     actions: {
+      // Playlist-Auswahl vom Handy (gleiche Logik wie oben in der Kopfzeile)
+      playlists: () => {
+        if (!folderFiles.length) return null;
+        const { names, counts } = playlistCounts();
+        return {
+          label: $('#pl-btn').textContent,
+          genre: $('#playlist-genre').value,
+          items: names.map((n) => ({ name: n, label: playlistLabel(n), count: counts.get(n), selected: currentPlaylists.includes(n) })),
+        };
+      },
+      setPlaylists: (names) => {
+        const { names: all } = playlistCounts();
+        const pick = (names || []).filter((n) => all.includes(n));
+        if (pick.length) loadPlaylist(renderPlaylists(pick));
+      },
+      setPlaylistGenre: (g) => {
+        const pg = $('#playlist-genre');
+        if (![...pg.options].some((o) => o.value === g)) return;
+        pg.value = g;
+        pg.dispatchEvent(new Event('change'));
+      },
       setSwitch: (sel, on) => {
         const el = $(sel);
         if (!el || el.disabled || el.checked === on) return;
