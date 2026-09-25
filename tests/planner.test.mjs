@@ -462,6 +462,7 @@ const POP = [
   { bars: 16, kick: true, bass: true, vocal: true },
   { bars: 8, kick: true, bass: true, pad: true, vocal: true },
   { bars: 16, kick: true, bass: true, pad: true, vocal: true },
+  { bars: 4, kick: true, bass: true, pad: true }, // Luft nach dem Refrain (wie in echten Pop-Songs)
   { bars: 8, pad: true, vocal: true },
   { bars: 16, kick: true, bass: true, pad: true, vocal: true },
   { bars: 4, kick: true, pad: true },
@@ -478,9 +479,12 @@ function popTrack(id, bpm, root) {
 test('Pop: Refrain-Wechsel nach ~2/3 des Songs, neuer Song von vorn, nie zwei Stimmen', () => {
   const out = popTrack('p1', 96, 57);
   const inc = popTrack('p2', 98, 60);
-  const plan = planTransition({ out, inc });
+  const plan = planTransition({ out, inc, type: 'chorus' });
   const E = out.analysis.points.lastBar + 1;
   assert.equal(plan.type, 'chorus', `gewählt: ${plan.type}`);
+  // was auch immer automatisch gewählt wird: nie mitten in einer Gesangszeile weg
+  const auto = planTransition({ out, inc });
+  assert.ok(!auto.audit.issues.includes('alte Gesangszeile wird abgeschnitten'), `${auto.type}: ${auto.audit.issues}`);
   const swap = plan.outBar + plan.bars;
   assert.ok(swap / E > 0.55 && swap / E < 0.88, `Wechsel bei Takt ${swap} von ${E}`);
   assert.equal(plan.inBar, inc.analysis.points.startBar ?? 0, 'neuer Song startet nicht am Anfang');

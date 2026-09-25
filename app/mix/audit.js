@@ -85,13 +85,31 @@ export function auditPlan(plan, va, vb) {
     if (!onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
     if (plan.beatmatch !== false && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
   }
-  // Zeile abgeschnitten: der alte Track verschwindet, während er gerade singt und weitersingen würde
+  // Zeile abgeschnitten: der Gesang des alten Tracks wird unhörbar (Fader, Filter, Vocal-Cut, Loop),
+  // während er gerade singt und weitersingen würde – beim Mitsingen das Schlimmste. Gilt für alle
+  // Techniken, auch Echo-Out und Drop-Cut.
   let lineCut = 0;
-  const gone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
-  if (gone.length && !quietStyle) {
-    const tg = Math.min(...gone);
-    const bar = plan.outBar + Math.min(tg, loopFrom);
-    if (va.vocalSmooth(Math.floor(bar) - 1) >= 0.6 && va.vocalSmooth(Math.floor(bar)) >= 0.6) lineCut = 1;
+  const sung = (bar) => va.vocal(bar) >= 0.5;
+  const audible = (t) => {
+    if (t >= stopOut) return 0;
+    const f = val('out', 'filter', t);
+    const filt = f < -0.4 ? 0.35 : f > 0.3 ? 0.6 : 1; // Tiefpass verschluckt die Stimme, Hochpass dünnt aus
+    return val('out', 'fader', t) * filt * (1 - 0.8 * val('out', 'vocal', t));
+  };
+  let tGone = null;
+  for (let t = t0; t <= t1 + 1 + 1e-9; t += STEP) {
+    if (audible(t) < 0.3) {
+      tGone = t;
+      break;
+    }
+  }
+  // ein Loop, der vorher einsetzt, unterbricht die Zeile schon dort
+  const tCut = Math.min(tGone ?? Infinity, loopFrom);
+  if (Number.isFinite(tCut)) {
+    const ob = plan.outBar + tCut;
+    const b = Math.floor(ob + 1e-6);
+    const frac = ob - b;
+    if (frac < 0.15 ? sung(b - 1) && sung(b) : sung(b) && frac < 0.9) lineCut = 1;
   }
 
   // Übersprungene Hauptteile des alten Tracks (bei Clubmusik: der letzte Drop fehlt dann)
@@ -101,7 +119,7 @@ export function auditPlan(plan, va, vb) {
   const shortForm = (plan.genres || []).slice(0, 1).some((g) => g === 'pop' || g === 'rap');
   const skipCost = skippedMain * (shortForm ? 0.004 : 0.02);
 
-  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 0.6 + skipCost;
+  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 2 + skipCost;
   const issues = [];
   if (vocalClash >= 1) issues.push(`${vocalClash.toFixed(1)} Takte zwei Stimmen gleichzeitig`);
   if (bassBoth > 1) issues.push(`${bassBoth.toFixed(1)} Takte zwei Basslines übereinander`);

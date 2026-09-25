@@ -326,13 +326,49 @@ function strongVocalInside(v, b0, b1) {
  * in einer Phrase, sondern am nächsten natürlichen Schnittpunkt – dem Ende des laufenden Abschnitts.
  * Bei "Jetzt mixen" wird höchstens 2 Takte darauf gewartet, sonst auf die nächste 4er-Gruppe.
  */
+/** Spätester Ausstieg: letzter Takt vor dem Ausklingen – oder nach der letzten Zeile, falls die später endet. */
+function lastExit(va) {
+  const last = va.a.points.lastBar ?? va.end - 1;
+  let b = va.end - 1;
+  while (b < last && !lineSafe(va, b)) b++;
+  return b;
+}
+
+/** Ausstieg bei diesem Takt schneidet keine Zeile ab: in dem Takt wird nicht gesungen. */
+function lineSafe(va, bar) {
+  return va.vocal(bar) < 0.5;
+}
+
+/**
+ * Nächster Ausstieg ab `bar` (4-Takt-Raster), an dem gerade keine Zeile läuft – bis `maxLater` Takte
+ * später, sonst notfalls bis 8 Takte früher; findet sich nichts, bleibt es bei `bar`.
+ */
+function safeExit(va, bar, maxLater = 8) {
+  if (lineSafe(va, bar)) return bar;
+  // bis zum echten Songende (auch ins Ausklingen): lieber den Song zu Ende singen lassen
+  const last = va.a.points.lastBar ?? va.end - 1;
+  // 1. nächste Phrasengrenze (4er-Raster) ohne Gesang – kurz danach, notfalls 16 Takte früher
+  for (let d = 4; d <= maxLater; d += 4) if (bar + d <= last && lineSafe(va, bar + d)) return bar + d;
+  for (let d = 4; d <= 16; d += 4) if (bar - d > 0 && lineSafe(va, bar - d)) return bar - d;
+  // 2. Gesang bis kurz vor Schluss: auf dem Raster nach der letzten Zeile (auch im Ausklingen)
+  for (let d = maxLater + 4; bar + d <= last; d += 4) if (lineSafe(va, bar + d)) return bar + d;
+  // 3. notfalls der erste Takt nach der Zeile
+  for (let b = bar + 1; b <= last; b++) if (lineSafe(va, b)) return b;
+  return bar;
+}
+
 function cutPoint(ctx) {
   const { va } = ctx;
   const e = ctx.earliestBar;
   const limit = ctx.instant ? 2 : 16;
+  // Phrasengrenze, an der gerade niemand singt (sonst wird mitten in der Zeile weggemixt)
+  let firstPhrase = null;
   for (let bar = Math.ceil(e - 1e-6); bar <= e + limit && bar < va.end - 1; bar++) {
-    if (va.isPhraseStart(bar)) return bar;
+    if (!va.isPhraseStart(bar) && !(bar - Math.ceil(e) >= 4 && (((bar - (va.a.phraseOffset || 0)) % 4) + 4) % 4 === 0)) continue;
+    if (lineSafe(va, bar)) return bar;
+    if (firstPhrase === null && va.isPhraseStart(bar)) firstPhrase = bar;
   }
+  if (firstPhrase !== null) return firstPhrase;
   if (ctx.instant) {
     const g4 = va.grid(e, 4);
     return g4 - e <= 1.5 ? g4 : va.grid(e, 1);
@@ -744,7 +780,7 @@ function composeLoop(ctx) {
   // Loop-Stelle: im Endbereich des alten Tracks die groovigste, gesangsfreie Stelle
   let loop;
   if (ctx.earliestBar !== null) {
-    const bar = afterFullEnergy(va, cutPoint(ctx));
+    const bar = safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
     const len = va.mean(va.repeat, bar, bar + 8) > 0.6 && bar + 8 <= va.end ? 8 : 4;
     loop = { bar, len };
   } else {
@@ -807,7 +843,7 @@ function composeVocal(ctx) {
   // Alter Track: ein später Gesangsabschnitt (letzter Refrain), neuer: der erste
   let outFrom;
   if (ctx.earliestBar !== null) {
-    outFrom = afterFullEnergy(va, cutPoint(ctx));
+    outFrom = safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
     if (va.mean(va.vocal, outFrom, outFrom + 8) < 0.4) return null;
   } else {
     const runs = va.vocalRuns(8).filter((r) => r.from >= va.end * 0.35);
@@ -904,9 +940,9 @@ function composeFilter(ctx) {
 function composeCut(ctx) {
   const { va, a, b } = ctx;
   if (ctx.profile.shortForm && !ctx.instant) return composeSongCut(ctx);
-  if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, cutPoint(ctx));
-  else ctx.outBar = outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
-  ctx.outBar = Math.min(ctx.outBar, va.end - 1);
+  if (ctx.earliestBar !== null) ctx.outBar = safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
+  else ctx.outBar = outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
+  ctx.outBar = Math.min(ctx.outBar, lastExit(va));
   // Nur in einen echten Drop (laut, mit Beat) – nie in ein Intro oder einen leeren Beat-Teil
   const arrival = realDrop(ctx.vb, b);
   if (arrival === null && !ctx.instant) return composeEcho(ctx);
@@ -931,7 +967,9 @@ function composeCut(ctx) {
  */
 function outroStart(va) {
   const o = va.a.points.outroBar;
-  return o === null || o === undefined ? null : Math.min(va.grid(o, 4, 'round'), va.grid(va.end - 1, 4, 'floor'));
+  if (o === null || o === undefined) return null;
+  const bar = Math.min(va.grid(o, 4, 'round'), va.grid(va.end - 1, 4, 'floor'));
+  return safeExit(va, bar); // darf bis nach der letzten Zeile gehen, auch ins Ausklingen
 }
 
 /** Ausstiegs-Takt für die harten Techniken: Ende eines Refrains, sonst Outro/Phrasengrenze. */
@@ -939,8 +977,8 @@ function hardExit(ctx) {
   const { va, a } = ctx;
   const exit = chorusExit(ctx);
   if (exit) return exit.bar;
-  if (ctx.earliestBar !== null) return afterFullEnergy(va, cutPoint(ctx));
-  return outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
+  if (ctx.earliestBar !== null) return safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
+  return outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
 }
 
 /**
@@ -952,7 +990,7 @@ function composeBuild(ctx) {
   if (ctx.instant) return null;
   const arrival = realDrop(vb, b);
   if (arrival === null) return null;
-  ctx.outBar = Math.min(hardExit(ctx), va.end - 1);
+  ctx.outBar = Math.min(hardExit(ctx), lastExit(va));
   ctx.inBar = arrival;
   // Anlauf: 8 Takte, bei "bald mixen" so viel, wie noch Platz ist
   const B = ctx.earliestBar !== null ? Math.max(2, Math.min(8, Math.floor(ctx.outBar - ctx.earliestBar) + 2)) : 8;
@@ -1021,9 +1059,9 @@ function composeEcho(ctx) {
     const r = composeSongCut(ctx);
     if (r) return r;
   }
-  if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, cutPoint(ctx));
-  else ctx.outBar = outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
-  ctx.outBar = Math.min(ctx.outBar, va.end - 1);
+  if (ctx.earliestBar !== null) ctx.outBar = safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
+  else ctx.outBar = outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
+  ctx.outBar = Math.min(ctx.outBar, lastExit(va));
   ctx.inBar = b.points.startBar;
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 4) < 0.3;
   const start = beatless ? 0.5 : 1;
@@ -1071,6 +1109,8 @@ function chorusExit(ctx) {
     if (va.label(bar) !== va.label(bar - 1)) sc += 0.2;
     // Gesangszeile läuft genau über die Grenze -> Zeile würde abgeschnitten
     if (va.vocalSmooth(bar - 1) >= 0.6 && va.vocalSmooth(bar) >= 0.6 && va.vocal(bar) > va.vocal(bar - 1) + 0.15) sc -= 0.3;
+    // im Ausstiegstakt wird gesungen -> die Zeile würde weggemixt, während die Leute mitsingen
+    if (!lineSafe(va, bar)) sc -= 1.5;
     // Wo es musikalisch passt – kein fester Prozentwert. Nur: nicht zu früh (weniger als die
     // Hälfte gespielt) und nicht ins ausklingende Ende, wo nur noch Leerlauf käme.
     const frac = bar / E;
