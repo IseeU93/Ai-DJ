@@ -58,6 +58,16 @@ class MainActivity : AppCompatActivity() {
             v.rateRow.visibility = View.GONE
         }
         v.btnDown.setOnClickListener { askReason() }
+        v.trickUp.setOnClickListener {
+            DjRepo.send("rateTrick", mapOf("verdict" to "up"))
+            v.trickRow.visibility = View.GONE
+        }
+        v.trickDown.setOnClickListener {
+            DjRepo.send("rateTrick", mapOf("verdict" to "down"))
+            v.trickRow.visibility = View.GONE
+        }
+        v.laserUp.setOnClickListener { DjRepo.send("rateLaser", mapOf("verdict" to "up")) }
+        v.laserDown.setOnClickListener { askLaserReason() }
 
         bindSwitch(v.swAutomix, "automix")
         bindSwitch(v.swAutopilot, "autopilot")
@@ -213,6 +223,15 @@ class MainActivity : AppCompatActivity() {
         if (last != null) v.rateText.text = "Wie war: ${last.optString("label")}?"
         v.learnedText.text = s.optString("learned")
 
+        val trick = s.optJSONObject("lastTrick")
+        v.trickRow.visibility = if (trick != null) View.VISIBLE else View.GONE
+        if (trick != null) v.trickText.text = if (trick.optString("kind") == "teaser") "Teaser vom nächsten Track – gut?" else "Freestyle: ${trick.optString("name")} – gut?"
+
+        val laserOn = (s.optJSONObject("flags")?.optString("laser", "off") ?: "off") != "off"
+        val effect = s.optString("laserEffect", "")
+        v.laserRateRow.visibility = if (laserOn && effect.isNotBlank() && effect != "null") View.VISIBLE else View.GONE
+        v.laserText.text = "Laser: $effect"
+
         val remaining = s.optInt("remaining", 99)
         v.warnBanner.visibility = if (remaining in 1..10) View.VISIBLE else View.GONE
         v.warnBanner.text = if (remaining == 1) "⚠ Nur noch 1 Song in der Queue!" else "⚠ Nur noch $remaining Songs – Playlist fast vorbei"
@@ -298,6 +317,15 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun askLaserReason() {
+        val keys = arrayOf("hectic", "boring", "mismatch")
+        val labels = arrayOf("zu hektisch", "zu langweilig", "passt nicht zur Musik")
+        AlertDialog.Builder(this)
+            .setTitle("Was stört am Laser-Effekt?")
+            .setItems(labels) { _, which -> DjRepo.send("rateLaser", mapOf("verdict" to "down", "reason" to keys[which])) }
+            .show()
+    }
+
     private fun bindSwitch(sw: SwitchMaterial, cmd: String) {
         sw.setOnCheckedChangeListener { _, on -> if (!suppressSwitch) DjRepo.send(cmd, mapOf("on" to on)) }
     }
@@ -348,6 +376,14 @@ class MainActivity : AppCompatActivity() {
         val btnUp: MaterialButton = a.findViewById(R.id.btnUp)
         val btnDown: MaterialButton = a.findViewById(R.id.btnDown)
         val learnedText: TextView = a.findViewById(R.id.learnedText)
+        val trickRow: View = a.findViewById(R.id.trickRow)
+        val trickText: TextView = a.findViewById(R.id.trickText)
+        val trickUp: MaterialButton = a.findViewById(R.id.trickUp)
+        val trickDown: MaterialButton = a.findViewById(R.id.trickDown)
+        val laserRateRow: View = a.findViewById(R.id.laserRateRow)
+        val laserText: TextView = a.findViewById(R.id.laserText)
+        val laserUp: MaterialButton = a.findViewById(R.id.laserRateUp)
+        val laserDown: MaterialButton = a.findViewById(R.id.laserRateDown)
         val swAutomix: SwitchMaterial = a.findViewById(R.id.swAutomix)
         val swAutopilot: SwitchMaterial = a.findViewById(R.id.swAutopilot)
         val swFreestyle: SwitchMaterial = a.findViewById(R.id.swFreestyle)

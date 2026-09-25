@@ -282,6 +282,43 @@
                         android:text="👎" />
                 </LinearLayout>
 
+
+                <LinearLayout
+                    android:id="@+id/trickRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:baselineAligned="false"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/trickText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textColor="@color/accent"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/trickUp"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:text="👍" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/trickDown"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="6dp"
+                        android:text="👎" />
+                </LinearLayout>
+
                 <TextView
                     android:id="@+id/learnedText"
                     android:layout_width="match_parent"
@@ -323,6 +360,43 @@
                     android:max="100"
                     android:progressTint="@color/accent"
                     android:thumbTint="@color/accent" />
+
+
+                <LinearLayout
+                    android:id="@+id/laserRateRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:baselineAligned="false"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/laserText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textColor="@color/accent"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/laserRateUp"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:text="👍" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/laserRateDown"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="6dp"
+                        android:text="👎" />
+                </LinearLayout>
 
                 <LinearLayout
                     android:layout_width="match_parent"
