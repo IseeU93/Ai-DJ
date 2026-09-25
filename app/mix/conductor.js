@@ -7,6 +7,7 @@ import { readFile } from '../lib/tauri.js';
 import { detectGenre } from './genre.js';
 import { planTrick } from './freestyle.js';
 import { planTeaser } from './teaser.js';
+import { pairEasterEggs, planEasterEgg } from './eastereggs.js';
 import { KILL } from './planner.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
@@ -95,7 +96,7 @@ export class Conductor extends EventTarget {
     const playing = this.queue.slice(0, this.pos + 1).filter((id) => this.tracks.has(id));
     const fixed = playing.map((id) => this.tracks.get(id));
     const rest = list.filter((t) => !playing.includes(t.id));
-    this.queue = buildSetOrder([...fixed, ...rest], fixed).map((t) => t.id);
+    this.queue = this.pairEggs(buildSetOrder([...fixed, ...rest], fixed).map((t) => t.id), fixed.length);
     this.removed = [];
     this.pos = playing.length - 1;
     this.invalidatePlan();
@@ -112,9 +113,14 @@ export class Conductor extends EventTarget {
     const from = this.editableFrom;
     const fixed = this.queue.slice(0, from).map((id) => this.track(id));
     const all = this.queue.map((id) => this.track(id));
-    this.queue = buildSetOrder(all, fixed, seed, this.learned.order).map((t) => t.id);
+    this.queue = this.pairEggs(buildSetOrder(all, fixed, seed, this.learned.order).map((t) => t.id), from);
     this.invalidatePlan();
     this.emit('queue');
+  }
+
+  /** Easter Egg: One More Time folgt in der Wiedergabeliste direkt auf Starships. */
+  pairEggs(queue, minIndex) {
+    return pairEasterEggs(queue, (id) => this.track(id), minIndex);
   }
 
   /** Neue, ebenfalls gut passende Reihenfolge (andere Variante). */
@@ -241,7 +247,7 @@ export class Conductor extends EventTarget {
       if (!keep.includes(s.id)) fixed.push(s);
     }
     const pool = tracks.filter((t) => !fixed.includes(t));
-    this.queue = buildSetOrder([...fixed, ...pool], fixed).map((t) => t.id);
+    this.queue = this.pairEggs(buildSetOrder([...fixed, ...pool], fixed).map((t) => t.id), fixed.length);
     this.removed = [];
     this.invalidatePlan();
     this.emit('queue');
@@ -345,7 +351,9 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune });
+      const o = { out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
+      const cues = loadCues();
+      const p = planEasterEgg({ ...o, outCues: cues[a.id], inCues: cues[b.id] }) || planTransition(o);
       out.set(b.id, p);
       history.push(p.type);
     }
@@ -526,7 +534,7 @@ export class Conductor extends EventTarget {
    */
   maybeTeaser(now) {
     const plan = this.plan;
-    if (!plan || plan.committed || !plan.beatmatch || this.teased === plan.inId) return;
+    if (!plan || plan.committed || plan.egg || !plan.beatmatch || this.teased === plan.inId) return;
     if (this.forceSoon || this.soonWindow || now < this.rampUntil || now < (this.holdPlanningUntil || 0)) return;
     const md = this.masterDeck;
     const inn = this.decks[plan.inDeck];
@@ -596,8 +604,11 @@ export class Conductor extends EventTarget {
       tune: this.learned.tune,
       trackTune: this.learned.trackTune,
     };
-    let plan = planTransition(opts);
-    if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: Math.max(nowBar + leadBars, this.extendFrom ?? 0) });
+    // Easter Egg (fest eingebauter DJ-Klassiker für ein bestimmtes Song-Paar) geht vor
+    const cues = loadCues();
+    const egg = (o) => planEasterEgg({ ...o, outCues: cues[out.id], inCues: cues[inc.id] });
+    let plan = egg({ ...opts, minBar: nowBar + 2 }) || planTransition(opts); // Egg hat keine Schritte vor T0
+    if (!instant && !plan.egg && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: Math.max(nowBar + leadBars, this.extendFrom ?? 0) });
 
     const barSec = (4 * 60) / plan.masterBpm;
     const realOut0 = barToSeconds(a, plan.outBar) * sr;

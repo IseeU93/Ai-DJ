@@ -462,16 +462,21 @@ function renderQueue() {
   list.appendChild(head);
 
   const editable = conductor.editableFrom;
+  const filter = $('#queue-search').value.trim().toLowerCase();
   let total = 0;
   let remaining = 0;
+  let hits = 0;
   q.forEach((id, i) => {
     const t = conductor.track(id);
     if (!t) return;
     const a = t.analysis;
     total += a.duration;
     if (i >= conductor.pos) remaining += a.duration;
+    // Suche: nur passende Titel zeigen (Nummern und Aktionen bleiben die echten Positionen)
+    if (filter && !`${t.title} ${t.artist || ''} ${t.path || ''}`.toLowerCase().includes(filter)) return;
+    if (filter) hits++;
     const row = document.createElement('div');
-    row.className = 'qrow';
+    row.className = filter ? 'qrow match' : 'qrow';
     if (i < conductor.pos) row.classList.add('played');
     if (i === conductor.pos) row.classList.add('playing');
     const locked = i < editable;
@@ -579,7 +584,7 @@ function renderQueue() {
   tail.addEventListener('drop', () => dragFrom >= 0 && conductor.move(dragFrom, q.length - 1));
   list.appendChild(tail);
 
-  $('#queue-info').textContent = `${q.length} Tracks · ${fmtTime(total)} gesamt · ${fmtTime(remaining)} verbleibend`;
+  $('#queue-info').textContent = (filter ? `${hits} Treffer · ` : '') + `${q.length} Tracks · ${fmtTime(total)} gesamt · ${fmtTime(remaining)} verbleibend`;
   renderRemoved();
   renderPlanInfo();
 }
@@ -846,8 +851,11 @@ function renderLibTracks() {
   const q = $('#lib-search').value.trim().toLowerCase();
   list.innerHTML = '';
   const queued = new Set(conductor.queue);
+  const match = (s) => q.split(/\s+/).every((w) => s.toLowerCase().includes(w));
+  const shown = new Set();
   for (const t of lib.tracks) {
-    if (q && !`${t.title} ${t.artist}`.toLowerCase().includes(q)) continue;
+    if (q && !match(`${t.title} ${t.artist} ${t.path || ''}`)) continue;
+    shown.add(t.path);
     const a = t.analysis;
     const row = document.createElement('div');
     row.className = `lrow ${queued.has(t.id) ? 'inqueue' : ''}`;
@@ -877,6 +885,43 @@ function renderLibTracks() {
       toast(`„${t.title}“ wird an der nächsten passenden Stelle eingemixt – danach läuft diese Playlist`);
       renderLibTracks();
     };
+    list.appendChild(row);
+  }
+  // Suche auch in den nicht angehakten Ordnern (nach Dateiname) – wird beim Klick analysiert
+  if (!q) return;
+  let more = 0;
+  for (const f of lib.files) {
+    if (shown.has(f.path) || !match(f.path.split(/[\\/]/).slice(-2).join(' '))) continue;
+    if (++more > 100) break;
+    const row = document.createElement('div');
+    row.className = 'lrow other';
+    row.innerHTML = `<div><div class="t"></div><div class="a"></div></div><span></span><span></span><span></span><span></span>
+      <span class="acts">
+        <button class="btn" data-a="next" title="Als Nächstes spielen (Hot-Queue)">Als Nächstes</button>
+        <button class="btn" data-a="add" title="Hinten an die Queue anhängen">+ Queue</button>
+        <button class="btn" data-a="mix" title="Jetzt reinmixen">Mix</button>
+      </span>`;
+    const parts = f.path.split(/[\\/]/);
+    $('.t', row).textContent = parts[parts.length - 1].replace(/\.[^.]+$/, '');
+    $('.a', row).textContent = libPlaylistOf(f.path) === ROOT_PLAYLIST ? '' : libPlaylistOf(f.path);
+    for (const b of row.querySelectorAll('[data-a]')) {
+      b.onclick = async () => {
+        row.querySelectorAll('button').forEach((x) => (x.disabled = true));
+        $('.a', row).textContent = 'Analysiere …';
+        const found = [];
+        await analysis.analyzeAll([f], { onTrack: (t) => found.push(t), onProgress: () => {}, onError: (_, err) => console.error(err) });
+        const [t] = conductor.addTracks(found);
+        if (!t) {
+          $('.a', row).textContent = 'Analyse fehlgeschlagen';
+          return;
+        }
+        if (b.dataset.a === 'next') conductor.queueNext(t);
+        else if (b.dataset.a === 'add') conductor.queueAppend(t);
+        else conductor.mixSoon(t, lib.tracks.length ? lib.tracks : [t]);
+        toast(`„${t.title}“ ${b.dataset.a === 'next' ? 'kommt als Nächstes' : b.dataset.a === 'add' ? 'an die Queue angehängt' : 'wird eingemixt'}`);
+        renderLibTracks();
+      };
+    }
     list.appendChild(row);
   }
 }
@@ -957,6 +1002,18 @@ async function boot() {
   };
   $('#btn-start').onclick = () => conductor.togglePlay(conductor.master);
   $('#btn-reorder').onclick = () => conductor.reorderAI();
+  $('#queue-search').oninput = renderQueue;
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      const s = $('#libwin').hidden ? $('#queue-search') : $('#lib-search');
+      s.focus();
+      s.select();
+    } else if (e.key === 'Escape' && e.target.id === 'queue-search') {
+      e.target.value = '';
+      renderQueue();
+    }
+  });
   $('#btn-reshuffle').onclick = () => conductor.reshuffle();
   $('#btn-mixnow').onclick = () => conductor.mixNow();
   $('#btn-extend').onclick = () => {

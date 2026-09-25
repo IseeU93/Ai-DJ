@@ -272,6 +272,9 @@ select.sel:disabled { opacity: 0.5; }
 .queue-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
 .queue-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .queue-head .info { color: var(--muted); font-size: 12px; }
+.queue-search { width: 200px; height: 26px; padding: 0 8px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 3px; color: inherit; }
+.qrow.match { box-shadow: inset 3px 0 0 var(--accent, #4fc3f7); }
+.lrow.other .t::after { content: ' · anderer Ordner'; color: var(--muted); font-weight: 400; font-size: 11px; }
 
 .qlist { overflow-y: auto; min-height: 0; flex: 1; }
 .qrow {
