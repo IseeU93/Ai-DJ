@@ -838,9 +838,21 @@ function libPlaylistOf(path) {
   return parts.length > 1 ? parts[0] : ROOT_PLAYLIST;
 }
 
-async function openLibrary(root) {
+async function openLibrary(root, force = false) {
   $('#libwin').hidden = false;
   if (!root) return;
+  // Schon geladen: sofort zeigen, nur im Hintergrund nach neuen/entfernten Dateien schauen
+  if (!force && root === lib.root && lib.files.length) {
+    renderLibFolders();
+    renderLibTracks();
+    scanFolder(root).then((files) => {
+      const was = lib.files.map((f) => f.path).join('|');
+      if (files.map((f) => f.path).join('|') === was) return;
+      lib.files = files;
+      showLibPlaylist(lib.selected.filter((n) => libNames().includes(n)));
+    }).catch(() => {});
+    return;
+  }
   lib.root = root;
   $('#lib-root').textContent = root;
   $('#lib-root').title = root;
@@ -903,31 +915,52 @@ async function showLibPlaylist(names) {
   renderLibFolders();
   const files = lib.files.filter((f) => names.includes(libPlaylistOf(f.path)));
   const token = ++lib.loading;
-  lib.tracks = [];
+  const sortByTitle = (list) => list.sort((x, y) => x.title.localeCompare(y.title, 'de'));
+  // Songs, die die App schon kennt (analysiert), stehen sofort da – nur neue werden analysiert
+  const known = files.map((f) => conductor.track(f.path)).filter((t) => t?.analysis);
+  const knownIds = new Set(known.map((t) => t.id));
+  const todo = files.filter((f) => !knownIds.has(f.path));
+  lib.tracks = sortByTitle([...known]);
   renderLibTracks();
+  const done = () => {
+    $('#lib-status').textContent = names.length ? `${lib.tracks.length} Tracks aus ${names.length === libNames().length ? 'allen Ordnern' : names.length === 1 ? '1 Ordner' : `${names.length} Ordnern`}` : 'Links Ordner anhaken';
+  };
+  if (!todo.length) {
+    done();
+    webGenre.lookup(lib.tracks);
+    return;
+  }
   const found = [];
-  await analysis.analyzeAll(files, {
+  let lastDraw = 0;
+  await analysis.analyzeAll(todo, {
     onTrack: (t) => found.push(t),
     onProgress: (d, n) => {
       if (token !== lib.loading) return;
-      $('#lib-status').textContent = d < n ? `Analysiere ${d}/${n} … (gründlich: Beatgrid, Struktur, Tonart, Gesang, Richtung)` : '';
+      $('#lib-status').textContent = d < n ? `${known.length} Tracks bereit · analysiere neue ${d}/${n} … (einfügen geht schon)` : '';
+      // selten neu zeichnen, sonst verschwinden Knöpfe unter dem Mauszeiger
+      if (Date.now() - lastDraw < 2000) return;
+      lastDraw = Date.now();
       webGenre.attach(found);
-      lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
+      lib.tracks = sortByTitle([...known, ...conductor.addTracks(found)]);
       renderLibTracks();
     },
     onError: (f, err) => console.error('Analyse fehlgeschlagen:', f.path, err),
   });
   if (token !== lib.loading) return;
   webGenre.attach(found);
-  lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
+  lib.tracks = sortByTitle([...known, ...conductor.addTracks(found)]);
   webGenre.lookup(lib.tracks);
-  $('#lib-status').textContent = names.length ? `${lib.tracks.length} Tracks aus ${names.length === libNames().length ? 'allen Ordnern' : names.length === 1 ? '1 Ordner' : `${names.length} Ordnern`}` : 'Links Ordner anhaken';
+  done();
   renderLibTracks();
 }
 
 function renderLibTracks() {
   const list = $('#lib-list');
   const q = $('#lib-search').value.trim().toLowerCase();
+  // Scroll-Position beim Neuzeichnen behalten
+  const scroller = list.closest('.lib-tracks') || list;
+  const top = scroller.scrollTop;
+  requestAnimationFrame(() => (scroller.scrollTop = top));
   list.innerHTML = '';
   const queued = new Set(conductor.queue);
   const match = (s) => q.split(/\s+/).every((w) => s.toLowerCase().includes(w));
