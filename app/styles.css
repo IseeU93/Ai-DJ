@@ -50,7 +50,8 @@ button, select, input { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
-.brand { font-weight: 600; letter-spacing: 0.02em; margin-right: 6px; }
+.brand { font-weight: 600; letter-spacing: 0.02em; margin-right: 6px; display: inline-flex; align-items: center; gap: 7px; }
+.brand img { width: 22px; height: 22px; border-radius: 5px; }
 .folder { color: var(--muted); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spacer { flex: 1; }
 

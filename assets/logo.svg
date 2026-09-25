@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Automix-Logo: Schallplatte, aus der Laserstrahlen fächern – in den Deck-Farben A (Bernstein) und B (Blau) -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="58%" r="70%">
+      <stop offset="0" stop-color="#1d2028"/>
+      <stop offset="1" stop-color="#0a0b0d"/>
+    </radialGradient>
+    <linearGradient id="beamA" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffc766" stop-opacity="1"/>
+      <stop offset="1" stop-color="#d6a03c" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamB" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#8fd0f5" stop-opacity="1"/>
+      <stop offset="1" stop-color="#5b9fc6" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <radialGradient id="disc" cx="45%" cy="40%" r="65%">
+      <stop offset="0" stop-color="#23262e"/>
+      <stop offset="1" stop-color="#0d0e11"/>
+    </radialGradient>
+    <clipPath id="round"><rect width="1024" height="1024" rx="228"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Laserstrahlen (erst weicher Schein, dann scharfer Strahl) -->
+    <g transform="translate(512 610)">
+      <g filter="url(#glow)" opacity="0.95">
+        <polygon points="-10,0 10,0 -470,-700 -520,-660" fill="url(#beamA)"/>
+        <polygon points="-10,0 10,0 -200,-760 -260,-760" fill="url(#beamB)"/>
+        <polygon points="-10,0 10,0 30,-780 -30,-780" fill="url(#beamA)"/>
+        <polygon points="-10,0 10,0 260,-760 200,-760" fill="url(#beamB)"/>
+        <polygon points="-10,0 10,0 520,-660 470,-700" fill="url(#beamA)"/>
+      </g>
+      <polygon points="-7,0 7,0 -486,-694 -509,-671" fill="url(#beamA)"/>
+      <polygon points="-7,0 7,0 -218,-765 -242,-765" fill="url(#beamB)"/>
+      <polygon points="-7,0 7,0 12,-780 -12,-780" fill="url(#beamA)"/>
+      <polygon points="-7,0 7,0 242,-765 218,-765" fill="url(#beamB)"/>
+      <polygon points="-7,0 7,0 509,-671 486,-694" fill="url(#beamA)"/>
+    </g>
+
+    <!-- Schallplatte -->
+    <g transform="translate(512 610)">
+      <circle r="318" fill="#050506" opacity="0.6" transform="translate(0 14)"/>
+      <circle r="310" fill="url(#disc)"/>
+      <g fill="none" stroke="#2c2f37" stroke-width="3">
+        <circle r="285"/><circle r="258"/><circle r="231"/><circle r="204"/><circle r="177"/><circle r="152"/>
+      </g>
+      <!-- Glanzlichter: links Bernstein, rechts Blau -->
+      <path d="M -262 -118 A 288 288 0 0 1 -118 -262" fill="none" stroke="#d6a03c" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+      <path d="M 118 262 A 288 288 0 0 1 262 118" fill="none" stroke="#5b9fc6" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+      <!-- Label wie ein Crossfader: halb Deck A, halb Deck B -->
+      <path d="M 0 -124 A 124 124 0 0 0 0 124 Z" fill="#d6a03c"/>
+      <path d="M 0 -124 A 124 124 0 0 1 0 124 Z" fill="#5b9fc6"/>
+      <circle r="124" fill="none" stroke="#0d0e11" stroke-width="6"/>
+      <circle r="20" fill="#0d0e11"/>
+    </g>
+  </g>
+</svg>
