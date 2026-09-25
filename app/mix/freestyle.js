@@ -88,8 +88,8 @@ export function planTrick(a, barNow, dice = Math.random(), last = null, weights 
   const loud = eBefore > -6; // in leisen Stellen fällt ein Effekt als Störung auf
   const throwOk = (lineEnds || noLine) && !lineRuns && loud && (intoBreak || calmer || intoMain);
   const w = {
-    echo: throwOk && lineEnds ? 0.9 : 0,
-    reverb: throwOk && (intoBreak || calmer) ? 0.7 : 0,
+    echo: throwOk && lineEnds ? 0.45 : 0,
+    reverb: throwOk && (intoBreak || calmer) ? 0.25 : 0,
     sweep: fromBuild ? 1 : intoBreak && loud ? 0.4 : 0,
     bassCut: intoMain && drumsBefore ? 1.4 : 0,
     repeat: intoMain && drumsBefore && !lineRuns ? 0.4 : 0,

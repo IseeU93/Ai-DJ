@@ -549,8 +549,8 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
       lpOut: 0.8 + (ctx.energyUp < -0.05 ? 0.5 : 0),
       hpOut: 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0),
     },
-    outEcho: { none: 0.6, echoOut: 0.4 + extra + (ctx.energyUp > 0.25 ? 0.3 : 0) },
-    outReverb: { none: 0.55, reverbOut: 0.55 + extra + (ctx.energyUp < 0 ? 0.25 : 0) + (ctx.keyDist >= 0.3 ? 0.15 : 0) },
+    outEcho: { none: 0.75, echoOut: 0.35 + extra + (ctx.energyUp > 0.25 ? 0.25 : 0) },
+    outReverb: { none: 0.75, reverbOut: 0.4 + extra + (ctx.energyUp < 0 ? 0.2 : 0) + (ctx.keyDist >= 0.3 ? 0.1 : 0) },
     outMod: { none: 0.6, ...(L - fadeFrom >= 1 ? { flangerOut: 0.4 + extra + (club ? 0.15 : 0) } : {}) },
     outGate: { none: 0.65, ...(L - fadeFrom >= 1 && !ctx.loopExt ? { gateOut: 0.35 + extra + (club ? 0.15 : -0.1) + (ctx.energyUp > 0.1 ? 0.15 : 0) } : {}) },
     outLoop: { none: 0.65, ...(canLoopOut ? { loopOut: 0.5 + extra } : {}) },
@@ -650,8 +650,8 @@ function applyFx(ctx, steps, L) {
   const chance = {
     riser: tSwap - 4 >= minAt && ctx.energyUp > -0.05 ? 0.2 + (club ? 0.15 : 0) + (ctx.energyUp > 0.1 ? 0.15 : 0) : 0,
     flangerIn: !usesParam('in', 'flanger') && tEnd - tIn >= 1 ? 0.2 + (club ? 0.05 : 0) : 0,
-    echoOut: !usesParam('out', 'echo') && tEnd >= 1 ? 0.25 : 0,
-    reverbOut: !usesParam('out', 'reverb') && tEnd >= 1 ? 0.3 + (ctx.energyUp < 0 ? 0.1 : 0) : 0,
+    echoOut: !usesParam('out', 'echo') && tEnd >= 1 ? 0.12 : 0,
+    reverbOut: !usesParam('out', 'reverb') && tEnd >= 1 ? 0.14 + (ctx.energyUp < 0 ? 0.06 : 0) : 0,
     flangerOut: !usesParam('out', 'flanger') && tEnd >= 2 ? 0.18 + (club ? 0.07 : 0) : 0,
     gateOut: !usesAction('out', 'gate') && !usesAction('out', 'loop') && tEnd >= 1 ? 0.15 + (club ? 0.1 : -0.05) : 0,
   };

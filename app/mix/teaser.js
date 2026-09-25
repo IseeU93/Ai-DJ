@@ -38,7 +38,7 @@ export function teaserSource(b) {
       const energy = mean(b.barEnergy, bar, bar + 2, -6); // dB unter den lautesten Stellen des Songs
       if (vocal < 0.45) continue; // ohne Stimme erkennt man den Song nicht
       // harte/volle Sektion (lautester Teil; bei Hardstyle/Uptempo alles außer ruhigen Breaks) – nie
-      if (energy > (hardTrack ? -6 : -1.5)) continue;
+      if (energy > (hardTrack ? -5 : -0.7)) continue;
       let sc = vocal * 1.5 - Math.max(0, energy + 4) * 0.1;
       if (ph.label === 'main') sc += 0.3; // Refrain/Hook: am wiedererkennbarsten
       sc -= (bar - start) * 0.004; // eher früh im Song (erster Refrain)
@@ -69,7 +69,7 @@ export function planTeaser(a, b, outBar, nowBar, bars = 2, minScore = 0.6) {
     const drums = mean(a.barDrums, b0, end, 0.5);
     const lab = labelAt(a, b0);
     // nie über einen lauten, laufenden Hauptteil (ruhigere Instrumental-Passagen gehen)
-    if (lab === 'outro' || (lab === 'main' && energy > -3.5)) continue;
+    if (lab === 'outro' || (lab === 'main' && energy > -2.5)) continue;
     if (drums > 0.75 && energy > -2.5) continue;
     let sc = 1 - vocal * 2;
     if (lab === 'break') sc += 0.8;
@@ -79,5 +79,5 @@ export function planTeaser(a, b, outBar, nowBar, bars = 2, minScore = 0.6) {
     sc -= Math.abs(outBar - end - 16) * 0.01; // grob 16 Takte vor dem Übergang ist ideal
     if (!best || sc > best.sc) best = { sc, bar: b0, bars, inFrom: src.bar, what: src.what };
   }
-  return best && best.sc > minScore + 0.1 ? best : null;
+  return best && best.sc > minScore - 0.1 ? best : null;
 }
