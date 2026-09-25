@@ -6,7 +6,7 @@ function fake(bpm, drops) {
   const vocals = new Float32Array(100).fill(0);
   for (const d of drops) vocals[d - 1] = 0.8;
   return {
-    bpm, beatInterval: 60 / bpm, firstBeat: 0.1, downbeat: 0,
+    bpm, beatInterval: 60 / bpm, firstBeat: 0.1, downbeat: 0, duration: 190,
     vocals, points: { lastBar: 99, drops, dropBar: drops[0], startBar: 0 },
   };
 }
@@ -44,11 +44,21 @@ test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesa
 });
 
 test('Easter Egg: andere Version -> Takt vor Drop, Hot Cue 8, Mindest-Takt, erzwungene Technik', () => {
-  assert.equal(planEasterEgg({ out: starships, inc: omt }).outBar, 79); // letzter Refrain vor einem Drop
+  assert.equal(planEasterEgg({ out: starships, inc: omt }).outBar, 55); // Refrain vor dem Drop um ~57 % des Songs, nicht der letzte
   const cued = planEasterEgg({ out: starships, inc: omt, outCues: { 7: 0.1 + 40 * 4 * (60 / 125) } });
   assert.equal(cued.outBar, 40);
   assert.equal(planEasterEgg({ out: starships, inc: omt, minBar: 90 }), null);
   assert.equal(planEasterEgg({ out: starships, inc: omt, type: 'blend' }), null);
+});
+
+test('Easter Egg: Lyrics-Version von Starships (3:49) und Radio Edit von One More Time (3:55)', () => {
+  const s = { ...starships, analysis: { ...starships.analysis, duration: 229.32, points: { ...starships.analysis.points, lastBar: 118 } } };
+  const o = { ...omt, analysis: { ...omt.analysis, duration: 235.48 } };
+  const plan = planEasterEgg({ out: s, inc: o });
+  const a = s.analysis;
+  const loop = plan.steps.find((x) => x.action === 'loop');
+  assert.equal((plan.outBar + loop.anchor) * 4, Math.round((129.91 - a.firstBeat) / a.beatInterval));
+  assert.equal(plan.inBar * 4, Math.round((62.88 - o.analysis.firstBeat) / o.analysis.beatInterval));
 });
 
 test('Wiedergabeliste: One More Time direkt hinter Starships', async () => {

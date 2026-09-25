@@ -1,8 +1,8 @@
 // Easter Eggs: bekannte DJ-Übergänge, die für ein bestimmtes Song-Paar fest eingebaut sind.
 //
 // Starships (Nicki Minaj) -> One More Time (Daft Punk): das "one more time" aus dem Refrain von
-// Starships (ca. 2:08) wird 7 Takte geloopt, dann geht es hart genau auf das erste "One more time"
-// von Daft Punk (ca. 0:31 – davor ist nur Intro).
+// Starships (ca. 2:10) wird 7 Takte geloopt, dann geht es hart genau auf das "One more time, we're
+// gonna celebrate" von Daft Punk (Radio Edit ca. 1:03 – davor ist Intro).
 // Liegt es daneben (andere Version/Edit): Hot Cue 8 auf Starships genau auf "one" von "one more
 // time" setzen, und/oder Hot Cue 8 auf One More Time auf den Einsatz des Gesangs.
 
@@ -11,13 +11,22 @@ import { barToSeconds, secondsToBeat, localBpm } from './planner.js';
 const EGG_LOOP_BARS = 7;
 const CUE_SLOT = 7; // Hot Cue 8
 
-// Zeitpunkte aus synchronisierten Lyrics (Album-/Single-Version). Starships 3:30: die Zeile beginnt
-// bei 0:50.2 / 2:07.1 / 2:53.2, das "one" folgt ~2 Schläge später. One More Time: Gesang ab 0:30.75.
-const STARSHIPS = { duration: [204, 217], ones: [128.0, 174.1, 51.1] };
-const ONE_MORE_TIME = { duration: [190, 335], vocal: 30.75 };
+// Bekannte Versionen (erkannt an der Länge in Sekunden). Starships: Zeit des "one" von "... let's do
+// this one more time" (liegt jeweils auf der Eins), bevorzugte Stelle zuerst (Refrain um 2:10).
+// One More Time: Einsatz "One more time, we're gonna celebrate" nach dem Intro.
+// Lyrics-Version (3:49) und Radio Edit (3:55) per Spracherkennung + Onset gemessen; Album-Versionen
+// aus synchronisierten Lyrics.
+const STARSHIPS = [
+  { duration: [226, 232], ones: [129.91, 175.99, 53.11] }, // "Starships (Lyrics)"
+  { duration: [204, 217], ones: [128.0, 174.1, 51.1] }, // Album/Single 3:30
+];
+const ONE_MORE_TIME = [
+  { duration: [233, 238], vocal: 62.88 }, // Radio Edit 3:55
+  { duration: [300, 330], vocal: 30.75 }, // Album 5:20
+];
+const version = (list, dur) => list.find((v) => dur >= v.duration[0] && dur <= v.duration[1]) || null;
 
 const norm = (t) => `${t?.title || ''} ${t?.name || ''} ${t?.artist || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
-const inRange = (x, [lo, hi]) => x >= lo && x <= hi;
 
 export function isStarshipsToOneMoreTime(out, inc) {
   const a = norm(out);
@@ -50,16 +59,18 @@ export function planEasterEgg(opts) {
   if (typeof cue === 'number') {
     source = 'Hot Cue 8';
     cands = [barOnBeat(a, cue)];
-  } else if (inRange(a.duration, STARSHIPS.duration)) {
+  } else if (version(STARSHIPS, a.duration)) {
     source = 'bekannte Stelle';
-    cands = STARSHIPS.ones.map((t) => barOnBeat(a, t));
+    cands = version(STARSHIPS, a.duration).ones.map((t) => barOnBeat(a, t));
   } else {
-    // andere Version: Takt vor einem Drop (Ende des Refrains), bevorzugt mit Gesang
+    // unbekannte Version: Takt vor einem Drop mit Gesang, der dem 2. Refrain (~57 % des Songs) am
+    // nächsten liegt – nicht der letzte, sonst landet der Übergang ganz am Ende
     source = 'geschätzt';
     const drops = (a.points.drops?.length ? a.points.drops : [a.points.dropBar]).filter((d) => d !== undefined && d !== null);
     const before = drops.map((d) => d - 1).filter((bar) => bar >= 0);
     const sung = before.filter((bar) => (a.vocals?.[bar] ?? 0) >= 0.3);
-    cands = (sung.length ? sung : before).reverse();
+    const target = secondsToBeat(a, a.duration * 0.57) / 4;
+    cands = (sung.length ? sung : before).sort((x, y) => Math.abs(x - target) - Math.abs(y - target));
   }
   const phrase = cands.find(fits);
   if (phrase === undefined) return null;
@@ -72,7 +83,7 @@ export function planEasterEgg(opts) {
   const inCue = opts.inCues?.[CUE_SLOT];
   let inBar;
   if (typeof inCue === 'number') inBar = barOnBeat(b, inCue);
-  else if (inRange(b.duration, ONE_MORE_TIME.duration)) inBar = barOnBeat(b, ONE_MORE_TIME.vocal);
+  else if (version(ONE_MORE_TIME, b.duration)) inBar = barOnBeat(b, version(ONE_MORE_TIME, b.duration).vocal);
   else inBar = b.points.vocalFirst ?? b.points.startBar ?? 0;
 
   const outBpm = (a.beats ? localBpm(a, outBar) : a.bpm) * outRate;
