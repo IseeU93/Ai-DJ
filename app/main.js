@@ -750,7 +750,7 @@ async function loadPlaylist(names) {
 // ------------------------------------------------------------------ Bibliothek-Fenster
 // Eigene Ordner-Ansicht: ändert nichts an der laufenden Musik, bis man etwas einreiht.
 
-const lib = { root: '', files: [], playlist: ALL_PLAYLISTS, tracks: [], loading: 0 };
+const lib = { root: '', files: [], selected: [], tracks: [], loading: 0 };
 
 function libPlaylistOf(path) {
   const rel = path.slice(lib.root.length).replace(/^[\\/]+/, '');
@@ -771,34 +771,57 @@ async function openLibrary(root) {
     $('#lib-status').textContent = `Fehler: ${err.message || err}`;
     return;
   }
-  renderLibFolders();
-  await showLibPlaylist(ALL_PLAYLISTS);
+  await showLibPlaylist(libNames());
 }
 
+/** Alle Unterordner der Bibliothek (+ "Ohne Unterordner"). */
+function libNames() {
+  const names = [...new Set(lib.files.map((f) => libPlaylistOf(f.path)))].filter((n) => n !== ROOT_PLAYLIST).sort((a, b) => a.localeCompare(b, 'de'));
+  if (lib.files.some((f) => libPlaylistOf(f.path) === ROOT_PLAYLIST)) names.push(ROOT_PLAYLIST);
+  return names;
+}
+
+/**
+ * Ordnerliste der Bibliothek: Häkchen = mehrere Ordner gleichzeitig anzeigen (an-/abwählen),
+ * Klick auf den Namen = nur diesen Ordner. "Alle" hakt alles an bzw. ab.
+ */
 function renderLibFolders() {
   const box = $('#lib-folders');
   const counts = new Map();
   for (const f of lib.files) counts.set(libPlaylistOf(f.path), (counts.get(libPlaylistOf(f.path)) || 0) + 1);
-  const names = [...counts.keys()].filter((n) => n !== ROOT_PLAYLIST).sort((a, b) => a.localeCompare(b, 'de'));
-  const entries = [[ALL_PLAYLISTS, 'Alle', lib.files.length], ...names.map((n) => [n, n, counts.get(n)])];
-  if (counts.has(ROOT_PLAYLIST)) entries.push([ROOT_PLAYLIST, 'Ohne Unterordner', counts.get(ROOT_PLAYLIST)]);
+  const names = libNames();
+  const allOn = names.length && names.every((n) => lib.selected.includes(n));
+  const entries = [[ALL_PLAYLISTS, 'Alle', lib.files.length], ...names.map((n) => [n, n === ROOT_PLAYLIST ? 'Ohne Unterordner' : n, counts.get(n)])];
   box.innerHTML = '';
   for (const [value, label, n] of entries) {
+    const on = value === ALL_PLAYLISTS ? allOn : lib.selected.includes(value);
     const el = document.createElement('div');
-    el.className = `lib-folder ${value === lib.playlist ? 'active' : ''}`;
-    el.textContent = label;
+    el.className = `lib-folder ${on ? 'active' : ''}`;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = on;
+    cb.title = 'An-/abwählen (mehrere Ordner gleichzeitig)';
+    cb.onclick = (e) => {
+      e.stopPropagation();
+      let next;
+      if (value === ALL_PLAYLISTS) next = cb.checked ? names : [];
+      else next = cb.checked ? [...lib.selected, value] : lib.selected.filter((x) => x !== value);
+      showLibPlaylist(next);
+    };
+    const span = document.createElement('span');
+    span.textContent = label;
     const small = document.createElement('small');
     small.textContent = n;
-    el.appendChild(small);
-    el.onclick = () => showLibPlaylist(value);
+    el.append(cb, span, small);
+    el.onclick = () => showLibPlaylist(value === ALL_PLAYLISTS ? names : [value]);
     box.appendChild(el);
   }
 }
 
-async function showLibPlaylist(name) {
-  lib.playlist = name;
+async function showLibPlaylist(names) {
+  lib.selected = names;
   renderLibFolders();
-  const files = name === ALL_PLAYLISTS ? lib.files : lib.files.filter((f) => libPlaylistOf(f.path) === name);
+  const files = lib.files.filter((f) => names.includes(libPlaylistOf(f.path)));
   const token = ++lib.loading;
   lib.tracks = [];
   renderLibTracks();
@@ -815,7 +838,7 @@ async function showLibPlaylist(name) {
   });
   if (token !== lib.loading) return;
   lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
-  $('#lib-status').textContent = `${lib.tracks.length} Tracks`;
+  $('#lib-status').textContent = names.length ? `${lib.tracks.length} Tracks aus ${names.length === libNames().length ? 'allen Ordnern' : names.length === 1 ? '1 Ordner' : `${names.length} Ordnern`}` : 'Links Ordner anhaken';
   renderLibTracks();
 }
 
