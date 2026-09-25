@@ -1273,7 +1273,9 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   // 2 Halbtönen unnatürlich (zu tief/Mickey-Mouse): bei Gesang höchstens 1 Halbton
   const vocalIn = b.vocals?.length ? Array.from(b.vocals).reduce((x, v) => x + v, 0) / b.vocals.length : 0;
   let ks = keySync(outKey, b.key.camelot, keylock && (b.key.confidence ?? 1) > 0.15 && (a.key.confidence ?? 1) > 0.15);
-  if (vocalIn >= 0.2 && Math.abs(ks.semis) > 1) ks = { semis: 0, dist: camelotDistance(outKey, b.key.camelot) };
+  // Stimmen klingen schon bei einem Halbton hörbar "falsch" – und die Verschiebung gilt für den
+  // ganzen Song. Key-Sync deshalb nur noch bei (fast) instrumentalen Tracks.
+  if (vocalIn >= 0.2 && ks.semis) ks = { semis: 0, dist: camelotDistance(outKey, b.key.camelot) };
   const keyDist = ks.dist;
   const forced = !pick && type !== 'auto' && type in TRANSITIONS;
   const ctx = {

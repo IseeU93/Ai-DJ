@@ -39,8 +39,8 @@ export class DeckCore {
     // Time-Stretch nach dem SoundTouch-Prinzip: lange Abschnitte (SEQ) werden 1:1 übernommen,
     // nur an den Nahtstellen wird kurz (OV) überblendet – an der Stelle mit der besten
     // Übereinstimmung (Suche ±SEEK). Klingt deutlich sauberer als dauerhaft überlappende Grains.
-    this.N = Math.round(sampleRate * 0.06); // Sequenzlänge
-    this.OV = Math.round(sampleRate * 0.01); // Überblendlänge
+    this.N = Math.round(sampleRate * 0.08); // Sequenzlänge (länger = weniger Nähte = natürlicher)
+    this.OV = Math.round(sampleRate * 0.012); // Überblendlänge
     this.S = Math.round(sampleRate * 0.005) & ~3; // Suchbereich ± (klein halten: sonst verrutschen Kicks gegen das Raster)
     const cap = this.N * 4;
     this.fifoL = new Float32Array(cap);
@@ -283,8 +283,16 @@ export class DeckCore {
     const nom = Math.round(this.nominal);
     let actual = nom;
     const hasPrev = this.prevActual !== null;
-    // natürliche Fortsetzung = kein Suchen nötig (Tempo 1, Tonhöhe 1) -> bitgenau transparent
-    if (hasPrev && (p !== 1 || this.prevActual + N - OV !== nom)) actual = this._search(nom, p);
+    if (hasPrev && p === 1 && Math.abs(rate - 1) < 1e-9) {
+      // Normales Tempo, keine Tonhöhenänderung: genau dort weiterlesen, wo die letzte Sequenz
+      // aufgehört hat – der Track läuft wieder 1:1, ohne Nahtsuche. Vorher wurde nach einer
+      // Tempo-Rampe endlos weiter gesucht und an jeder Naht um ein paar ms gesprungen ("Geflatter").
+      // Die Positionsbuchführung übernimmt den (höchstens wenige ms großen) Rest-Versatz.
+      actual = this.prevActual + N - OV;
+      this.nominal = actual;
+    } else if (hasPrev && (p !== 1 || this.prevActual + N - OV !== nom)) {
+      actual = this._search(nom, p);
+    }
 
     this._readRes(actual, N, p, this.tmpL, this.tmpR);
     const L = this.tmpL;

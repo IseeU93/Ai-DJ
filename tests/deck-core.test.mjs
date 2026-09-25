@@ -145,3 +145,31 @@ test('Key-Sync: +2 Halbtöne ändern Tonhöhe, nicht Tempo', () => {
   const f = zeroCrossFreq(L, SR, SR / 2, SR * 2);
   assert.ok(Math.abs(f - 1000 * 2 ** (2 / 12)) < 10, `freq ${f}`);
 });
+
+test('keylock: nach Tempo-Rampe zurück auf 1 wieder 1:1 transparent (kein "Geflatter")', () => {
+  // Musik-ähnliches Signal: Akkord + Kick-ähnliche Impulse, damit die Nahtsuche echte Arbeit hat
+  const n = SR * 6;
+  const src = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const beat = t % 0.5;
+    src[i] = 0.2 * Math.sin(2 * Math.PI * 220 * t) + 0.15 * Math.sin(2 * Math.PI * 331 * t) + 0.5 * Math.exp(-beat * 30) * Math.sin(2 * Math.PI * 60 * beat);
+  }
+  const core = new DeckCore(SR);
+  core.load(src, src);
+  core.scheduleRate(0, 1.04, 0);
+  core.scheduleRate(SR, 1, SR / 2); // wie nach einem Übergang: zurück aufs Originaltempo
+  core.schedulePlay(0, 0);
+  const { L } = render(core, SR * 4);
+  // im letzten Abschnitt (Tempo 1) muss der Track wieder unverändert laufen: gleicher Versatz überall
+  const from = SR * 3;
+  let best = null;
+  for (let d = -SR; d < SR; d++) {
+    let err = 0;
+    for (let i = from; i < from + 2000; i += 7) err += Math.abs(L[i] - src[i + d]);
+    if (!best || err < best.err) best = { d, err };
+  }
+  let maxErr = 0;
+  for (let i = from; i < SR * 4; i++) maxErr = Math.max(maxErr, Math.abs(L[i] - src[i + best.d]));
+  assert.ok(maxErr < 1e-4, `nach der Rampe nicht transparent: maxErr ${maxErr.toFixed(4)} (Versatz ${best.d})`);
+});
