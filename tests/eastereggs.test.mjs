@@ -30,7 +30,7 @@ test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesa
   // Loop beginnt auf dem Schlag bei ~2:08, genau dort, wo er im Song läuft (nahtlos)
   const loop = plan.steps.find((x) => x.action === 'loop');
   assert.equal(loop.at, loop.anchor);
-  assert.equal((plan.outBar + loop.anchor) * 4, Math.round((128.0 - a.firstBeat) / a.beatInterval));
+  assert.equal((plan.outBar + loop.anchor) * 4, Math.round((128.81 - a.firstBeat) / a.beatInterval));
   assert.equal(loop.bars, 0.5); // halber Takt: genau "one more time"
   const play = plan.steps.find((x) => x.action === 'play');
   assert.equal(play.at, loop.at + 7);
@@ -40,7 +40,7 @@ test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesa
   assert.ok(plan.beatmatch && Math.abs(plan.inRate - 125 / 122.7) < 1e-6);
   // schon über 2:08 hinaus -> die nächste Stelle (~2:54)
   const later = planEasterEgg({ out: s, inc: o, minBar: 70 });
-  assert.equal((later.outBar + later.steps.find((x) => x.action === 'loop').anchor) * 4, Math.round((174.1 - a.firstBeat) / a.beatInterval));
+  assert.equal((later.outBar + later.steps.find((x) => x.action === 'loop').anchor) * 4, Math.round((174.89 - a.firstBeat) / a.beatInterval));
 });
 
 test('Easter Egg: andere Version -> Takt vor Drop, Hot Cue 8, Mindest-Takt, erzwungene Technik', () => {
@@ -70,4 +70,14 @@ test('Wiedergabeliste: One More Time direkt hinter Starships', async () => {
   assert.deepEqual(pairEasterEggs(['o', 'a', 's', 'b'], tr, 1), ['o', 'a', 's', 'b']); // schon gelaufen
   assert.deepEqual(pairEasterEggs(['a', 's', 'o'], tr), ['a', 's', 'o']);
   assert.deepEqual(pairEasterEggs(['a', 'b'], tr), ['a', 'b']);
+});
+
+test('Doppeltes Starships: die Lyrics-Version (Hauptfassung fürs Easter Egg) bleibt', async () => {
+  const { dedupeTracks } = await import('../app/mix/dedupe.js');
+  const { versionPriority } = await import('../app/mix/eastereggs.js');
+  const silv = { id: 'Silvester 2024/Starships.mp3', artist: 'Nicki Minaj', title: 'Starships', analysis: { duration: 210.6 } };
+  const lyr = { id: 'Stimmung/Starships - Nicki Minaj (Lyrics).wav', artist: 'Starships', title: 'Nicki Minaj', analysis: { duration: 229.3 } };
+  const other = { id: 'x', artist: 'A', title: 'B', analysis: { duration: 200 } };
+  assert.deepEqual(dedupeTracks([silv, other, lyr], versionPriority).tracks.map((t) => t.id), [lyr.id, 'x']);
+  assert.deepEqual(dedupeTracks([lyr, silv], versionPriority).tracks.map((t) => t.id), [lyr.id]);
 });

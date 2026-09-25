@@ -16,10 +16,10 @@ const CUE_SLOT = 7; // Hot Cue 8
 // this one more time" (liegt jeweils auf der Eins), bevorzugte Stelle zuerst (Refrain um 2:10).
 // One More Time: Einsatz "One more time, we're gonna celebrate" nach dem Intro.
 // Starships Lyrics-Version (3:49), One More Time Radio Edit (3:55) und Album (5:20) per Spracherkennung +
-// Onset an echten Dateien gemessen; Starships Album/Single aus synchronisierten Lyrics.
+// Onset an echten Dateien gemessen (alle Fassungen).
 const STARSHIPS = [
   { duration: [226, 232], ones: [129.91, 175.99, 53.11] }, // "Starships (Lyrics)"
-  { duration: [204, 217], ones: [128.0, 174.1, 51.1] }, // Album/Single 3:30
+  { duration: [204, 217], ones: [128.81, 174.89, 52.01] }, // Album/Single 3:30 (gemessen an "Silvester 2024/Starships.mp3")
 ];
 const ONE_MORE_TIME = [
   { duration: [233, 238], vocal: 62.88 }, // Radio Edit 3:55
@@ -28,6 +28,20 @@ const ONE_MORE_TIME = [
 const version = (list, dur) => list.find((v) => dur >= v.duration[0] && dur <= v.duration[1]) || null;
 
 const norm = (t) => `${t?.title || ''} ${t?.name || ''} ${t?.artist || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+
+/**
+ * Welche Fassung eines Songs ist die Hauptfassung, wenn es ihn mehrfach gibt? Für die Easter-Egg-
+ * Songs die erste bekannte Fassung aus den Tabellen (Starships: die Lyrics-Version aus "Stimmung").
+ * Höher = bevorzugt, 0 = egal.
+ */
+export function versionPriority(t) {
+  const n = norm(t);
+  const d = t.analysis?.duration ?? 0;
+  const list = /\bstarships\b/.test(n) ? STARSHIPS : /\bone more time\b/.test(n) ? ONE_MORE_TIME : null;
+  if (!list) return 0;
+  const i = list.findIndex((v) => d >= v.duration[0] && d <= v.duration[1]);
+  return i < 0 ? 0 : list.length - i;
+}
 
 export function isStarshipsToOneMoreTime(out, inc) {
   const a = norm(out);

@@ -14,6 +14,7 @@ import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 import { createWebGenre } from './lib/webgenre.js';
 import { dedupeTracks } from './mix/dedupe.js';
+import { versionPriority } from './mix/eastereggs.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -812,7 +813,7 @@ async function loadPlaylist(names) {
     }
     webGenre.attach(found); // schon bekannte Online-Genres gleich fürs erste Sortieren
     // derselbe Song in mehreren gewählten Playlists: nur einmal in die Queue
-    const { tracks: unique, dropped } = dedupeTracks(found);
+    const { tracks: unique, dropped } = dedupeTracks(found, versionPriority);
     if (dropped.length) toast(`${dropped.length} doppelte Song${dropped.length > 1 ? 's' : ''} (in mehreren Playlists) nur einmal eingereiht`);
     conductor.setLibrary(unique, resolveGenre);
     webGenre.lookup(conductor.queue.map((id) => conductor.track(id)).filter(Boolean));
@@ -1077,7 +1078,7 @@ async function boot() {
   $('#lib-search').oninput = renderLibTracks;
   $('#lib-take').onclick = () => {
     if (!lib.tracks.length) return;
-    conductor.switchPlaylist(dedupeTracks(lib.tracks).tracks);
+    conductor.switchPlaylist(dedupeTracks(lib.tracks, versionPriority).tracks);
     toast('Nach dem aktuellen Track geht es mit dieser Playlist weiter');
   };
   document.addEventListener('keydown', (e) => {

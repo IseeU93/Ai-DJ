@@ -7,7 +7,7 @@ import { readFile } from '../lib/tauri.js';
 import { detectGenre } from './genre.js';
 import { planTrick } from './freestyle.js';
 import { planTeaser } from './teaser.js';
-import { pairEasterEggs, planEasterEgg } from './eastereggs.js';
+import { pairEasterEggs, planEasterEgg, versionPriority } from './eastereggs.js';
 import { parseWish, pickWish } from './wish.js';
 import { looseKey } from './dedupe.js';
 import { KILL } from './planner.js';
@@ -142,7 +142,8 @@ export class Conductor extends EventTarget {
     const inQueue = new Set(this.queue);
     const all = [...this.tracks.values()]
       .filter((t) => t.analysis && !locked.has(t.id) && !this.played.has(t.id) && !lockedSongs.has(looseKey(t)))
-      .sort((x, y) => inQueue.has(y.id) - inQueue.has(x.id));
+      // Hauptfassung zuerst (z. B. Starships für das Easter Egg), sonst die aus der Queue
+      .sort((x, y) => versionPriority(y) - versionPriority(x) || inQueue.has(y.id) - inQueue.has(x.id));
     const seenSongs = new Set();
     const candidates = all.filter((t) => {
       const k = looseKey(t);

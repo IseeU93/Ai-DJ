@@ -9,18 +9,31 @@ const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u
  * (auch andere Fassung wie Radio Edit/Lyrics-Video/ohne Tags) fallen raus. Remixe mit eigenem Namen
  * ("… - Noiseflow Remix") zählen als eigener Song.
  */
-export function dedupeTracks(list) {
-  const seen = new Set();
+export function dedupeTracks(list, priority = () => 0) {
+  // je Song die bevorzugte Fassung (höchste Priorität, sonst die erste) – an der Stelle der ersten
+  const best = new Map();
+  for (const t of list) {
+    const k = looseKey(t);
+    const cur = best.get(k);
+    if (!cur || priority(t) > priority(cur)) best.set(k, t);
+  }
+  const done = new Set();
   const tracks = [];
   const dropped = [];
   for (const t of list) {
     const k = looseKey(t);
-    if (k && seen.has(k)) {
-      dropped.push(t);
+    if (!k) {
+      tracks.push(t);
       continue;
     }
-    seen.add(k);
-    tracks.push(t);
+    if (done.has(k)) {
+      if (best.get(k) !== t) dropped.push(t);
+      continue;
+    }
+    done.add(k);
+    const keep = best.get(k);
+    tracks.push(keep);
+    if (keep !== t) dropped.push(t);
   }
   return { tracks, dropped };
 }
