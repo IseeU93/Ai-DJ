@@ -7,8 +7,24 @@
 // Alle Regler sind "logische" Parameter (EQ in dB, Filter -1..1, Vocal 0..1, ...), die auf
 // AudioParams abgebildet und sample-genau automatisiert werden können.
 
-export const PARAMS = ['fader', 'low', 'mid', 'high', 'filter', 'vocal', 'echo'];
-export const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0 };
+export const PARAMS = ['fader', 'low', 'mid', 'high', 'filter', 'vocal', 'echo', 'reverb', 'flanger'];
+export const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0, reverb: 0, flanger: 0 };
+
+/** Künstlicher Hallraum (Impulsantwort aus abklingendem Rauschen, links/rechts verschieden). */
+function makeImpulse(ctx, sec = 2.8, decay = 3.2) {
+  const n = Math.round(ctx.sampleRate * sec);
+  const ir = ctx.createBuffer(2, n, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i / n;
+      lp += 0.35 * (Math.random() * 2 - 1 - lp); // etwas dunkler als weißes Rauschen
+      d[i] = lp * (1 - x) ** decay * (i < ctx.sampleRate * 0.012 ? i / (ctx.sampleRate * 0.012) : 1);
+    }
+  }
+  return ir;
+}
 
 const LP_OPEN = 22000;
 const LP_MIN = 180;
@@ -49,8 +65,62 @@ export class Engine {
     this.analyser.fftSize = 1024;
     this.bus.connect(this.limiter).connect(this.master).connect(this.analyser).connect(ctx.destination);
 
+    this.impulse = makeImpulse(ctx);
+    // Rauschen für Riser/Downlifter (4 s, wird geloopt)
+    const nn = this.sr * 4;
+    this.noise = ctx.createBuffer(2, nn, this.sr);
+    for (let c = 0; c < 2; c++) {
+      const d = this.noise.getChannelData(c);
+      for (let i = 0; i < nn; i++) d[i] = Math.random() * 2 - 1;
+    }
+    this.fx = []; // geplante Riser/Downlifter (zum Abbrechen)
+
     this.decks = [new Deck(this, 0), new Deck(this, 1)];
     this.setCrossfader(0.5);
+  }
+
+  /**
+   * Noise-Riser (up) bzw. Downlifter (down): gefiltertes Rauschen, das von t0 bis t1 hochsteigt
+   * (Build-up vor dem Drop) bzw. nach dem Drop abfällt und verklingt.
+   */
+  sweep(t0, t1, { dir = 'up', level = 0.12 } = {}) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 1.4;
+    const g = ctx.createGain();
+    const up = dir === 'up';
+    bp.frequency.setValueAtTime(up ? 350 : 9000, t0);
+    bp.frequency.exponentialRampToValueAtTime(up ? 9000 : 300, t1);
+    g.gain.setValueAtTime(0.0001, t0);
+    if (up) {
+      g.gain.exponentialRampToValueAtTime(level, t1 - 0.02);
+      g.gain.linearRampToValueAtTime(0, t1);
+    } else {
+      g.gain.linearRampToValueAtTime(level, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t1);
+    }
+    src.connect(bp).connect(g).connect(this.bus);
+    src.start(t0);
+    src.stop(t1 + 0.05);
+    const item = { src, t0 };
+    this.fx.push(item);
+    src.onended = () => (this.fx = this.fx.filter((x) => x !== item));
+  }
+
+  /** Geplante Riser/Downlifter verwerfen (Übergang abgebrochen/neu geplant). */
+  cancelFx() {
+    for (const { src } of this.fx) {
+      try {
+        src.stop();
+      } catch {
+        /* schon beendet */
+      }
+    }
+    this.fx = [];
   }
 
   get now() {
@@ -179,7 +249,21 @@ export class Deck {
     this.meter.fftSize = 512;
 
     this.node.connect(this.trim).connect(this.low).connect(this.mid).connect(this.high).connect(split);
-    merge.connect(this.hp).connect(this.lp).connect(this.fader).connect(this.xfade).connect(engine.bus);
+    // Gate (rhythmisches Zerhacken, "Stutter") und Flanger (Jet-Sweep) zwischen Filter und Fader
+    this.gate = ctx.createGain();
+    merge.connect(this.hp).connect(this.lp).connect(this.gate).connect(this.fader).connect(this.xfade).connect(engine.bus);
+    this.flDelay = ctx.createDelay(0.05);
+    this.flDelay.delayTime.value = 0.004;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.22;
+    const lfoDepth = g(0.0032);
+    lfo.connect(lfoDepth).connect(this.flDelay.delayTime);
+    lfo.start();
+    const flFb = g(0.6);
+    this.flWet = g(0);
+    this.gate.connect(this.flDelay);
+    this.flDelay.connect(flFb).connect(this.flDelay);
+    this.flDelay.connect(this.flWet).connect(this.fader);
     this.fader.connect(this.meter);
 
     // Echo (pre-fader Send, damit es nach dem Ausblenden weiterklingt)
@@ -198,6 +282,15 @@ export class Deck {
     eLp.connect(fb).connect(this.delay);
     eLp.connect(g(0.5)).connect(engine.bus);
 
+    // Hall (pre-fader Send wie das Echo: die Hallfahne klingt nach dem Ausblenden weiter)
+    this.reverbSend = g(0);
+    const conv = ctx.createConvolver();
+    conv.buffer = engine.impulse;
+    const rHp = ctx.createBiquadFilter();
+    rHp.type = 'highpass';
+    rHp.frequency.value = 220;
+    this.lp.connect(this.reverbSend).connect(rHp).connect(conv).connect(g(0.8)).connect(engine.bus);
+
     this.params = {
       fader: [[this.fader.gain, (v) => v]],
       low: [[this.low.gain, (v) => v]],
@@ -205,6 +298,8 @@ export class Deck {
       high: [[this.high.gain, (v) => v]],
       vocal: [[this.vocalA.gain, (v) => -20 * v], [this.vocalB.gain, (v) => -14 * v]],
       echo: [[this.echoSend.gain, (v) => v]],
+      reverb: [[this.reverbSend.gain, (v) => v]],
+      flanger: [[this.flWet.gain, (v) => 0.8 * v]],
     };
   }
 
@@ -315,7 +410,7 @@ export class Deck {
   get(name) {
     if (name === 'filter') return filterValue(this.lp.frequency.value, this.hp.frequency.value);
     const [param] = this.params[name][0];
-    return name === 'vocal' ? -param.value / 20 : param.value;
+    return name === 'vocal' ? -param.value / 20 : name === 'flanger' ? param.value / 0.8 : param.value;
   }
 
   values() {
@@ -391,8 +486,34 @@ export class Deck {
     to(t1, v1);
   }
 
+  /**
+   * Stutter-Gate: von t0 bis t1 im Raster step (Sekunden) an/aus, depth = wie tief es zumacht
+   * (1 = ganz still). duty = Anteil "an" je Schritt.
+   */
+  gateAt(t0, t1, step, { depth = 1, duty = 0.5 } = {}) {
+    const g = this.gate.gain;
+    const low = Math.max(0, 1 - depth);
+    const edge = Math.min(0.004, step * 0.1);
+    for (let t = t0; t < t1 - 1e-4; t += step) {
+      g.setValueAtTime(1, t);
+      g.setValueAtTime(1, t + step * duty);
+      g.linearRampToValueAtTime(low, t + step * duty + edge);
+      g.setValueAtTime(low, t + step - edge);
+      g.linearRampToValueAtTime(1, t + step);
+    }
+    g.setValueAtTime(1, t1);
+  }
+
+  resetGate(t = this.engine.now) {
+    const g = this.gate.gain;
+    if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
+    else g.cancelScheduledValues(t);
+    g.setTargetAtTime(1, t, 0.005);
+  }
+
   resetParams() {
     const t = this.engine.now;
+    this.resetGate(t);
     for (const name of PARAMS) {
       this.cancelFrom(name, t);
       this.ramp(name, t, NEUTRAL[name], t, NEUTRAL[name]);

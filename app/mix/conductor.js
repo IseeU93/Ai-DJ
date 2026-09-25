@@ -520,6 +520,10 @@ export class Conductor extends EventTarget {
         md.segment(md.virtualAt(t), barToSeconds(a, trick.bar + s.anchor) * sr, s.bars * 4 * a.beatInterval * sr);
       } else if (s.action === 'unloop') {
         md.segment(md.virtualAt(t), barToSeconds(a, trick.bar + s.at) * sr, 0);
+      } else if (s.action === 'gate') {
+        md.gateAt(t, t + s.bars * barSec, barSec / s.div, { depth: s.depth ?? 1 });
+      } else if (s.action === 'riser') {
+        this.engine.sweep(t, t + s.bars * barSec, { dir: 'up', level: s.level ?? 0.1 });
       }
     }
     this.lastTrick = trick.kind;
@@ -680,10 +684,24 @@ export class Conductor extends EventTarget {
         }
         case 'rate': {
           const dur = s.dur * plan.barSec;
+          if (s.deck === 'out') {
+            // Vinyl-Stop: Tempo des alten Tracks auf fast 0 bremsen (relativ zu seinem Tempo)
+            out.rateAt(t, s.to * plan.outRate, dur);
+            plan.braked = true;
+            break;
+          }
           inn.rateAt(t, s.to, dur);
           plan.rampEnd = t + dur;
           break;
         }
+        case 'gate':
+          // Stutter-Gate im Takt: div Schritte pro Takt
+          deck.gateAt(t, T(s.at + s.bars), plan.barSec / s.div, { depth: s.depth ?? 1, duty: s.duty ?? 0.5 });
+          break;
+        case 'riser':
+        case 'downlifter':
+          this.engine.sweep(t, T(s.at + s.bars), { dir: s.action === 'riser' ? 'up' : 'down', level: s.level ?? 0.12 });
+          break;
       }
     }
     plan.committed = true;
@@ -707,11 +725,15 @@ export class Conductor extends EventTarget {
     this.lastPlan = p;
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));
     this.history.push(p.type);
-    this.flavorHistory = [...(this.flavorHistory || []), ...(p.flavors ? [`in:${p.flavors.entry}`, `out:${p.flavors.exit}`] : [])].slice(-4);
+    this.flavorHistory = [
+      ...(this.flavorHistory || []),
+      ...(p.flavors ? [`in:${p.flavors.entry}`, `out:${p.flavors.exit}`, ...(p.flavors.extras || []).map((k) => `x:${k}`)] : []),
+    ].slice(-8);
     this.rampUntil = p.rampEnd || 0;
     this.rampFrozen = false;
     this.decks[p.outDeck].resetParams();
     this.decks[p.outDeck].setNow('fader', 0);
+    if (p.braked) this.decks[p.outDeck].rateAt(this.engine.now + 0.05, p.outRate, 0);
     this.plan = null;
     this.forceSoon = false;
     this.soonWindow = false;
@@ -740,6 +762,10 @@ export class Conductor extends EventTarget {
       inn.cancel({ transport: true, ratesAfter: now });
       inn.stopAt(now);
       out.cancel({ transport: true, ratesAfter: now, segmentsAfter: out.virtualAt(now) + 4096 });
+      if (p.braked) out.rateAt(now, p.outRate, 0);
+      out.resetGate(now);
+      inn.resetGate(now);
+      this.engine.cancelFx();
       this.exitLoop(p.outDeck);
     }
     this.emit('plan');

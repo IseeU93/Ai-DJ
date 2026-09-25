@@ -650,3 +650,31 @@ test('Übergangs-Bewertung gilt vor allem für die bewerteten Songs', () => {
   const other = planTransition({ out: { ...out, id: 'c' }, inc: { ...inc, id: 'd' }, bias: l.bias, tune: l.tune, trackTune: l.trackTune });
   assert.equal(other.type, base.type, `andere Songs bekommen jetzt ${other.type}`);
 });
+
+test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der Bausteine', async () => {
+  const out = track('a', 128);
+  const inc = track('b', 126);
+  const plan = planTransition({ out, inc, type: 'build' });
+  assert.equal(plan.type, 'build');
+  assert.ok(plan.steps.some((s) => s.action === 'riser' && s.at < 0), 'Riser fehlt');
+  assert.ok(plan.steps.some((s) => s.action === 'gate' && s.deck === 'out'), 'Gate fehlt');
+  assert.ok(plan.steps.some((s) => s.param === 'reverb' && s.deck === 'out'), 'Hall fehlt');
+  assert.ok(plan.steps.some((s) => s.action === 'play' && s.at === 0));
+  // Bausteine werden frei kombiniert: über viele Paare mehrere Zusatz-Effekte, nie zwei Flanger
+  const seen = new Set();
+  let multi = 0;
+  for (let i = 0; i < 40; i++) {
+    const p = planTransition({ out: { ...out, id: `o${i}` }, inc: { ...inc, id: `i${i}` } });
+    if (!p.flavors) continue;
+    p.flavors.extras.forEach((k) => seen.add(k));
+    if (p.flavors.extras.length >= 2) multi++;
+    assert.ok(!(p.flavors.extras.includes('flangerIn') && p.flavors.extras.includes('flangerOut')));
+    assert.ok(p.flavors.extras.length <= 3);
+    assert.ok(!p.steps.some((s) => s.deck === 'out' && s.action === 'rate'), 'kein Vinyl-Stop');
+  }
+  assert.ok(seen.size >= 4, `nur ${[...seen]}`);
+  assert.ok(multi >= 3, `nur ${multi} Kombinationen`);
+  const { TRICKS, planTrick } = await import('../app/mix/freestyle.js');
+  for (const k of ['reverb', 'flanger', 'stutter', 'riser']) assert.ok(TRICKS[k]);
+  assert.ok(planTrick(out.analysis, 0, 0.5) !== undefined);
+});
