@@ -69,7 +69,9 @@ function parseVorbis(bytes) {
 }
 
 export function fromFilename(name) {
-  const base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/^\d{1,3}[\s.\-_]+/, '');
+  const base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
+    .replace(/^[\w-]+\.(com|net|org|to|cc|io|me)\s*[-–]\s*/i, '') // Download-Seite vorne dran ("xyz.com - ")
+    .replace(/^\d{1,3}[\s.\-_]+/, '');
   const m = /^(.+?)\s+[-–]\s+(.+)$/.exec(base);
   return m ? { artist: m[1].trim(), title: m[2].trim() } : { artist: '', title: base.trim() };
 }

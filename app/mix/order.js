@@ -81,7 +81,10 @@ export function transitionCost(a, b, w = null) {
   const introVocal = B.points?.vocalFirst !== null && B.points?.vocalFirst !== undefined
     && B.points.vocalFirst < (B.points?.dropBar ?? 0);
   const vocalCost = introVocal && tailClean < 8 ? 0.2 : 0;
-  const genreCost = genreDistance(a.genre, b.genre);
+  // Gleiche Richtung am Stück spielen: jeder Wechsel kostet, weite Sprünge mehr; innerhalb einer
+  // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
+  const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
+    + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
   return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.3 * (w?.energy ?? 1) * energy + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
 }
 
@@ -165,7 +168,7 @@ function totalCost(order, fixedPrefix, costCache, arc = ARC_WEIGHT) {
     if (ax && y && norm(y.artist) === ax) c += 0.6;
     if (ax && z && norm(z.artist) === ax) c += 0.2;
     // Genre-Pingpong (Pop -> Hardstyle -> Pop): lieber Blöcke spielen
-    if (x.genre && y && z && y.genre !== x.genre && z.genre === x.genre) c += 0.3;
+    if (x.genre && y && z && y.genre !== x.genre && z.genre === x.genre) c += 0.5;
   }
   return c;
 }

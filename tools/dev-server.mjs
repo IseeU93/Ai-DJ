@@ -20,6 +20,7 @@ window.__TAURI__ = { core: { invoke: async (cmd, args) => {
   if (cmd === 'companion_push') return fetch('/__companion/push', { method: 'POST', body: args.state });
   if (cmd === 'companion_event') return fetch('/__companion/event', { method: 'POST', body: args.event });
   if (cmd === 'companion_info') return (await fetch('/__companion/info')).json();
+  if (cmd === 'web_get') { const r = await fetch('/__web?u=' + encodeURIComponent(args.url)); if (!r.ok) throw new Error(await r.text()); return r.text(); }
   throw new Error('unbekannt: ' + cmd);
 } }, event: { listen: async (name, cb) => {
   if (name !== 'companion-cmd') return () => {};
@@ -103,6 +104,14 @@ createServer(async (req, res) => {
     if (url.pathname === '/__companion/cmds') {
       if (!comp.cmds.length) await new Promise((ok) => { comp.cmdWaiters.push(ok); setTimeout(ok, 25000); });
       return json(res, 200, comp.cmds.splice(0));
+    }
+    if (url.pathname === '/__web') {
+      // wie web_get in main.rs: nur die Musik-Datenbanken
+      const u = url.searchParams.get('u');
+      if (!['https://itunes.apple.com/', 'https://musicbrainz.org/ws/2/'].some((h) => u.startsWith(h))) return json(res, 403, 'Adresse nicht erlaubt');
+      const r = await fetch(u, { headers: { 'user-agent': 'Automix/0.2 ( https://github.com/IseeU93/Ai-DJ )' } });
+      res.writeHead(r.status, { 'content-type': 'application/json' });
+      return res.end(await r.text());
     }
     if (url.pathname === '/__file') {
       res.writeHead(200, { 'content-type': 'application/octet-stream' });

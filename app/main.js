@@ -12,6 +12,7 @@ import { GENRES } from './mix/genre.js';
 import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
 import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
+import { createWebGenre } from './lib/webgenre.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const COLORS = ['#d6a03c', '#5b9fc6'];
@@ -499,10 +500,13 @@ function renderQueue() {
     drawStructure($('.struct', row), a);
     const gsel = document.createElement('select');
     gsel.className = 'sel';
-    gsel.innerHTML = `<option value="auto">Auto · ${GENRES[t.genreAuto] || '?'}</option>` +
+    gsel.innerHTML = `<option value="auto">Auto · ${GENRES[t.genreWeb || t.genreAuto] || '?'}${t.style ? ` (${t.style})` : ''}</option>` +
       Object.entries(GENRES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
     gsel.value = genreOverrides()[t.path] || 'auto';
-    gsel.title = 'Musikrichtung dieses Tracks (bestimmt, wie gemixt wird)';
+    gsel.title = 'Musikrichtung dieses Tracks (bestimmt, wie gemixt wird)' + (t.webInfo
+      ? `
+Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.name)].filter(Boolean).join(', ')} · Audio: ${GENRES[t.genreAuto]}`
+      : '');
     gsel.onchange = () => {
       setGenreOverride(t.path, gsel.value === 'auto' ? null : gsel.value);
       conductor.applyGenres(resolveGenre);
@@ -740,7 +744,9 @@ async function loadPlaylist(names) {
     for (const d of engine.decks) {
       if (d.track && d.status.playing && !found.some((t) => t.id === d.track.id)) found.unshift(d.track);
     }
+    webGenre.attach(found); // schon bekannte Online-Genres gleich fürs erste Sortieren
     conductor.setLibrary(found, resolveGenre);
+    webGenre.lookup(conductor.queue.map((id) => conductor.track(id)).filter(Boolean));
     if (conductor.autopilot && !engine.decks[conductor.master].status.playing) conductor.start();
   } catch (err) {
     toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
@@ -755,6 +761,7 @@ async function loadPlaylist(names) {
 // Eigene Ordner-Ansicht: ändert nichts an der laufenden Musik, bis man etwas einreiht.
 
 const lib = { root: '', files: [], selected: [], tracks: [], loading: 0 };
+let webGenre = null;
 
 function libPlaylistOf(path) {
   const rel = path.slice(lib.root.length).replace(/^[\\/]+/, '');
@@ -835,13 +842,16 @@ async function showLibPlaylist(names) {
     onProgress: (d, n) => {
       if (token !== lib.loading) return;
       $('#lib-status').textContent = d < n ? `Analysiere ${d}/${n} … (gründlich: Beatgrid, Struktur, Tonart, Gesang, Richtung)` : '';
+      webGenre.attach(found);
       lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
       renderLibTracks();
     },
     onError: (f, err) => console.error('Analyse fehlgeschlagen:', f.path, err),
   });
   if (token !== lib.loading) return;
+  webGenre.attach(found);
   lib.tracks = conductor.addTracks(found).sort((x, y) => x.title.localeCompare(y.title, 'de'));
+  webGenre.lookup(lib.tracks);
   $('#lib-status').textContent = names.length ? `${lib.tracks.length} Tracks aus ${names.length === libNames().length ? 'allen Ordnern' : names.length === 1 ? '1 Ordner' : `${names.length} Ordnern`}` : 'Links Ordner anhaken';
   renderLibTracks();
 }
@@ -910,6 +920,7 @@ function renderLibTracks() {
         $('.a', row).textContent = 'Analysiere …';
         const found = [];
         await analysis.analyzeAll([f], { onTrack: (t) => found.push(t), onProgress: () => {}, onError: (_, err) => console.error(err) });
+        webGenre.attach(found);
         const [t] = conductor.addTracks(found);
         if (!t) {
           $('.a', row).textContent = 'Analyse fehlgeschlagen';
@@ -931,6 +942,16 @@ function renderLibTracks() {
 async function boot() {
   await engine.init();
   conductor = new Conductor(engine);
+  // Genre online nachschlagen: neue Ergebnisse -> Mix-Richtungen aktualisieren; ist die Runde
+  // durch, sortiert der Autopilot die Queue einmal neu (gleiche Richtungen am Stück)
+  webGenre = createWebGenre({
+    onUpdate: (tracks, final) => {
+      if (!tracks.length) return;
+      conductor.applyGenres(resolveGenre);
+      if (final && conductor.autopilot) conductor.reorderAI();
+      if (final) toast(`Genre online ergänzt: ${tracks.length} Song${tracks.length > 1 ? 's' : ''}`);
+    },
+  });
   window.automix = { engine, conductor }; // für Debugging in den DevTools
   buildDeck(0);
   buildDeck(1);

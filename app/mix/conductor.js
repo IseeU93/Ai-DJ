@@ -78,7 +78,7 @@ export class Conductor extends EventTarget {
     for (const t of this.tracks.values()) {
       t.genreAuto = detectGenre(t.analysis);
       t.genreManual = resolve?.(t) || null;
-      t.genre = t.genreManual || t.genreAuto;
+      t.genre = t.genreManual || t.genreWeb || t.genreAuto;
     }
     this.invalidatePlan();
     this.emit('queue');
@@ -90,7 +90,7 @@ export class Conductor extends EventTarget {
     for (const t of list) {
       t.genreAuto = detectGenre(t.analysis);
       t.genreManual = this.resolveGenre?.(t) || null;
-      t.genre = t.genreManual || t.genreAuto;
+      t.genre = t.genreManual || t.genreWeb || t.genreAuto;
     }
     assignEnergy(list);
     const playing = this.queue.slice(0, this.pos + 1).filter((id) => this.tracks.has(id));
@@ -206,7 +206,7 @@ export class Conductor extends EventTarget {
       const known = this.tracks.get(t.id);
       known.genreAuto = detectGenre(known.analysis);
       known.genreManual = this.resolveGenre?.(known) || null;
-      known.genre = known.genreManual || known.genreAuto;
+      known.genre = known.genreManual || known.genreWeb || known.genreAuto;
     }
     if (added) assignEnergy([...this.tracks.values()]);
     return list.map((t) => this.tracks.get(t.id));

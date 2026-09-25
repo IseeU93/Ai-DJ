@@ -121,6 +121,30 @@ fn companion_event(event: String, comp: tauri::State<'_, Arc<companion::Companio
 }
 
 /// Adresse, PIN und ob gerade ein Handy verbunden ist (für die Anzeige im Mixer).
+/// Online-Nachschlagen (Genre): nur lesende GET-Anfragen an die Musik-Datenbanken, nichts anderes.
+const WEB_HOSTS: &[&str] = &["https://itunes.apple.com/", "https://musicbrainz.org/ws/2/"];
+
+#[tauri::command]
+async fn web_get(url: String) -> Result<String, String> {
+    if !WEB_HOSTS.iter().any(|h| url.starts_with(h)) {
+        return Err("Adresse nicht erlaubt".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(8))
+            .user_agent("Automix/0.2 ( https://github.com/IseeU93/Ai-DJ )")
+            .build();
+        agent
+            .get(&url)
+            .call()
+            .map_err(|e| e.to_string())?
+            .into_string()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn companion_info(comp: tauri::State<'_, Arc<companion::Companion>>) -> companion::CompanionInfo {
     comp.info()
@@ -140,7 +164,8 @@ fn main() {
             show_laser_window,
             companion_push,
             companion_event,
-            companion_info
+            companion_info,
+            web_get
         ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der App");

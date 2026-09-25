@@ -678,3 +678,19 @@ test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der B
   for (const k of ['reverb', 'flanger', 'stutter', 'riser']) assert.ok(TRICKS[k]);
   assert.ok(planTrick(out.analysis, 0, 0.5) !== undefined);
 });
+
+test('KI-Reihenfolge: gleiche Richtung und gleicher Stil eher am Stück', () => {
+  const keys = ['8A', '9A', '8B', '7A', '10A', '9B'];
+  const mk = (id, genre, style, i) => ({
+    id, genre, style, artist: `Künstler ${id}`, energy: 0.5,
+    analysis: { bpm: 124 + (i % 3), key: { camelot: keys[i % keys.length] }, points: { dropBar: 16, startBar: 0, lastBar: 90, vocalLast: 80, vocalFirst: 20 } },
+  });
+  const tracks = [];
+  for (let i = 0; i < 12; i++) tracks.push(mk(`t${i}`, i % 2 ? 'pop' : 'edm', i % 2 ? (i % 4 === 1 ? 'Schlager' : 'Pop') : 'House', i));
+  for (const seed of [0, 7, 99]) {
+    const order = buildSetOrder(tracks, [], seed);
+    let changes = 0;
+    for (let i = 1; i < order.length; i++) if (order[i].genre !== order[i - 1].genre) changes++;
+    assert.ok(changes <= 2, `Seed ${seed}: ${changes} Richtungswechsel: ${order.map((t) => t.genre).join(' ')}`);
+  }
+});
