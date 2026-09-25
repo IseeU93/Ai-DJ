@@ -418,3 +418,20 @@ select.sel:disabled { opacity: 0.5; }
 .lz-rate { display: flex; align-items: center; gap: 4px; }
 .lz-rate .btn.small { height: 24px; padding: 0 6px; }
 .lz-reasons { display: flex; gap: 4px; }
+
+/* ------------------------------------------------------------ Playlist-Auswahl (mehrere) */
+.plpick { position: relative; }
+.plpick-btn { min-width: 150px; text-align: left; cursor: pointer; }
+.plpick-menu {
+  position: absolute; top: 32px; left: 0; z-index: 40; width: 280px; max-height: 60vh;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 4px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.plpick-head { display: flex; gap: 14px; font-size: 12px; }
+.plpick-head a { color: var(--muted); }
+.plpick-list { overflow-y: auto; display: flex; flex-direction: column; }
+.plpick-item { display: flex; align-items: center; gap: 8px; padding: 5px 2px; cursor: pointer; }
+.plpick-item:hover { background: var(--panel-2); }
+.plpick-item span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plpick-item small { color: var(--faint); font-family: var(--mono); }
+.plpick-item input { accent-color: var(--a); }

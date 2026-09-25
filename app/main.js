@@ -602,13 +602,13 @@ function renderRemoved() {
 
 // ------------------------------------------------------------------ Ordner laden
 
-let currentPlaylist = null;
-const playlistKey = () => `${folderRoot}|${currentPlaylist}`;
+let currentPlaylists = []; // gewählte Unterordner (mehrere möglich)
+const playlistKey = (name) => `${folderRoot}|${name}`;
 
-/** Track-Override > Playlist-Override > automatisch */
+/** Track-Override > Override seiner Playlist (Unterordner) > Override für "Alle" > automatisch */
 function resolveGenre(t) {
   const all = genreOverrides();
-  return all[t.path] || all[playlistKey()] || null;
+  return all[t.path] || all[playlistKey(playlistOf(t.path))] || all[playlistKey(ALL_PLAYLISTS)] || null;
 }
 
 // Uptempo gesetzt (Track oder ganze Playlist) heißt: das Tempo liegt sicher im Uptempo-Bereich.
@@ -642,28 +642,42 @@ function playlistOf(path) {
   return parts.length > 1 ? parts[0] : ROOT_PLAYLIST;
 }
 
-function renderPlaylists(selected) {
-  const sel = $('#playlist');
+/** Alle Playlists (Unterordner) des Oberordners mit Anzahl Tracks. */
+function playlistCounts() {
   const counts = new Map();
   for (const f of folderFiles) counts.set(playlistOf(f.path), (counts.get(playlistOf(f.path)) || 0) + 1);
   const names = [...counts.keys()].filter((n) => n !== ROOT_PLAYLIST).sort((a, b) => a.localeCompare(b, 'de'));
-  sel.innerHTML = '';
-  const add = (value, label) => {
-    const o = document.createElement('option');
-    o.value = value;
-    o.textContent = label;
-    sel.appendChild(o);
-  };
-  add(ALL_PLAYLISTS, `Alle (${folderFiles.length})`);
-  for (const n of names) add(n, `${n} (${counts.get(n)})`);
-  if (counts.has(ROOT_PLAYLIST)) add(ROOT_PLAYLIST, `Ohne Unterordner (${counts.get(ROOT_PLAYLIST)})`);
-  sel.hidden = names.length === 0;
-  sel.value = [...sel.options].some((o) => o.value === selected) ? selected : ALL_PLAYLISTS;
-  return sel.value;
+  if (counts.has(ROOT_PLAYLIST)) names.push(ROOT_PLAYLIST);
+  return { names, counts };
+}
+
+/** Gespeicherte Auswahl (früher ein einzelner Name, jetzt eine Liste) auf vorhandene Playlists abbilden. */
+function normalizeSelection(saved) {
+  const { names } = playlistCounts();
+  let list = Array.isArray(saved) ? saved : saved && saved !== ALL_PLAYLISTS ? [saved] : names;
+  list = list.filter((n) => names.includes(n));
+  return list.length ? list : names;
+}
+
+const playlistLabel = (n) => (n === ROOT_PLAYLIST ? 'Ohne Unterordner' : n);
+
+/** Checkbox-Liste der Playlists aufbauen; `selected` sind die angehakten. */
+function renderPlaylists(selected) {
+  const { names, counts } = playlistCounts();
+  $('#playlist').hidden = names.length <= 1;
+  $('#pl-list').innerHTML = names
+    .map((n) => `<label class="plpick-item"><input type="checkbox" value="${n.replace(/"/g, '&quot;')}" ${selected.includes(n) ? 'checked' : ''} />
+      <span>${playlistLabel(n).replace(/</g, '&lt;')}</span><small>${counts.get(n)}</small></label>`)
+    .join('');
+  const total = selected.reduce((s, n) => s + (counts.get(n) || 0), 0);
+  $('#pl-btn').textContent = selected.length === names.length
+    ? `Alle Playlists (${total})`
+    : selected.length === 1 ? `${playlistLabel(selected[0])} (${total})` : `${selected.length} Playlists (${total})`;
+  return selected;
 }
 
 /** Oberordner wählen: Dateien scannen, Unterordner als Playlists anbieten. */
-async function loadFolder(path, playlist = loadSettings().playlist) {
+async function loadFolder(path, playlist = loadSettings().playlists ?? loadSettings().playlist) {
   if (loadingFolder) return;
   try {
     const files = await scanFolder(path);
@@ -676,21 +690,28 @@ async function loadFolder(path, playlist = loadSettings().playlist) {
     $('#folder').textContent = path;
     $('#folder').title = path;
     saveSettings({ folder: path });
-    await loadPlaylist(renderPlaylists(playlist));
+    await loadPlaylist(renderPlaylists(normalizeSelection(playlist)));
   } catch (err) {
     toast(`Ordner konnte nicht geladen werden: ${err.message || err}`);
   }
 }
 
-/** Playlist (Unterordner) analysieren und als Queue übernehmen. */
-async function loadPlaylist(name) {
+/** Richtungs-Auswahl zeigt die gemeinsame Einstellung der gewählten Playlists (sonst "Auto"). */
+function showPlaylistGenre() {
+  const all = genreOverrides();
+  const vals = new Set(currentPlaylists.map((n) => all[playlistKey(n)] || all[playlistKey(ALL_PLAYLISTS)] || 'auto'));
+  $('#playlist-genre').value = vals.size === 1 ? [...vals][0] : 'auto';
+  $('#playlist-genre').hidden = false;
+}
+
+/** Gewählte Playlists (Unterordner) analysieren und gemeinsam als Queue übernehmen. */
+async function loadPlaylist(names) {
   if (loadingFolder) return;
   loadingFolder = true;
-  saveSettings({ playlist: name });
-  currentPlaylist = name;
-  $('#playlist-genre').value = genreOverrides()[playlistKey()] || 'auto';
-  $('#playlist-genre').hidden = false;
-  const files = name === ALL_PLAYLISTS ? folderFiles : folderFiles.filter((f) => playlistOf(f.path) === name);
+  saveSettings({ playlists: names });
+  currentPlaylists = names;
+  showPlaylistGenre();
+  const files = folderFiles.filter((f) => names.includes(playlistOf(f.path)));
   const prog = $('#progress');
   const setProgress = (done, total, fname) => {
     prog.hidden = false;
@@ -852,7 +873,30 @@ async function boot() {
   const masterSlider = new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
-  $('#playlist').onchange = (e) => loadPlaylist(e.target.value);
+  // Playlist-Auswahl: mehrere an-/abwählen, mit "Übernehmen" laden
+  const plMenu = $('#pl-menu');
+  const checked = () => [...$('#pl-list').querySelectorAll('input:checked')].map((i) => i.value);
+  $('#pl-btn').onclick = (e) => {
+    e.stopPropagation();
+    if (plMenu.hidden) renderPlaylists(currentPlaylists);
+    plMenu.hidden = !plMenu.hidden;
+  };
+  plMenu.onclick = (e) => e.stopPropagation();
+  document.addEventListener('click', () => (plMenu.hidden = true));
+  $('#pl-all').onclick = (e) => {
+    e.preventDefault();
+    for (const i of $('#pl-list').querySelectorAll('input')) i.checked = true;
+  };
+  $('#pl-none').onclick = (e) => {
+    e.preventDefault();
+    for (const i of $('#pl-list').querySelectorAll('input')) i.checked = false;
+  };
+  $('#pl-apply').onclick = () => {
+    const names = checked();
+    if (!names.length) return toast('Mindestens eine Playlist anhaken.');
+    plMenu.hidden = true;
+    loadPlaylist(renderPlaylists(names));
+  };
   $('#btn-library').onclick = () => {
     if ($('#libwin').hidden) openLibrary(lib.root || folderRoot || null);
     else $('#libwin').hidden = true;
@@ -875,13 +919,13 @@ async function boot() {
   pg.innerHTML = '<option value="auto">Richtung: Auto</option>' +
     Object.entries(GENRES).map(([k, v]) => `<option value="${k}">Richtung: ${v}</option>`).join('');
   pg.onchange = () => {
-    setGenreOverride(playlistKey(), pg.value === 'auto' ? null : pg.value);
+    for (const n of currentPlaylists) setGenreOverride(playlistKey(n), pg.value === 'auto' ? null : pg.value);
     conductor.applyGenres(resolveGenre);
     refreshUptempo();
   };
   $('#btn-folder').onclick = async () => {
     const path = await pickFolder();
-    if (path) loadFolder(path, ALL_PLAYLISTS);
+    if (path) loadFolder(path, null);
   };
   $('#btn-start').onclick = () => conductor.togglePlay(conductor.master);
   $('#btn-reorder').onclick = () => conductor.reorderAI();

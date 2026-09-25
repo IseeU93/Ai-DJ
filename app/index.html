@@ -14,7 +14,17 @@
       <button class="btn" id="btn-library" title="Bibliothek: Ordner durchstöbern, Tracks einreihen oder sofort reinmixen – ohne die laufende Musik zu ändern">Bibliothek</button>
       <button class="btn" id="btn-folder" title="Oberordner wählen – Unterordner erscheinen als Playlists">Ordner wählen</button>
       <span class="folder" id="folder">Kein Ordner geladen</span>
-      <select class="sel" id="playlist" title="Unterordner als Playlist" hidden></select>
+      <div class="plpick" id="playlist" hidden>
+        <button class="sel plpick-btn" id="pl-btn" title="Playlists (Unterordner) an- und abwählen – mehrere gleichzeitig möglich">Playlists</button>
+        <div class="plpick-menu" id="pl-menu" hidden>
+          <div class="plpick-head">
+            <a href="#" id="pl-all">Alle</a>
+            <a href="#" id="pl-none">Keine</a>
+          </div>
+          <div class="plpick-list" id="pl-list"></div>
+          <button class="btn primary" id="pl-apply">Übernehmen</button>
+        </div>
+      </div>
       <select class="sel" id="playlist-genre" title="Musikrichtung für die ganze Playlist (einzelne Tracks in der Queue überschreibbar)" hidden></select>
       <div class="progress" id="progress" hidden>
         <div class="bar"><i></i></div>
