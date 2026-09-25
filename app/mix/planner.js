@@ -270,7 +270,7 @@ function exitBar(ctx, L) {
     if (after !== bar) ctx.notes.push(`wartet bis Takt ${after}: der alte Track ist gerade voll im Drop`);
     return after;
   }
-  const outro = ctx.a.points.outroBar;
+  const outro = outroStart(va);
   let bar = va.grid(va.end - L, 4, 'floor');
   // lieber zum Outro-Beginn raus, wenn das Outro lang genug ist
   if (outro !== null && outro !== undefined && outro < bar && outro + L <= va.end && bar - outro <= 8) bar = outro;
@@ -513,18 +513,13 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
       lpOut: 0.8 + (ctx.energyUp < -0.05 ? 0.5 : 0),
       hpOut: 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0),
     },
-    outTail: {
-      none: 0.5,
-      echoOut: 0.4 + extra + (ctx.energyUp > 0.25 ? 0.3 : 0),
-      reverbOut: 0.55 + extra + (ctx.energyUp < 0 ? 0.25 : 0) + (ctx.keyDist >= 0.3 ? 0.15 : 0),
-    },
+    outEcho: { none: 0.6, echoOut: 0.4 + extra + (ctx.energyUp > 0.25 ? 0.3 : 0) },
+    outReverb: { none: 0.55, reverbOut: 0.55 + extra + (ctx.energyUp < 0 ? 0.25 : 0) + (ctx.keyDist >= 0.3 ? 0.15 : 0) },
     outMod: { none: 0.6, ...(L - fadeFrom >= 1 ? { flangerOut: 0.4 + extra + (club ? 0.15 : 0) } : {}) },
-    outRhythm: {
-      none: 0.65,
-      ...(L - fadeFrom >= 1 && !ctx.loopExt ? { gateOut: 0.35 + extra + (club ? 0.15 : -0.1) + (ctx.energyUp > 0.1 ? 0.15 : 0) } : {}),
-      ...(canLoopOut ? { loopOut: 0.5 + extra } : {}),
-    },
+    outGate: { none: 0.65, ...(L - fadeFrom >= 1 && !ctx.loopExt ? { gateOut: 0.35 + extra + (club ? 0.15 : -0.1) + (ctx.energyUp > 0.1 ? 0.15 : 0) } : {}) },
+    outLoop: { none: 0.65, ...(canLoopOut ? { loopOut: 0.5 + extra } : {}) },
   };
+  const EXTRA_GROUPS = ['inMod', 'inTension', 'outEcho', 'outReverb', 'outMod', 'outGate', 'outLoop'];
 
   const used = (k) => ['in', 'out', 'x'].some((pre) => recent.includes(`${pre}:${k}`));
   const picks = {};
@@ -536,18 +531,13 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
     });
     picks[g] = best;
   }
-  // nie beide Tracks gleichzeitig im Flanger
-  if (picks.inMod.k !== 'none' && picks.outMod.k !== 'none') {
-    const weaker = picks.inMod.sc < picks.outMod.sc ? 'inMod' : 'outMod';
-    picks[weaker] = { k: 'none', sc: 0 };
-  }
-  // höchstens drei Zusatz-Effekte (die stärksten bleiben)
-  const extraGroups = ['inMod', 'inTension', 'outTail', 'outMod', 'outRhythm'].filter((g) => picks[g].k !== 'none');
-  extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(3).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
+  // Kombinationen frei – nur nicht alles auf einmal (höchstens fünf Zusatz-Effekte, die stärksten bleiben)
+  const extraGroups = EXTRA_GROUPS.filter((g) => picks[g].k !== 'none');
+  extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(5).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
 
   const en = picks.inFilter.k;
   const ex = picks.outFilter.k;
-  const extras = ['inMod', 'inTension', 'outTail', 'outMod', 'outRhythm'].map((g) => picks[g].k).filter((k) => k !== 'none');
+  const extras = EXTRA_GROUPS.map((g) => picks[g].k).filter((k) => k !== 'none');
   ctx.flavors = { entry: en, exit: ex, extras };
   const has = (k) => extras.includes(k);
 
@@ -584,7 +574,8 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   if (has('gateOut')) {
     steps.push(act(L - 1, 'out', 'gate', { bars: 0.5, div: 8, depth: 0.85 }), act(L - 0.5, 'out', 'gate', { bars: 0.5, div: 16, depth: 1 }));
     ctx.notes.push('letzter Takt des alten Tracks wird rhythmisch zerhackt (Stutter-Gate)');
-  } else if (has('loopOut')) {
+  }
+  if (has('loopOut')) {
     const at = Math.max(Math.ceil(fadeFrom), L - 2);
     const bar = va.grid(ctx.outBar + at - 1, 1, 'floor');
     steps.push(act(at, 'out', 'loop', { bars: 1, anchor: bar - ctx.outBar }));
@@ -593,10 +584,73 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   if (has('echoOut')) {
     steps.push(p(Math.max(fadeFrom, L - 0.75), 'out', 'echo', 0.35, 0.25), p(L - 0.25, 'out', 'echo', 0, 0.25));
     ctx.notes.push('Echo-Wurf auf dem letzten Beat des alten Tracks');
-  } else if (has('reverbOut')) {
+  }
+  if (has('reverbOut')) {
     steps.push(p(Math.max(fadeFrom, L - 1.5), 'out', 'reverb', 0.75, 1));
     ctx.notes.push('alter Track verschwindet in einer Hall-Fahne');
   }
+}
+
+/**
+ * Freie Effekte für alle Techniken außer dem Blend (der hat seine eigenen Bausteine): Noise-Riser
+ * in den Wechsel, Flanger auf dem Einstieg, Echo-Wurf, Hall-Fahne, Flanger oder Stutter-Gate auf
+ * dem Ausstieg – frei kombiniert, zeitlich an den Wechselpunkt der Technik gehängt. Was die
+ * Technik schon selbst auf einem Deck macht (z. B. ihr eigenes Echo), wird nicht überschrieben.
+ */
+function applyFx(ctx, steps, L) {
+  const roll = hash(`${ctx.outId}|${ctx.inId}|fx`);
+  const recent = ctx.flavorHistory || [];
+  const club = !ctx.profile.shortForm;
+  const extra = ctx.freestyle ? 0.15 : 0;
+  const usesParam = (deck, param) => steps.some((s) => s.deck === deck && s.param === param);
+  const usesAction = (deck, action) => steps.some((s) => s.deck === deck && s.action === action);
+  const outGone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
+  const tEnd = outGone.length ? Math.min(...outGone) : L; // alter Track weg
+  const swap = steps.find((s) => s.deck === 'in' && s.param === 'low' && s.to > -3);
+  const play = steps.find((s) => s.deck === 'in' && s.action === 'play');
+  const tIn = play ? play.at : 0;
+  const tSwap = swap ? swap.at : Math.max(tIn, Math.round(tEnd));
+  const minAt = Math.min(0, ...steps.map((s) => s.at));
+  const chance = {
+    riser: tSwap - 4 >= minAt && ctx.energyUp > -0.05 ? 0.2 + (club ? 0.15 : 0) + (ctx.energyUp > 0.1 ? 0.15 : 0) : 0,
+    flangerIn: !usesParam('in', 'flanger') && tEnd - tIn >= 1 ? 0.2 + (club ? 0.05 : 0) : 0,
+    echoOut: !usesParam('out', 'echo') && tEnd >= 1 ? 0.25 : 0,
+    reverbOut: !usesParam('out', 'reverb') && tEnd >= 1 ? 0.3 + (ctx.energyUp < 0 ? 0.1 : 0) : 0,
+    flangerOut: !usesParam('out', 'flanger') && tEnd >= 2 ? 0.18 + (club ? 0.07 : 0) : 0,
+    gateOut: !usesAction('out', 'gate') && !usesAction('out', 'loop') && tEnd >= 1 ? 0.15 + (club ? 0.1 : -0.05) : 0,
+  };
+  const extras = [];
+  for (const [k, c] of Object.entries(chance)) {
+    const want = c + extra - (recent.includes(`x:${k}`) ? 0.12 : 0);
+    if (c > 0 && hash(`${roll}|${k}`) < want) extras.push(k);
+  }
+  const has = (k) => extras.includes(k);
+  if (has('riser')) {
+    steps.push(act(tSwap - 4, 'fx', 'riser', { bars: 4, level: 0.1 }), act(tSwap, 'fx', 'downlifter', { bars: 2, level: 0.06 }));
+    ctx.notes.push('Noise-Riser baut Spannung bis zum Wechsel auf, dann ein Downlifter');
+  }
+  if (has('flangerIn')) {
+    steps.push(p(tIn, 'in', 'flanger', 0.8), p(tIn + Math.max(1, Math.min(4, tSwap - tIn - 1)), 'in', 'flanger', 0, 1.5));
+    ctx.notes.push('neuer Track kommt mit Flanger-Sweep rein');
+  }
+  if (has('flangerOut')) {
+    steps.push(p(Math.max(0, tEnd - 2), 'out', 'flanger', 0.9, 1.5));
+    ctx.notes.push('Flanger-Sweep auf dem alten Track');
+  }
+  if (has('gateOut')) {
+    steps.push(act(tEnd - 1, 'out', 'gate', { bars: 0.5, div: 8, depth: 0.8 }), act(tEnd - 0.5, 'out', 'gate', { bars: 0.5, div: 16, depth: 0.9 }));
+    ctx.notes.push('letzter Takt des alten Tracks im Stutter-Gate');
+  }
+  if (has('echoOut')) {
+    steps.push(p(tEnd - 0.75, 'out', 'echo', 0.35, 0.25), p(tEnd - 0.25, 'out', 'echo', 0, 0.25));
+    ctx.notes.push('Echo-Wurf auf dem letzten Beat des alten Tracks');
+  }
+  if (has('reverbOut')) {
+    steps.push(p(Math.max(0, tEnd - 1), 'out', 'reverb', 0.7, 0.75));
+    ctx.notes.push('alter Track verschwindet in einer Hall-Fahne');
+  }
+  ctx.flavors = { entry: 'eq', exit: 'fade', extras };
+  return steps;
 }
 
 // ------------------------------------------------------------------ Composer je Technik
@@ -822,10 +876,13 @@ function composeFilter(ctx) {
     ctx.outBar = exitBar(ctx, L);
     ctx.inBar = Math.max(b.points.startBar, Math.round(b.points.dropBar - L * m));
   }
+  // Einstieg im Phrasenraster des neuen Tracks – sonst liegt der Bass-Wechsel dort neben der Eins
+  if (ctx.inBar !== vb.grid(ctx.inBar, 4, 'round')) ctx.inBar = vb.grid(ctx.inBar, 4, 'ceil');
   L = extendWithLoop(ctx, steps, L);
   const down = ctx.energyUp < -0.05;
   const depth = down ? -0.7 : 0.55 + Math.min(0.25, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 48);
-  const sw = r4(L * 0.75) > L ? L / 2 : Math.min(L - 1, r4(L * 0.75));
+  // Bass-Wechsel auf einer 4-Takt-Grenze (vorher landete er bei 8 Takten auf Takt 7 – mitten in der Phrase)
+  const sw = L >= 16 ? L - 4 : L >= 8 ? 4 : L;
 
   steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.85), p(0, 'in', 'low', KILL));
   steps.push(act(0, 'in', 'play'));
@@ -848,7 +905,7 @@ function composeCut(ctx) {
   const { va, a, b } = ctx;
   if (ctx.profile.shortForm && !ctx.instant) return composeSongCut(ctx);
   if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, cutPoint(ctx));
-  else ctx.outBar = a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
+  else ctx.outBar = outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
   ctx.outBar = Math.min(ctx.outBar, va.end - 1);
   // Nur in einen echten Drop (laut, mit Beat) – nie in ein Intro oder einen leeren Beat-Teil
   const arrival = realDrop(ctx.vb, b);
@@ -856,9 +913,10 @@ function composeCut(ctx) {
   ctx.inBar = arrival ?? b.points.dropBar;
   // Weicher als früher: der alte Track wird über 4 Takte dünner, sein letzter Schlag verhallt,
   // der neue kommt mit einem kurzen Fade statt als Schlag ins Gesicht
-  const steps = [p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'fader', 1, 0.25), p(0, 'out', 'fader', 0, 0.25)];
+  // (noch weicher: der neue blendet über einen halben Takt ein, der alte verschwindet in Hall + Echo)
+  const steps = [p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'fader', 1, 0.5), p(0, 'out', 'fader', 0, 0.5)];
   if (!ctx.instant) {
-    steps.push(p(-4, 'out', 'filter', 0.45, 3.75), p(-2, 'out', 'low', -10, 1.75), p(-0.25, 'out', 'echo', 0.4, 0.25));
+    steps.push(p(-4, 'out', 'filter', 0.45, 3.75), p(-2, 'out', 'low', -10, 1.75), p(-0.25, 'out', 'echo', 0.4, 0.25), p(-0.5, 'out', 'reverb', 0.5, 0.5));
     ctx.notes.unshift('4 Takte wird der alte Track dünner, sein letzter Schlag verhallt – dann der Drop des neuen');
   } else {
     ctx.notes.unshift('Wechsel auf dem Takt in den Drop');
@@ -867,13 +925,22 @@ function composeCut(ctx) {
   return { L: 1.5, steps };
 }
 
+/**
+ * Outro-Beginn auf der nächsten 4-Takt-Grenze: die Analyse erkennt ihn manchmal ein, zwei Takte
+ * daneben – ein Ausstieg dort wechselt dann mitten in der Phrase.
+ */
+function outroStart(va) {
+  const o = va.a.points.outroBar;
+  return o === null || o === undefined ? null : Math.min(va.grid(o, 4, 'round'), va.grid(va.end - 1, 4, 'floor'));
+}
+
 /** Ausstiegs-Takt für die harten Techniken: Ende eines Refrains, sonst Outro/Phrasengrenze. */
 function hardExit(ctx) {
   const { va, a } = ctx;
   const exit = chorusExit(ctx);
   if (exit) return exit.bar;
   if (ctx.earliestBar !== null) return afterFullEnergy(va, cutPoint(ctx));
-  return a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
+  return outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
 }
 
 /**
@@ -933,10 +1000,12 @@ function composeSongCut(ctx) {
   const firstLine = b.points.vocalFirst ?? start;
   ctx.inBar = firstLine - start > 8 ? vb.grid(firstLine - 4, 4, 'floor') : start;
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
+  // Der neue startet genau auf der Eins (nicht einen Schlag später) und blendet kurz ein, der alte
+  // verklingt über einen Takt in Echo und Hall – kein harter Schnitt, kein Loch
   const steps = [
-    p(-1, 'out', 'filter', 0.3, 1), p(-0.25, 'out', 'echo', 0.55, 0.25),
-    p(0, 'out', 'fader', 0, 0.5), p(0, 'in', 'fader', 1),
-    act(beatless ? 0 : 0.25, 'in', 'play'),
+    p(-1, 'out', 'filter', 0.3, 1), p(-0.25, 'out', 'echo', 0.55, 0.25), p(-0.5, 'out', 'reverb', 0.45, 0.5),
+    p(0, 'out', 'fader', 0, 1), p(0, 'in', 'fader', 0), p(0, 'in', 'fader', 1, beatless ? 0.25 : 0.5),
+    act(0, 'in', 'play'),
     p(1.5, 'out', 'echo', 0), act(2, 'out', 'stop'),
   ];
   ctx.notes.unshift(
@@ -953,17 +1022,19 @@ function composeEcho(ctx) {
     if (r) return r;
   }
   if (ctx.earliestBar !== null) ctx.outBar = afterFullEnergy(va, cutPoint(ctx));
-  else ctx.outBar = a.points.outroBar ?? va.grid(va.end - 8, 8, 'floor');
+  else ctx.outBar = outroStart(va) ?? va.grid(va.end - 8, 8, 'floor');
   ctx.outBar = Math.min(ctx.outBar, va.end - 1);
   ctx.inBar = b.points.startBar;
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 4) < 0.3;
   const start = beatless ? 0.5 : 1;
-  const steps = [p(0, 'in', 'fader', 1)];
+  const steps = [];
   if (ctx.instant) {
     steps.push(p(0, 'out', 'echo', 0.5), p(0.25, 'out', 'fader', 0, 0.25));
   } else {
-    steps.push(p(-1, 'out', 'filter', 0.45, 1), p(-0.5, 'out', 'echo', 0.5, 0.5), p(0, 'out', 'fader', 0, 0.25));
+    steps.push(p(-1, 'out', 'filter', 0.45, 1), p(-0.5, 'out', 'echo', 0.5, 0.5), p(-0.5, 'out', 'reverb', 0.45, 0.5), p(0, 'out', 'fader', 0, 0.5));
   }
+  // Neuer Track blendet kurz ein statt hart einzusetzen
+  steps.push(p(0, 'in', 'fader', 0), p(start, 'in', 'fader', 1, 0.25));
   steps.push(p(0.5, 'out', 'echo', 0), act(start, 'in', 'play'), act(1, 'out', 'stop'));
   ctx.notes.unshift(
     'alter Track verhallt im Echo',
@@ -1221,7 +1292,7 @@ function composePingPong(ctx) {
   const L = 4 * U;
   // Pop/Rap: nach einem Refrain; Clubmusik: am Ende, wo sonst das Outro gemischt würde
   const exit = ctx.profile.shortForm ? chorusExit(ctx) : null;
-  const clubEnd = Math.min(va.end - 2, (ctx.a.points.outroBar ?? va.end - 8) + 8);
+  const clubEnd = Math.min(va.end - 2, (outroStart(va) ?? va.end - 8) + 8);
   const from = exit ? exit.bar - L : va.grid(clubEnd - L, 4, 'floor');
   const outBar = Math.max(ctx.earliestBar !== null ? va.grid(ctx.earliestBar + 4, 4) : 0, from);
   if (outBar + L > va.end) return null;
@@ -1356,6 +1427,8 @@ function scoreStyles(ctx) {
     if (ctx.profile.shortForm) c.echo = 2.6; // sauber verhallen statt hart in einen Beat schneiden
   }
   for (const k of Object.keys(c)) c[k] += ctx.profile.styles[k] ?? 0;
+  // freier: auch ohne Freestyle pro Songpaar etwas Zufall, damit nicht immer dieselbe Technik gewinnt
+  if (!ctx.freestyle) for (const k of Object.keys(c)) c[k] += 0.35 * hash(`${ctx.outId}|${ctx.inId}|${k}|var`);
   if (ctx.freestyle && tempoOk) {
     // Freestyle: wilder, verspielter, mehr Abwechslung – aber nie gegen die Tonart
     // (der brave Standard-Blend tritt zurück, damit die freien Techniken wirklich zum Zug kommen)
@@ -1512,6 +1585,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     result = composeBlend(ctx);
   }
   let { L, steps } = result;
+  if (!instant && chosen !== 'blend' && chosen !== 'build' && !ctx.flavors) steps = applyFx(ctx, steps, L);
   // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
   // zwei Tracks im Drop klingen immer nach Unfall.
   // (Refrain-Wechsel schaltet selbst genau auf der Eins um – sein Echo-Schweif darf ausklingen)

@@ -101,7 +101,7 @@ export function auditPlan(plan, va, vb) {
   const shortForm = (plan.genres || []).slice(0, 1).some((g) => g === 'pop' || g === 'rap');
   const skipCost = skippedMain * (shortForm ? 0.004 : 0.02);
 
-  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 0.4 + lineCut * 0.6 + skipCost;
+  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 0.6 + skipCost;
   const issues = [];
   if (vocalClash >= 1) issues.push(`${vocalClash.toFixed(1)} Takte zwei Stimmen gleichzeitig`);
   if (bassBoth > 1) issues.push(`${bassBoth.toFixed(1)} Takte zwei Basslines übereinander`);

@@ -599,15 +599,16 @@ export class Conductor extends EventTarget {
     inn.rateAt(t0, plan.inRate, 0);
     inn.playAt(t0, barToSeconds(b, t.inFrom) * sr);
     inn.ramp('low', t0, KILL, t0, KILL);
-    inn.ramp('filter', t0, 0.15, t0, 0.15);
-    inn.ramp('fader', t0, 0, t0 + 0.25 * barSec, 0.7);
+    // dezent: etwas dünner (Hochpass), leiser, weich ein- und über Echo wieder ausblenden
+    inn.ramp('filter', t0, 0.3, t0, 0.3);
+    inn.ramp('fader', t0, 0, t0 + 0.5 * barSec, 0.6);
     inn.ramp('echo', t1 - 0.25 * barSec, 0, t1 - 0.2 * barSec, 0.4);
-    inn.ramp('fader', t1 - 0.25 * barSec, 0.7, t1, 0);
+    inn.ramp('fader', t1 - 0.5 * barSec, 0.6, t1, 0);
     inn.stopAt(t1 + 0.05);
     // danach alles zurück, damit der eigentliche Übergang sauber startet
     inn.ramp('echo', t1 + barSec, 0.4, t1 + 1.5 * barSec, 0);
     inn.ramp('low', t1 + 0.1, KILL, t1 + 0.1, 0);
-    inn.ramp('filter', t1 + 0.1, 0.15, t1 + 0.1, 0);
+    inn.ramp('filter', t1 + 0.1, 0.3, t1 + 0.1, 0);
     this.teaserWindow = [t0 - 8 * barSec, t1 + 8 * barSec]; // drumherum Ruhe, kein Trick-Gewimmel
     this.emit('teaser', { ...t, at: t0 });
   }

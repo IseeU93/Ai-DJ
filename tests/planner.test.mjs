@@ -587,14 +587,20 @@ test('Teaser: Hook des neuen Tracks 2 Takte im Break des alten, nie über seine 
   const inc = track('b', 127);
   const a = out.analysis;
   const plan = planTransition({ out, inc, type: 'blend' });
-  const t = planTeaser(a, inc.analysis, plan.outBar, 0);
+  // Gesang nur im lautesten Teil (voller Drop): wird nie angeteasert – klingt ohne Bass wie ein Fehler
+  assert.equal(planTeaser(a, inc.analysis, plan.outBar, 0), null, 'harte/volle Stelle angeteasert');
+  // eine ruhigere Gesangsstelle (Strophe) dagegen schon
+  const b = inc.analysis;
+  const vBar = Array.from(b.vocals).findIndex((v) => v >= 0.5);
+  const soft = { ...b, barEnergy: Float32Array.from(b.barEnergy, (e, i) => (i >= vBar && i < vBar + 4 ? -4 : e)) };
+  const t = planTeaser(a, soft, plan.outBar, 0);
   assert.ok(t, 'kein Teaser gefunden');
   assert.equal(t.bars, 2);
   assert.ok(t.bar + t.bars <= plan.outBar - 8, 'zu nah am Übergang');
   for (let bar = t.bar; bar < t.bar + t.bars; bar++) assert.ok((a.vocals[bar] ?? 0) < 0.35, `über Gesang bei Takt ${bar}`);
   assert.ok(inc.analysis.vocals[t.inFrom] >= 0.3 || t.what !== 'Refrain', 'Quelle ist kein Hook');
   // kein Platz vor dem Übergang -> kein Teaser
-  assert.equal(planTeaser(a, inc.analysis, plan.outBar, plan.outBar - 6), null);
+  assert.equal(planTeaser(a, soft, plan.outBar, plan.outBar - 6), null);
 });
 
 import { learn } from '../app/mix/feedback.js';
@@ -651,7 +657,7 @@ test('Übergangs-Bewertung gilt vor allem für die bewerteten Songs', () => {
   assert.equal(other.type, base.type, `andere Songs bekommen jetzt ${other.type}`);
 });
 
-test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der Bausteine', async () => {
+test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der Bausteine, auch bei anderen Techniken', async () => {
   const out = track('a', 128);
   const inc = track('b', 126);
   const plan = planTransition({ out, inc, type: 'build' });
@@ -668,11 +674,17 @@ test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der B
     if (!p.flavors) continue;
     p.flavors.extras.forEach((k) => seen.add(k));
     if (p.flavors.extras.length >= 2) multi++;
-    assert.ok(!(p.flavors.extras.includes('flangerIn') && p.flavors.extras.includes('flangerOut')));
-    assert.ok(p.flavors.extras.length <= 3);
+    assert.ok(p.flavors.extras.length <= 5);
     assert.ok(!p.steps.some((s) => s.deck === 'out' && s.action === 'rate'), 'kein Vinyl-Stop');
   }
   assert.ok(seen.size >= 4, `nur ${[...seen]}`);
+  // auch Techniken außer dem Blend bekommen Effekte (frei kombiniert)
+  let fxOther = 0;
+  for (let i = 0; i < 40; i++) {
+    const p = planTransition({ out: { ...out, id: `x${i}` }, inc: { ...inc, id: `y${i}` }, type: i % 2 ? 'filter' : 'loop' });
+    if (p.flavors?.extras?.length) fxOther++;
+  }
+  assert.ok(fxOther >= 8, `nur ${fxOther}x Effekte bei Filter/Loop`);
   assert.ok(multi >= 3, `nur ${multi} Kombinationen`);
   const { TRICKS, planTrick } = await import('../app/mix/freestyle.js');
   for (const k of ['reverb', 'flanger', 'stutter', 'riser']) assert.ok(TRICKS[k]);
