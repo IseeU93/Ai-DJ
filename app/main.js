@@ -9,7 +9,7 @@ import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
-import { REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
+import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
 import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 
@@ -1000,7 +1000,7 @@ async function boot() {
       verdict, reasons, type: t.type, label: t.label, genres: t.genres, bars: t.bars,
       out: t.out ? `${t.out.artist || ''} – ${t.out.title || t.out.name || ''}` : '',
       in: t.inc ? `${t.inc.artist || ''} – ${t.inc.title || t.inc.name || ''}` : '',
-      outBar: t.outBar, inBar: t.inBar, audit: t.audit, freestyle: t.freestyle,
+      outBar: t.outBar, inBar: t.inBar, audit: t.audit, freestyle: t.freestyle, outId: t.outId, inId: t.inId,
     });
     lastTransition = null;
     rateBox.hidden = true;
@@ -1041,6 +1041,26 @@ async function boot() {
     const wait = Math.max(0, (e.detail.at ?? engine.now) - engine.now);
     setTimeout(() => showTrick({ kind: e.detail.kind, name: e.detail.name }, `Freestyle: ${e.detail.name}`), wait * 1000);
   });
+  // Reihenfolge bewerten: passte der neue Song nach dem vorigen?
+  let lastPair = null;
+  const orderBox = $('#order-rate');
+  const orderReasons = $('#order-reasons');
+  orderReasons.innerHTML = Object.entries(ORDER_REASONS).map(([k, v]) => `<button class="btn small chip" data-r="${k}">${v}</button>`).join('');
+  const rateOrder = (verdict, reason = null) => {
+    if (!lastPair) return;
+    addFeedback({ kind: 'order', a: lastPair.a, b: lastPair.b, title: lastPair.title, verdict, reasons: reason ? [reason] : [] });
+    lastPair = null;
+    orderBox.hidden = true;
+    orderReasons.hidden = true;
+    applyLearned();
+    toast(verdict === 'up' ? 'Gemerkt – solche Folgen öfter' : 'Gemerkt – das Paar kommt so nicht mehr');
+  };
+  $('#order-up').onclick = () => rateOrder('up');
+  $('#order-down').onclick = () => (orderReasons.hidden = !orderReasons.hidden);
+  orderReasons.onclick = (e) => {
+    const r = e.target.closest('[data-r]')?.dataset.r;
+    if (r) rateOrder('down', r);
+  };
   // Handy-App: Status/Befehle über den Companion-Server, Playlist-Warnung auch als Push aufs Handy
   const companion = initCompanion({
     engine,
@@ -1081,6 +1101,8 @@ async function boot() {
       lastTransition: () => (lastTransition ? { label: lastTransition.label, title: lastTransition.inc?.title || '' } : null),
       lastTrick: () => (lastTrick ? { kind: lastTrick.kind, name: lastTrick.name || TRICKS[lastTrick.kind] || '' } : null),
       rateTrick,
+      lastPair: () => (lastPair ? { title: lastPair.title } : null),
+      rateOrder: (verdict, reason) => rateOrder(verdict, reason),
     },
     onWarning: (text) => {
       toast(text);
@@ -1128,6 +1150,12 @@ async function boot() {
     if (r) save('down', [r]);
   };
   conductor.addEventListener('transitionDone', (e) => {
+    if (e.detail.outId && e.detail.inId) {
+      lastPair = { a: e.detail.outId, b: e.detail.inId, title: `${e.detail.inc?.title || ''} nach ${e.detail.out?.title || ''}` };
+      $('#order-name').textContent = `Passte „${e.detail.inc?.title || ''}“ nach „${e.detail.out?.title || ''}“?`;
+      orderBox.hidden = false;
+      orderReasons.hidden = true;
+    }
     lastTransition = e.detail;
     $('#rate-name').textContent = `${e.detail.label} (${e.detail.inc?.title || ''})`;
     rateBox.hidden = false;

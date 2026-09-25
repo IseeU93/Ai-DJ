@@ -61,7 +61,7 @@ export function tempoRelation(bpmOut, bpmIn) {
 
 export const BEATMATCH_LIMIT = 0.08; // bis ±8 % wird per Keylock-Tempo angeglichen
 
-export function transitionCost(a, b) {
+export function transitionCost(a, b, w = null) {
   const A = a.analysis;
   const B = b.analysis;
   const rel = tempoRelation(A.bpm, B.bpm);
@@ -82,7 +82,7 @@ export function transitionCost(a, b) {
     && B.points.vocalFirst < (B.points?.dropBar ?? 0);
   const vocalCost = introVocal && tailClean < 8 ? 0.2 : 0;
   const genreCost = genreDistance(a.genre, b.genre);
-  return tempo + 0.8 * key + 0.3 * energy + introCost + tailCost + vocalCost + genreCost;
+  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.3 * (w?.energy ?? 1) * energy + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
@@ -97,6 +97,14 @@ export function genreDistance(x, y) {
 
 // Hauptkünstler: "A feat. B", "A x B", "A & B", "A, B" -> "a"
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+(feat\.?|ft\.?|x)\s.*$|\s*[&,].*$/, '').trim();
+
+/** Fester Zufallswert 0..1 pro (Variante, Paar). */
+function pairHash(seed, a, b) {
+  let h = (2166136261 ^ seed) >>> 0;
+  const str = `${a}>${b}`;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
+}
 
 /** Einfacher, reproduzierbarer Zufall (für Reshuffle-Varianten). */
 function rng(seed) {
@@ -140,14 +148,14 @@ export function targetEnergy(p, n = 0) {
 
 const ARC_WEIGHT = 1.2;
 
-function totalCost(order, fixedPrefix, costCache) {
+function totalCost(order, fixedPrefix, costCache, arc = ARC_WEIGHT) {
   const n = order.length;
   let c = 0;
   for (let i = 0; i < n - 1; i++) c += costCache(order[i], order[i + 1]);
   for (let i = Math.max(0, fixedPrefix - 2); i < n; i++) {
     if (i >= fixedPrefix) {
       const p = n > 1 ? i / (n - 1) : 0;
-      c += ARC_WEIGHT * (order[i].energy - targetEnergy(p, n)) ** 2;
+      c += arc * (order[i].energy - targetEnergy(p, n)) ** 2;
     }
     const x = order[i];
     const y = order[i + 1];
@@ -164,9 +172,11 @@ function totalCost(order, fixedPrefix, costCache) {
 
 /**
  * Baut die Reihenfolge. `fixed` = Tracks, die schon gespielt wurden/laufen (bleiben vorne).
- * `seed` = 0 liefert die beste Reihenfolge; andere Werte liefern gute Alternativen (Reshuffle).
+ * `seed` = 0 liefert die rechnerisch beste Reihenfolge (Tests); jeder andere Wert eine eigene,
+ * ebenfalls gute Variante – mit etwas "Geschmack" pro Paar, damit nicht immer dasselbe herauskommt.
+ * `learned` = { pairs, weights } aus deinen Reihenfolge-Bewertungen.
  */
-export function buildSetOrder(tracks, fixed = [], seed = 0) {
+export function buildSetOrder(tracks, fixed = [], seed = 0, learned = null) {
   const pool = tracks.filter((t) => !fixed.includes(t));
   if (pool.length <= 1) return [...fixed, ...pool];
 
@@ -175,33 +185,37 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
     const k = `${a.id}|${b.id}`;
     let v = cache.get(k);
     if (v === undefined) {
-      v = transitionCost(a, b);
+      v = transitionCost(a, b, learned?.weights);
+      v += learned?.pairs?.[`${a.id}>${b.id}`] ?? 0; // deine 👍/👎 für genau dieses Paar
+      // Variante: kleiner, pro Paar fester Zufallsanteil – verschiebt das Optimum spürbar
+      if (seed) v += 0.35 * (pairHash(seed, a.id, b.id) - 0.5);
       cache.set(k, v);
     }
     return v;
   };
 
   const total = fixed.length + pool.length;
+  const arc = ARC_WEIGHT * (learned?.weights?.energy ?? 1);
   // Greedy
   const rand = seed ? rng(seed) : null;
   const order = [...fixed];
   const remaining = [...pool];
   if (!order.length) {
     remaining.sort((a, b) => a.energy - b.energy);
-    // Variante: Start aus den ruhigsten drei
-    const k = rand ? Math.floor(rand() * Math.min(3, remaining.length)) : 0;
+    // Variante: Start aus den ruhigsten fünf
+    const k = rand ? Math.floor(rand() * Math.min(5, remaining.length)) : 0;
     order.push(remaining.splice(k, 1)[0]);
   }
   while (remaining.length) {
     const prev = order[order.length - 1];
     const p = total > 1 ? order.length / (total - 1) : 0;
     const ranked = remaining
-      .map((t, i) => ({ i, s: cost(prev, t) + ARC_WEIGHT * (t.energy - targetEnergy(p, total)) ** 2 + (norm(t.artist) && norm(t.artist) === norm(prev.artist) ? 0.6 : 0) }))
+      .map((t, i) => ({ i, s: cost(prev, t) + arc * (t.energy - targetEnergy(p, total)) ** 2 + (norm(t.artist) && norm(t.artist) === norm(prev.artist) ? 0.6 : 0) }))
       .sort((x, y) => x.s - y.s);
     // Variante: unter den (fast) gleich guten Nachfolgern zufällig wählen
     let pick = ranked[0];
     if (rand) {
-      const good = ranked.filter((r) => r.s <= ranked[0].s + 0.25).slice(0, 3);
+      const good = ranked.filter((r) => r.s <= ranked[0].s + 0.35).slice(0, 4);
       pick = good[Math.floor(rand() * good.length)];
     }
     order.push(remaining.splice(pick.i, 1)[0]);
@@ -211,7 +225,7 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
   const lock = Math.max(1, fixed.length);
   const n = order.length;
   if (n <= 250) {
-    let current = totalCost(order, fixed.length, cost);
+    let current = totalCost(order, fixed.length, cost, arc);
     let improved = true;
     let rounds = 0;
     // Zeitbudget: der Knopf soll sofort reagieren, auch bei großen Playlists
@@ -223,7 +237,7 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
       for (let i = lock; i < n - 1 && !late(); i++) {
         for (let j = i + 1; j < Math.min(n, i + W); j++) {
           reverse(order, i, j);
-          const c = totalCost(order, fixed.length, cost);
+          const c = totalCost(order, fixed.length, cost, arc);
           if (c < current - 1e-9) {
             current = c;
             improved = true;
@@ -237,7 +251,7 @@ export function buildSetOrder(tracks, fixed = [], seed = 0) {
           if (i === j) continue;
           const [t] = order.splice(i, 1);
           order.splice(j, 0, t);
-          const c = totalCost(order, fixed.length, cost);
+          const c = totalCost(order, fixed.length, cost, arc);
           if (c < current - 1e-9) {
             current = c;
             improved = true;

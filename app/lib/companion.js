@@ -61,6 +61,7 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
       },
       laserEffect: laser?.effectLabel?.() || null,
       playlists: actions.playlists?.() || null,
+      lastPair: actions.lastPair?.() || null,
       lastTrick: actions.lastTrick?.() || null,
       master: Math.round((engine.masterVolume ?? 1) * 100) / 100,
       lastTransition: actions.lastTransition?.() || null,
@@ -125,6 +126,7 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
     rate: ({ verdict, reason }) => actions.rate(verdict, reason),
     rateTrick: ({ verdict }) => actions.rateTrick?.(verdict),
     setPlaylists: ({ names }) => actions.setPlaylists?.(names),
+    rateOrder: ({ verdict, reason }) => actions.rateOrder?.(verdict, reason),
     setPlaylistGenre: ({ genre }) => actions.setPlaylistGenre?.(genre),
     rateLaser: ({ verdict, reason }) => window.__automixLaserRate?.(verdict, reason),
   };

@@ -107,11 +107,12 @@ export class Conductor extends EventTarget {
     return this.pos + 1 + (this.plan?.committed ? 1 : 0);
   }
 
-  reorderAI(seed = 0) {
+  /** KI-Reihenfolge – jedes Mal eine eigene, gute Variante (nicht immer dieselbe). */
+  reorderAI(seed = 1 + Math.floor(Math.random() * 1e9)) {
     const from = this.editableFrom;
     const fixed = this.queue.slice(0, from).map((id) => this.track(id));
     const all = this.queue.map((id) => this.track(id));
-    this.queue = buildSetOrder(all, fixed, seed).map((t) => t.id);
+    this.queue = buildSetOrder(all, fixed, seed, this.learned.order).map((t) => t.id);
     this.invalidatePlan();
     this.emit('queue');
   }
@@ -344,7 +345,7 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune });
+      const p = planTransition({ out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune });
       out.set(b.id, p);
       history.push(p.type);
     }
@@ -593,6 +594,7 @@ export class Conductor extends EventTarget {
       keylock: od.keylock,
       bias: this.learned.bias,
       tune: this.learned.tune,
+      trackTune: this.learned.trackTune,
     };
     let plan = planTransition(opts);
     if (!instant && plan.outBar < nowBar + leadBars) plan = planTransition({ ...opts, earliestBar: Math.max(nowBar + leadBars, this.extendFrom ?? 0) });
@@ -688,7 +690,7 @@ export class Conductor extends EventTarget {
     this.emit('transitionDone', {
       type: p.type, label: p.label, genres: p.genres, bars: p.bars, outBar: p.outBar, inBar: p.inBar,
       audit: p.audit ? { issues: p.audit.issues, penalty: +p.audit.penalty.toFixed(2) } : null,
-      out: this.track(p.outId), inc: this.track(p.inId), freestyle: this.freestyle,
+      out: this.track(p.outId), inc: this.track(p.inId), outId: p.outId, inId: p.inId, freestyle: this.freestyle,
     });
     this.master = p.inDeck;
     this.lastPlan = p;

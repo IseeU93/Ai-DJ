@@ -1226,6 +1226,17 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
+/** Allgemeine Stellschrauben + die für den laufenden Song (z. B. "bei diesem Song zu früh"). */
+function mergeTune(g, t) {
+  const base = { lengthScale: 1, exitShift: 0, hardness: 0, ...(g || {}) };
+  if (!t) return base;
+  return {
+    lengthScale: Math.max(0.5, Math.min(1.6, base.lengthScale * t.lengthScale)),
+    exitShift: Math.max(-1, Math.min(1, base.exitShift + t.exitShift)),
+    hardness: Math.max(base.hardness, t.hardness),
+  };
+}
+
 /**
  * Plant mehrere Varianten (die bestbewerteten Techniken), prüft jede im Selbstcheck (zwei Stimmen,
  * zwei Basslines, Lautstärke-Loch, Wechsel neben der Eins, abgeschnittene Zeile) und nimmt die
@@ -1262,7 +1273,7 @@ export function planTransition(opts) {
   return best;
 }
 
-function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null }, pick = null) {
+function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null }, pick = null) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -1286,7 +1297,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory, freestyle,
-    tune: { lengthScale: 1, exitShift: 0, hardness: 0, ...(tune || {}) },
+    tune: mergeTune(tune, trackTune?.[out.id]),
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
@@ -1304,7 +1315,11 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     const prev = history[history.length - 2];
     // gelernte Vorlieben aus deinen Bewertungen (👍/👎 pro Technik und Genre-Paar)
     const pair = `${ctx.genreOut}>${ctx.genreIn}`;
-    for (const k of Object.keys(c)) c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0);
+    // + was du genau bei diesen beiden Songs bewertet hast (zählt am stärksten)
+    for (const k of Object.keys(c)) {
+      c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0)
+        + (bias?.[`${k}#out:${ctx.outId}`] ?? 0) + (bias?.[`${k}#in:${ctx.inId}`] ?? 0);
+    }
     for (const k of ['cut', 'roll', 'mashin']) if (k in c) c[k] -= ctx.tune.hardness;
     ranked = Object.entries(c)
       .map(([k, score]) => [k, score - (k === last ? 0.3 : 0) - (k === prev ? 0.15 : 0)])

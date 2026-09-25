@@ -613,3 +613,40 @@ test('Lernen aus Bewertungen: 👎 für eine Technik -> andere Technik, "zu lang
   assert.ok(good.bias.filter > 0 && good.bias['filter@edm>edm'] >= good.bias.filter);
   assert.equal(learn([]).n, 0);
 });
+
+import { learnOrder } from '../app/mix/feedback.js';
+
+test('KI-Reihenfolge: jede Variante anders, 👎-Paare folgen nicht mehr direkt aufeinander', () => {
+  const base = track('x', 128).analysis;
+  const list = Array.from({ length: 14 }, (_, i) => ({
+    id: `t${i}`, artist: `A${i}`, genre: 'edm', energy: (i * 37 % 100) / 100,
+    analysis: { ...base, bpm: 122 + (i % 7), key: { camelot: `${(i % 12) + 1}A` } },
+  }));
+  const orders = new Set();
+  for (let s = 1; s <= 6; s++) orders.add(buildSetOrder(list, [], s * 7919).map((t) => t.id).join(','));
+  assert.ok(orders.size >= 5, `nur ${orders.size} verschiedene Reihenfolgen aus 6 Varianten`);
+  // ein Paar, das in der besten Reihenfolge direkt aufeinander folgt, mehrfach 👎
+  const best = buildSetOrder(list).map((t) => t.id);
+  const [a, b] = [best[3], best[4]];
+  const learned = learnOrder(Array.from({ length: 3 }, () => ({ kind: 'order', a, b, verdict: 'down', reasons: ['energy'] })));
+  assert.ok(learned.weights.energy > 1);
+  for (let s = 0; s < 5; s++) {
+    const o = buildSetOrder(list, [], s ? s * 104729 : 0, learned).map((t) => t.id);
+    const i = o.indexOf(a);
+    assert.notEqual(o[i + 1], b, `abgelehntes Paar ${a}>${b} in Variante ${s}`);
+  }
+});
+
+test('Übergangs-Bewertung gilt vor allem für die bewerteten Songs', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const base = planTransition({ out, inc });
+  const bad = Array.from({ length: 4 }, () => ({ verdict: 'down', type: base.type, genres: base.genres, outId: 'a', inId: 'b', reasons: ['early'] }));
+  const l = learn(bad);
+  // für genau dieses Paar: andere Technik, und "zu früh" gilt für Song a
+  assert.notEqual(planTransition({ out, inc, bias: l.bias, tune: l.tune, trackTune: l.trackTune }).type, base.type);
+  assert.ok(l.trackTune.a.exitShift > l.tune.exitShift, 'zu früh gilt nicht vor allem für den Song');
+  // für andere Songs mit gleicher Richtung bleibt die Technik erhalten
+  const other = planTransition({ out: { ...out, id: 'c' }, inc: { ...inc, id: 'd' }, bias: l.bias, tune: l.tune, trackTune: l.trackTune });
+  assert.equal(other.type, base.type, `andere Songs bekommen jetzt ${other.type}`);
+});

@@ -16,6 +16,13 @@ export const REASONS = {
   mismatch: 'passt nicht zusammen',
 };
 
+/** Gründe für ein 👎 bei der Reihenfolge ("passte der Song an diese Stelle?"). */
+export const ORDER_REASONS = {
+  energy: 'Energie passt nicht',
+  style: 'Stil passt nicht',
+  tempo: 'Tempo-Sprung',
+};
+
 /** Gründe für ein 👎 bei der Lasershow. */
 export const LASER_REASONS = {
   hectic: 'zu hektisch',
@@ -63,22 +70,37 @@ export function learn(entries = loadFeedback()) {
   const all = entries;
   entries = entries.filter((e) => !e.kind || e.kind === 'transition');
   const recent = entries.slice(-120);
+  const trackCount = {}; // Gründe pro Song: "zu früh" bei Song X heißt nicht "überall zu früh"
+  const add = (k, v) => (bias[k] = (bias[k] ?? 0) + v);
   recent.forEach((e, i) => {
     const w = 0.5 + (0.5 * (i + 1)) / recent.length; // neuere stärker
     const d = (e.verdict === 'up' ? 0.15 : -0.25) * w;
-    bias[e.type] = (bias[e.type] ?? 0) + d;
-    const pair = `${e.type}@${e.genres?.[0]}>${e.genres?.[1]}`;
-    bias[pair] = (bias[pair] ?? 0) + 1.5 * d;
-    for (const r of e.reasons || []) count[r] = (count[r] ?? 0) + w;
+    // Ein Übergang gilt vor allem für genau diese Songs – allgemein nur schwach
+    add(e.type, (e.outId ? 0.4 : 1) * d);
+    add(`${e.type}@${e.genres?.[0]}>${e.genres?.[1]}`, (e.outId ? 0.8 : 1.5) * d);
+    if (e.outId) add(`${e.type}#out:${e.outId}`, 2 * d);
+    if (e.inId) add(`${e.type}#in:${e.inId}`, 1.5 * d);
+    for (const r of e.reasons || []) {
+      count[r] = (count[r] ?? 0) + (e.outId ? 0.4 : 1) * w;
+      if (e.outId) {
+        const tc = (trackCount[e.outId] ||= {});
+        tc[r] = (tc[r] ?? 0) + w;
+      }
+    }
   });
-  for (const k of Object.keys(bias)) bias[k] = clamp(bias[k], -1.2, 0.6);
-  const c = (k) => count[k] ?? 0;
-  const tune = {
-    lengthScale: clamp(1 - 0.08 * c('long') + 0.08 * c('short'), 0.55, 1.5),
-    exitShift: clamp(0.15 * (c('early') - c('late')), -0.8, 0.8),
-    hardness: clamp(0.2 * c('hard'), 0, 1.2),
+  for (const k of Object.keys(bias)) bias[k] = clamp(bias[k], -1.5, 0.8);
+  const tuneOf = (cnt) => {
+    const c = (k) => cnt[k] ?? 0;
+    return {
+      lengthScale: clamp(1 - 0.08 * c('long') + 0.08 * c('short'), 0.55, 1.5),
+      exitShift: clamp(0.15 * (c('early') - c('late')), -0.8, 0.8),
+      hardness: clamp(0.2 * c('hard'), 0, 1.2),
+    };
   };
-  return { bias, tune, n: entries.length, trick: learnFreestyle(all), laser: learnLaser(all) };
+  const tune = tuneOf(count);
+  const trackTune = {};
+  for (const [id, cnt] of Object.entries(trackCount)) trackTune[id] = tuneOf(Object.fromEntries(Object.entries(cnt).map(([k, v]) => [k, 2 * v])));
+  return { bias, tune, trackTune, n: entries.length, trick: learnFreestyle(all), laser: learnLaser(all), order: learnOrder(all) };
 }
 
 /**
@@ -97,6 +119,34 @@ export function learnFreestyle(entries = loadFeedback()) {
   const weights = {};
   for (const [k, v] of Object.entries(sum)) weights[k] = clamp(Math.exp(v), 0.03, 3);
   return { weights, teaserShift: clamp(teaser, -0.4, 1.2), n: list.length };
+}
+
+/**
+ * Reihenfolge: "Passte dieser Song nach dem vorigen?" – gute/schlechte Paare (gilt leicht auch
+ * andersherum) und wie stark Energie, Stil und Tempo beim Sortieren zählen.
+ */
+export function learnOrder(entries = loadFeedback()) {
+  const list = entries.filter((e) => e.kind === 'order' && e.a && e.b).slice(-200);
+  const pairs = {};
+  const count = {};
+  const add = (k, v) => (pairs[k] = (pairs[k] ?? 0) + v);
+  for (const e of list) {
+    const d = e.verdict === 'up' ? -0.5 : 1; // Kosten: negativ = gutes Paar
+    add(`${e.a}>${e.b}`, d);
+    add(`${e.b}>${e.a}`, 0.4 * d);
+    for (const r of e.reasons || []) count[r] = (count[r] ?? 0) + 1;
+  }
+  for (const k of Object.keys(pairs)) pairs[k] = clamp(pairs[k], -1.5, 3);
+  const c = (k) => count[k] ?? 0;
+  return {
+    pairs,
+    weights: {
+      energy: clamp(1 + 0.12 * c('energy'), 1, 2.5),
+      genre: clamp(1 + 0.12 * c('style'), 1, 2.5),
+      tempo: clamp(1 + 0.12 * c('tempo'), 1, 2.5),
+    },
+    n: list.length,
+  };
 }
 
 /**
