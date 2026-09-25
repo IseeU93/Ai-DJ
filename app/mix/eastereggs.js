@@ -8,7 +8,8 @@
 
 import { barToSeconds, secondsToBeat, localBpm } from './planner.js';
 
-const EGG_LOOP_BARS = 7;
+const EGG_LOOP_BARS = 7; // so lange läuft der Loop
+const EGG_LOOP_LEN = 0.5; // Loop-Länge: halber Takt = genau "one more time"
 const CUE_SLOT = 7; // Hot Cue 8
 
 // Bekannte Versionen (erkannt an der Länge in Sekunden). Starships: Zeit des "one" von "... let's do
@@ -94,7 +95,7 @@ export function planEasterEgg(opts) {
 
   const steps = [
     { at: 0, deck: 'in', param: 'fader', to: 0, dur: 0 },
-    { at: off, deck: 'out', action: 'loop', bars: 1, anchor: off },
+    { at: off, deck: 'out', action: 'loop', bars: EGG_LOOP_LEN, anchor: off },
     { at: sw, deck: 'in', param: 'fader', to: 1, dur: 0 },
     { at: sw, deck: 'in', action: 'play' },
     { at: sw, deck: 'out', param: 'fader', to: 0, dur: 0 },

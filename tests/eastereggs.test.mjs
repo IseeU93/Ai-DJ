@@ -31,7 +31,7 @@ test('Easter Egg: "one more time" (2:08) 7 Takte im Loop, dann hart auf den Gesa
   const loop = plan.steps.find((x) => x.action === 'loop');
   assert.equal(loop.at, loop.anchor);
   assert.equal((plan.outBar + loop.anchor) * 4, Math.round((128.0 - a.firstBeat) / a.beatInterval));
-  assert.equal(loop.bars, 1);
+  assert.equal(loop.bars, 0.5); // halber Takt: genau "one more time"
   const play = plan.steps.find((x) => x.action === 'play');
   assert.equal(play.at, loop.at + 7);
   assert.ok(plan.steps.some((x) => x.deck === 'out' && x.action === 'stop' && x.at === play.at));
