@@ -71,6 +71,9 @@ export function transitionCost(a, b, w = null) {
   const ks = keySync(A.key.camelot, B.key.camelot);
   const key = ks.dist + 0.12 * Math.abs(ks.semis);
   const energy = Math.abs((a.energy ?? 0.5) - (b.energy ?? 0.5));
+  // Stimmung: Party-Kracher direkt vor einer Ballade (oder umgekehrt) passt nie, egal wie gut
+  // Tempo und Tonart zusammenpassen
+  const mood = 1.8 * Math.max(0, Math.abs(danceability(a) - danceability(b)) - 0.3);
   // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
   const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);
   const introCost = intro >= 16 ? 0 : intro >= 8 ? 0.1 : 0.25;
@@ -85,7 +88,7 @@ export function transitionCost(a, b, w = null) {
   // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
   const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
     + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
-  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.3 * (w?.energy ?? 1) * energy + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
+  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
@@ -121,14 +124,48 @@ function rng(seed) {
 }
 
 /** Energie 0..1 pro Track über Ränge (unabhängig von Mastering-Lautheit). */
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const CALM_TAGS = /ballad|acoustic|singer[- ]?songwriter|folk|soft rock|piano|ambient|chill|downtempo|lo-?fi|soul|jazz|classical|lullaby/;
+const PARTY_TAGS = /party|dance|edm|house|techno|hardstyle|hardcore|uptempo|schlager|club|eurodance|electro|reggaeton|latin|hip hop|rap|trap/;
+
+/**
+ * Tanzbarkeit 0..1 (Party-/Clubtrack vs. Ballade): feste, deutlich herausstechende Schläge,
+ * stabiles Beat-Raster (Balladen schweben, 6/8-Songs wie "Perfect" wiegen), durchgehende Kick;
+ * dazu die Online-Tags (Ballade/Akustik vs. Party/Dance).
+ */
+export function danceability(t) {
+  const a = t.analysis || {};
+  const grid = clamp01(((a.gridConfidence ?? 0.6) - 0.2) / 0.55);
+  const ff = clamp01(((a.fourFloor ?? 0.5) - 0.35) / 0.55);
+  let d = a.pulse !== undefined
+    ? 0.4 * clamp01((a.pulse - 3) / 7) + 0.35 * grid + 0.25 * ff
+    : 0.55 * grid + 0.45 * ff; // ältere Analysen ohne Beat-Stärke
+  const tags = [t.webInfo?.itunes, ...(t.webInfo?.tags || []).slice(0, 5).map((x) => x.name)].filter(Boolean).join(' ').toLowerCase();
+  if (tags) {
+    if (CALM_TAGS.test(tags)) d -= 0.15;
+    if (PARTY_TAGS.test(tags)) d += 0.1;
+  }
+  if (t.genre === 'hardstyle' || t.genre === 'uptempo' || t.genre === 'edm') d += 0.1;
+  return clamp01(d);
+}
+
 export function assignEnergy(tracks) {
   const rank = (key) => {
     const sorted = [...tracks].sort((x, y) => key(x) - key(y));
     const r = new Map();
-    sorted.forEach((t, i) => r.set(t, sorted.length > 1 ? i / (sorted.length - 1) : 0.5));
+    const n = sorted.length;
+    // Gleichstand = gleicher (mittlerer) Rang – sonst entstünden Energie-Unterschiede aus dem Nichts
+    for (let i = 0; i < n; ) {
+      let j = i;
+      while (j + 1 < n && key(sorted[j + 1]) === key(sorted[i])) j++;
+      const v = n > 1 ? (i + j) / 2 / (n - 1) : 0.5;
+      for (let k = i; k <= j; k++) r.set(sorted[k], v);
+      i = j + 1;
+    }
     return r;
   };
-  const rInt = rank((t) => t.analysis.intensity);
+  // (früher "intensity" – die ist durch die Normierung bei jedem Song gleich; jetzt die Tanzbarkeit)
+  const rInt = rank((t) => danceability(t));
   const rBpm = rank((t) => t.analysis.bpm);
   const rBass = rank((t) => t.analysis.bassWeight);
   const rBright = rank((t) => t.analysis.brightness);

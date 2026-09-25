@@ -132,7 +132,7 @@ test('Set-Reihenfolge: ruhiger Start, harmonische Nachbarn', () => {
     analysis: {
       bpm: 124 + (i % 3),
       key: { camelot: k },
-      intensity: i,
+      pulse: 3 + i,
       bassWeight: i,
       brightness: 0,
     },
@@ -727,4 +727,20 @@ test('Freestyle-Tricks nur an echten Abschnittswechseln, Echo/Hall nie über ein
     }
   }
   assert.ok(n > 0, 'gar keine Tricks mehr');
+});
+
+test('KI-Reihenfolge: Ballade kommt nie direkt nach einem Party-Kracher (gleiches Tempo, passende Tonart)', async () => {
+  const { danceability } = await import('../app/mix/order.js');
+  const mk = (id, extra) => ({ id, artist: id, analysis: { bpm: 95, key: { camelot: '9B' }, points: { dropBar: 16, startBar: 0, lastBar: 90 }, bassWeight: -6, brightness: -12, ...extra } });
+  const ballad = mk('perfect', { gridConfidence: 0.16, fourFloor: 0.52, pulse: 5.3 });
+  const party = mk('westerland', { gridConfidence: 0.96, fourFloor: 0.93, pulse: 10.2 });
+  assert.ok(danceability(party) - danceability(ballad) > 0.5);
+  const others = Array.from({ length: 6 }, (_, i) => mk(`p${i}`, { gridConfidence: 0.9, fourFloor: 0.85, pulse: 9 + (i % 3), key: { camelot: ['9B', '10B', '8B'][i % 3] } }));
+  const tracks = [party, ballad, ...others];
+  assignEnergy(tracks);
+  for (const seed of [0, 5, 77, 901]) {
+    const order = buildSetOrder(tracks, [], seed);
+    const i = order.indexOf(ballad);
+    assert.ok(i === 0 || i === order.length - 1, `Seed ${seed}: Ballade mitten im Party-Block (Pos ${i + 1})`);
+  }
 });

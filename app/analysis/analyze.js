@@ -942,6 +942,18 @@ export function analyzeTrack(L, R, sr, override = null) {
   let fluxSum = 0;
   for (const v of env) fluxSum += v;
   const intensity = fluxSum / env.length;
+  // Beat-Stärke: wie deutlich die Anschläge genau auf den Schlägen herausstechen (Party-/Clubtrack
+  // hoch, Ballade mit weichem, schwebendem Rhythmus niedrig) – für die Stimmung in der Reihenfolge.
+  // ("intensity" oben ist durch die Normierung der Hüllkurve immer gleich und taugt dafür nicht.)
+  let onBeat = 0;
+  let nBeat = 0;
+  for (let k = 0; k < beatCount; k++) {
+    const f = ((beatTime(k) - ONSET_CALIB_S) * sr) / ONSET_HOP;
+    if (f < 1 || f >= env.length - 1) continue;
+    onBeat += Math.max(env[Math.floor(f)], env[Math.ceil(f)]);
+    nBeat++;
+  }
+  const pulse = nBeat ? onBeat / nBeat / (intensity || 1) : 1;
   const brightness = mainBars.length
     ? mainBars.reduce((a, b) => a + (bars[b].high - bars[b].rms), 0) / mainBars.length
     : 0;
@@ -1011,6 +1023,7 @@ export function analyzeTrack(L, R, sr, override = null) {
     },
     loudness: { mainRms, gainDb },
     intensity,
+    pulse,
     brightness,
     bassWeight,
     waveform: { rate: WAVE_RATE, low: wLow, mid: wMid, high: wHigh },
