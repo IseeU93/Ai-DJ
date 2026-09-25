@@ -1134,20 +1134,22 @@ async function boot() {
   $('#queue-search').oninput = renderQueue;
   // Musikwunsch: Text oder Schnellknopf -> passende Songs kommen als Nächstes
   let wishUndo = null;
+  let lastWish = null; // für die Handy-App: was zuletzt gewünscht und verstanden wurde
   const doWish = (text) => {
-    if (!text.trim()) return;
+    if (!String(text || '').trim()) return;
     const r = conductor.applyWish(text);
+    let msg;
     if (r.wish.empty) {
-      toast('Nicht verstanden – probier z. B. „ruhiger“, „Party“, „Schlager“, „härter“, „Hip-Hop“ oder einen Interpreten');
-      return;
+      msg = 'Nicht verstanden – probier z. B. „ruhiger“, „Party“, „Schlager“, „härter“, „Hip-Hop“ oder einen Interpreten';
+    } else if (!r.tracks.length) {
+      msg = `Nichts Passendes gefunden für: ${r.wish.summary.join(', ')}`;
+    } else {
+      wishUndo = r.undo;
+      $('#wish-undo').hidden = false;
+      msg = `Verstanden: ${r.wish.summary.join(', ')} → als Nächstes: ${r.tracks.slice(0, 3).map((t) => t.title).join(', ')}${r.tracks.length > 3 ? ` (+${r.tracks.length - 3})` : ''}`;
     }
-    if (!r.tracks.length) {
-      toast(`Nichts Passendes gefunden für: ${r.wish.summary.join(', ')}`);
-      return;
-    }
-    wishUndo = r.undo;
-    $('#wish-undo').hidden = false;
-    toast(`Verstanden: ${r.wish.summary.join(', ')} → als Nächstes: ${r.tracks.slice(0, 3).map((t) => t.title).join(', ')}${r.tracks.length > 3 ? ` (+${r.tracks.length - 3})` : ''}`);
+    toast(msg);
+    lastWish = { text: String(text), ok: !!r.tracks.length, message: msg, titles: r.tracks.map((t) => t.title), canUndo: !!r.tracks.length, at: Date.now() };
   };
   $('#wish-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doWish(e.target.value);
@@ -1159,8 +1161,9 @@ async function boot() {
   };
   $('#wish-undo').onclick = () => {
     if (!wishUndo) return;
-    if (wishUndo()) toast('Wunsch zurückgenommen – vorige Reihenfolge');
-    else toast('Geht nicht mehr – davon läuft schon etwas');
+    const ok = wishUndo();
+    toast(ok ? 'Wunsch zurückgenommen – vorige Reihenfolge' : 'Geht nicht mehr – davon läuft schon etwas');
+    if (lastWish) lastWish = { ...lastWish, canUndo: false, message: ok ? 'Wunsch zurückgenommen' : 'Rückgängig geht nicht mehr – davon läuft schon etwas', at: Date.now() };
     wishUndo = null;
     $('#wish-undo').hidden = true;
   };
@@ -1318,6 +1321,9 @@ async function boot() {
       lastTransition: () => (lastTransition ? { label: lastTransition.label, title: lastTransition.inc?.title || '' } : null),
       lastTrick: () => (lastTrick ? { kind: lastTrick.kind, name: lastTrick.name || TRICKS[lastTrick.kind] || '' } : null),
       rateTrick,
+      wish: (text) => doWish(text),
+      undoWish: () => $('#wish-undo').click(),
+      lastWish: () => lastWish,
       lastPair: () => (lastPair ? { title: lastPair.title } : null),
       rateOrder: (verdict, reason) => rateOrder(verdict, reason),
     },
