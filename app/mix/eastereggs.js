@@ -15,15 +15,15 @@ const CUE_SLOT = 7; // Hot Cue 8
 // Bekannte Versionen (erkannt an der Länge in Sekunden). Starships: Zeit des "one" von "... let's do
 // this one more time" (liegt jeweils auf der Eins), bevorzugte Stelle zuerst (Refrain um 2:10).
 // One More Time: Einsatz "One more time, we're gonna celebrate" nach dem Intro.
-// Lyrics-Version (3:49) und Radio Edit (3:55) per Spracherkennung + Onset gemessen; Album-Versionen
-// aus synchronisierten Lyrics.
+// Starships Lyrics-Version (3:49), One More Time Radio Edit (3:55) und Album (5:20) per Spracherkennung +
+// Onset an echten Dateien gemessen; Starships Album/Single aus synchronisierten Lyrics.
 const STARSHIPS = [
   { duration: [226, 232], ones: [129.91, 175.99, 53.11] }, // "Starships (Lyrics)"
   { duration: [204, 217], ones: [128.0, 174.1, 51.1] }, // Album/Single 3:30
 ];
 const ONE_MORE_TIME = [
   { duration: [233, 238], vocal: 62.88 }, // Radio Edit 3:55
-  { duration: [300, 330], vocal: 30.75 }, // Album 5:20
+  { duration: [300, 330], vocal: 30.35 }, // Album 5:20 (gemessen; Lyrics-Daten sagen 30.75 = einen Schlag zu spät)
 ];
 const version = (list, dur) => list.find((v) => dur >= v.duration[0] && dur <= v.duration[1]) || null;
 
