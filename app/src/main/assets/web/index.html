@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <script src="phone-shim.js"></script>
+  <meta charset="utf-8" />
+  <title>Automix</title>
+  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+ <div class="shell" id="shell" data-laser="off" data-side="right">
+  <div class="app">
+    <header class="topbar">
+      <span class="brand"><img src="logo.png" alt="" />Automix</span>
+      <button class="btn" id="btn-library" title="Bibliothek: Ordner durchstöbern, Tracks einreihen oder sofort reinmixen – ohne die laufende Musik zu ändern">Bibliothek</button>
+      <button class="btn" id="btn-folder" title="Oberordner wählen – Unterordner erscheinen als Playlists">Ordner wählen</button>
+      <span class="folder" id="folder">Kein Ordner geladen</span>
+      <div class="plpick" id="playlist" hidden>
+        <button class="sel plpick-btn" id="pl-btn" title="Playlists (Unterordner) an- und abwählen – mehrere gleichzeitig möglich">Playlists</button>
+        <div class="plpick-menu" id="pl-menu" hidden>
+          <div class="plpick-head">
+            <a href="#" id="pl-all">Alle</a>
+            <a href="#" id="pl-none">Keine</a>
+          </div>
+          <div class="plpick-list" id="pl-list"></div>
+          <button class="btn primary" id="pl-apply">Übernehmen</button>
+        </div>
+      </div>
+      <select class="sel" id="playlist-genre" title="Musikrichtung für die ganze Playlist (einzelne Tracks in der Queue überschreibbar)" hidden></select>
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><i></i></div>
+        <span></span>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-phone" title="Handy-App (AI-DJ Companion) verbinden: Adresse und PIN">Handy</button>
+      <button class="btn" id="btn-laser" title="Lasershow einblenden – synchron zur Musik, gesteuert aus der Track-Analyse (Taste L)">Lasershow</button>
+      <span class="lz-top" id="lz-top" hidden>
+        <span class="lz-top-fx" id="lz-top-fx" title="Laser-Effekt, der gerade läuft"></span>
+        <button class="btn small" id="lz-top-up" title="Dieser Laser-Effekt passt gerade – öfter so">👍</button>
+        <button class="btn small" id="lz-top-down" title="Passt nicht – Grund wählen">👎</button>
+        <span class="lz-top-reasons" id="lz-top-reasons" hidden></span>
+      </span>
+      <label class="switch" title="Übergänge automatisch planen und fahren – deine Queue-Reihenfolge bleibt">
+        <input type="checkbox" id="automix" checked /><i></i><span>Automix</span>
+      </label>
+      <label class="switch" title="Freestyle: mixt frei wie ein DJ – Mashups, Loop-Rolls, hin und her mischen, und spielt mit dem laufenden Track (Echo-Würfe, Filter-Sweeps, Bass-Cuts, Beat-Repeats)">
+        <input type="checkbox" id="freestyle" /><i></i><span>Freestyle</span>
+      </label>
+      <label class="switch" title="Voller Autopilot: startet selbst, sortiert die Queue laufend neu, wählt alle Übergänge und spielt endlos weiter">
+        <input type="checkbox" id="autopilot" /><i></i><span>Autopilot</span>
+      </label>
+      <div class="master">
+        <span class="lbl">Master</span>
+        <div class="slider h" id="master-vol" style="width: 120px"></div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <section class="deck" data-deck="0"></section>
+      <section class="mixer">
+        <div class="strips">
+          <div class="strip" data-deck="0"></div>
+          <div class="strip" data-deck="1"></div>
+        </div>
+        <div class="xfader">
+          <span class="lbl">A</span>
+          <div class="slider h" id="xfader"></div>
+          <span class="lbl">B</span>
+        </div>
+      </section>
+      <section class="deck" data-deck="1"></section>
+    </main>
+
+    <section class="transition">
+      <div class="tr-info">
+        <div class="lbl" id="tr-title">Nächster Übergang</div>
+        <div class="name" id="tr-name">–</div>
+        <div class="notes" id="tr-notes"></div>
+        <div class="reason" id="tr-reason"></div>
+        <div class="trick-row" id="trick-row" hidden>
+          <span class="trick" id="tr-trick"></span>
+          <button class="btn small" id="trick-up" title="Gut – öfter so">👍</button>
+          <button class="btn small" id="trick-down" title="Nicht gut – seltener">👎</button>
+        </div>
+        <div class="tr-rate" id="tr-rate" hidden>
+          <span class="lbl">Letzter Übergang</span>
+          <span class="rate-name" id="rate-name"></span>
+          <button class="btn small" id="rate-up" title="Gut – öfter so">👍</button>
+          <button class="btn small" id="rate-down" title="Nicht gut – Grund wählen">👎</button>
+          <span class="rate-reasons" id="rate-reasons" hidden></span>
+        </div>
+        <div class="tr-rate" id="order-rate" hidden>
+          <span class="lbl">Reihenfolge</span>
+          <span class="rate-name" id="order-name"></span>
+          <button class="btn small" id="order-up" title="Passte gut an diese Stelle – solche Paare öfter">👍</button>
+          <button class="btn small" id="order-down" title="Passte nicht – Grund wählen">👎</button>
+          <span class="rate-reasons" id="order-reasons" hidden></span>
+        </div>
+        <div class="tr-learned" id="tr-learned"></div>
+      </div>
+      <div class="tr-timeline"><canvas id="tr-canvas"></canvas></div>
+      <div class="tr-actions">
+        <span class="tr-count" id="tr-count"></span>
+        <select class="sel" id="tr-type"></select>
+        <button class="btn" id="btn-jump" title="Test: 4 Takte vor den geplanten Übergang springen">Zum Übergang</button>
+        <button class="btn" id="btn-extend" title="Song kommt gut an: Übergang 16 Takte später (mehrfach drückbar)">Länger spielen</button>
+        <button class="btn" id="btn-mixnow">Jetzt mixen</button>
+      </div>
+    </section>
+
+    <div class="phonewin" id="phonewin" hidden>
+      <div class="libwin-head"><b>Handy verbinden</b><div class="spacer"></div><button class="btn small" id="phone-close">×</button></div>
+      <div class="phone-body">
+        <p>In der App <b>AI-DJ Companion</b> auf „Suchen“ tippen oder die Adresse eingeben:</p>
+        <div class="phone-addr" id="phone-addr">–</div>
+        <p>PIN</p>
+        <div class="phone-pin" id="phone-pin">–</div>
+        <p class="phone-status" id="phone-status"></p>
+        <p class="phone-hint">Handy und PC müssen im selben WLAN sein. Beim ersten Start fragt Windows, ob Automix
+        im privaten Netzwerk erreichbar sein darf – bitte zulassen.</p>
+      </div>
+    </div>
+
+    <div class="libwin" id="libwin" hidden>
+      <div class="libwin-head">
+        <b>Bibliothek</b>
+        <span class="folder" id="lib-root"></span>
+        <button class="btn small" id="lib-open">Anderer Ordner …</button>
+        <div class="spacer"></div>
+        <button class="btn small" id="lib-take" title="Nach dem aktuellen Track mit dieser Playlist weitermachen (KI-sortiert)">Playlist übernehmen</button>
+        <button class="btn small" id="lib-close" title="Schließen">×</button>
+      </div>
+      <div class="libwin-body">
+        <div class="lib-folders" id="lib-folders"></div>
+        <div class="lib-tracks">
+          <div class="lib-status" id="lib-status"></div>
+          <input class="lib-search" id="lib-search" type="search" placeholder="Suchen … (auch in allen anderen Ordnern)" />
+          <div id="lib-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <section class="queue">
+      <div class="queue-head">
+        <h2>Queue</h2>
+        <span class="info" id="queue-info"></span>
+        <span class="queue-warn" id="queue-warn" hidden></span>
+        <div class="spacer"></div>
+        <input class="queue-search" id="queue-search" type="search" placeholder="Suchen … (Strg+F)" title="Wiedergabeliste nach Titel oder Interpret filtern" />
+        <button class="btn" id="btn-reorder" title="Beste Reihenfolge für die Übergänge (Tempo, Tonart, Intros/Outros, Energie-Verlauf)">KI-Reihenfolge</button>
+        <button class="btn" id="btn-reshuffle" title="Andere Reihenfolge, die ebenfalls gut ineinander passt">Reshuffle</button>
+        <button class="btn primary" id="btn-start" disabled>Start</button>
+      </div>
+      <div class="wishbar">
+        <input class="wish-input" id="wish-input" type="text" placeholder="Was als Nächstes? z. B. „was Ruhigeres“, „Schlager“, „härter“, „Hip-Hop“, „130 BPM“, „Helene Fischer“ – Enter" title="Musikwunsch: die passendsten Songs kommen als Nächstes (auch aus anderen Ordnern der Bibliothek)" />
+        <button class="btn" id="wish-go">Wunsch</button>
+        <span class="wish-chips" id="wish-chips">
+          <button class="btn small" data-w="Party">Party</button>
+          <button class="btn small" data-w="ruhig">Ruhig</button>
+          <button class="btn small" data-w="härter">Härter</button>
+          <button class="btn small" data-w="weicher">Weicher</button>
+          <button class="btn small" data-w="schneller">Schneller</button>
+          <button class="btn small" data-w="langsamer">Langsamer</button>
+          <button class="btn small" data-w="Hip-Hop">Hip-Hop</button>
+          <button class="btn small" data-w="House">House</button>
+          <button class="btn small" data-w="Schlager">Schlager</button>
+          <button class="btn small" data-w="Hardstyle">Hardstyle</button>
+        </span>
+        <button class="btn small" id="wish-undo" hidden title="Wunsch zurücknehmen – vorige Reihenfolge wiederherstellen">↶ Rückgängig</button>
+      </div>
+      <div class="qlist" id="queue"></div>
+      <div class="removed" id="removed" hidden></div>
+    </section>
+  </div>
+
+  <div class="splitter" id="lz-split" title="Ziehen: Aufteilung ändern · Doppelklick: zurücksetzen"></div>
+  <section class="laserpane" id="laserpane" hidden>
+    <div class="lz-head">
+      <b>Lasershow</b>
+      <span class="lz-status" id="lz-status"></span>
+      <span class="lz-rate">
+        <button class="btn small" id="lz-up" title="Dieser Effekt passt gerade – öfter so">👍</button>
+        <button class="btn small" id="lz-down" title="Passt nicht – Grund wählen">👎</button>
+        <span class="lz-reasons" id="lz-reasons" hidden></span>
+      </span>
+      <div class="spacer"></div>
+      <div class="seg" id="lz-mode">
+        <button data-mode="split" title="Mixer und Laser nebeneinander">Geteilt</button>
+        <button data-mode="full" title="Nur Laser (Esc zurück)">Vollbild</button>
+      </div>
+      <button class="btn small" id="lz-swap" title="Laser links/rechts">⇄</button>
+      <button class="btn small" id="lz-beamer" title="Eigenes Fenster für Beamer/2. Monitor (dort Doppelklick = Vollbild)">Beamer-Fenster</button>
+      <button class="btn small" id="lz-close" title="Lasershow ausblenden">×</button>
+    </div>
+    <div class="lz-view">
+      <canvas id="lz-canvas"></canvas>
+      <div class="lz-overlay" id="lz-overlay">
+        <span class="lz-now" id="lz-now"></span>
+        <button class="btn small" id="lz-mixnow">Jetzt mixen</button>
+        <button class="btn small" id="lz-exitfull">Mixer zeigen</button>
+      </div>
+    </div>
+    <div class="lz-controls">
+      <label class="switch" title="Choreograph wählt Effekte, Farben, Strobe und Blackouts passend zur Musik"><input type="checkbox" id="lz-auto" /><i></i><span>Autopilot</span></label>
+      <label class="switch" title="Beatgrid, Builds und Drops aus der MP3-Analyse statt live geraten – Szenenwechsel exakt auf der Eins, Blackout genau vor dem Drop"><input type="checkbox" id="lz-sync" /><i></i><span>Track-Sync</span></label>
+      <label class="switch" title="Farben aus der Tonart des laufenden Tracks"><input type="checkbox" id="lz-keycol" /><i></i><span>Tonart-Farben</span></label>
+      <label class="switch" title="Strobe/Blitze erlauben"><input type="checkbox" id="lz-strobe" /><i></i><span>Strobe</span></label>
+      <select class="sel" id="lz-intensity" title="Wie heftig die Show eskaliert – Auto richtet sich nach der Musikrichtung des Tracks">
+        <option value="auto">Intensität: Auto (Genre)</option>
+        <option value="0.2">Intensität: Niedrig</option>
+        <option value="0.45">Intensität: Mittel</option>
+        <option value="0.7">Intensität: Hoch</option>
+        <option value="1">Intensität: Vollgas</option>
+      </select>
+      <select class="sel" id="lz-effect" title="Effekt (nur ohne Autopilot)"></select>
+      <select class="sel" id="lz-palette" title="Farbe (nur ohne Autopilot)"></select>
+      <button class="btn small" id="lz-blackout" title="Laser sofort aus (B)">Blackout</button>
+    </div>
+  </section>
+ </div>
+</body>
+</html>

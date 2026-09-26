@@ -15,8 +15,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
 /**
- * Verbindung zum AI-DJ auf dem PC (Companion-Server, Port 7777).
- * Status per Long-Polling, Befehle per POST, Suche per UDP-Broadcast (Port 7778).
+ * Verbindung zum Mixer – entweder zum AI-DJ auf dem PC (Companion-Modus: Companion-Server, Port 7777,
+ * Status per Long-Polling, Befehle per POST, Suche per UDP-Broadcast auf Port 7778) oder zum
+ * eingebauten Mixer auf dem Handy (Selbst-Modus, siehe [SelfEngine]).
  */
 object DjRepo {
     data class Found(val host: String, val port: Int, val name: String)
@@ -29,6 +30,13 @@ object DjRepo {
     var host = ""
     var port = 7777
     var pin = ""
+
+    /** "companion" (PC steuern) oder "self" (Mixer läuft auf dem Handy) */
+    var mode = "companion"
+    val selfMode get() = mode == "self"
+
+    /** Selbst-Modus: Befehle gehen an den eingebauten Mixer statt an den PC */
+    @Volatile var localSend: ((String) -> Unit)? = null
 
     @Volatile var state: JSONObject? = null
         private set
@@ -45,11 +53,12 @@ object DjRepo {
         host = p.getString("host", "") ?: ""
         port = p.getInt("port", 7777)
         pin = p.getString("pin", "") ?: ""
+        mode = p.getString("mode", "companion") ?: "companion"
     }
 
     fun save(ctx: Context) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("host", host).putInt("port", port).putString("pin", pin).apply()
+            .putString("host", host).putInt("port", port).putString("pin", pin).putString("mode", mode).apply()
     }
 
     val configured get() = host.isNotBlank() && pin.length == 4
@@ -57,6 +66,20 @@ object DjRepo {
     fun addListener(l: () -> Unit) = listeners.add(l)
     fun removeListener(l: () -> Unit) = listeners.remove(l)
     private fun changed() = main.post { listeners.forEach { it() } }
+    fun notifyChanged() = changed()
+
+    /** Status vom eingebauten Mixer (Selbst-Modus). null = Mixer startet gerade. */
+    fun setLocalState(json: String?) {
+        if (json != null && state == null) android.util.Log.i("AutomixSelf", "Mixer auf dem Handy bereit (${json.length} Zeichen Status)")
+        state = try {
+            json?.let { JSONObject(it) }
+        } catch (_: Exception) {
+            state
+        }
+        connected = json != null
+        error = if (json == null) "Mixer startet …" else null
+        changed()
+    }
 
     private fun base() = "http://$host:$port"
 
@@ -115,6 +138,10 @@ object DjRepo {
     fun send(cmd: String, extra: Map<String, Any?> = emptyMap()) {
         val body = JSONObject().put("cmd", cmd)
         extra.forEach { (k, v) -> body.put(k, v) }
+        if (selfMode) {
+            localSend?.invoke(body.toString())
+            return
+        }
         sender.execute {
             try {
                 val c = URL("${base()}/api/cmd").openConnection() as HttpURLConnection
