@@ -476,10 +476,45 @@ function drawStructure(canvas, a) {
 
 let dragFrom = -1;
 
+// Queue folgt dem laufenden Track: wechselt er, rollt die Liste mit (der gerade gespielte bleibt
+// als Orientierung darüber sichtbar). Hat man selbst gerade gescrollt, wird man nicht weggerissen.
+const queueFollow = { pos: null, userAt: 0, programmatic: false };
+
+function followQueue(list) {
+  if (!list.dataset.follow) {
+    list.dataset.follow = '1';
+    list.addEventListener('scroll', () => {
+      if (queueFollow.programmatic) queueFollow.programmatic = false;
+      else queueFollow.userAt = Date.now();
+    });
+    // hat man gescrollt, wird das Mitrollen nachgeholt, sobald man 8 s nichts macht
+    setInterval(() => {
+      if (queueFollow.pos !== conductor.pos && Date.now() - queueFollow.userAt > 8000 && !$('#queue-search').value.trim()) {
+        queueFollow.pos = conductor.pos;
+        scrollToPlaying(list);
+      }
+    }, 2000);
+  }
+}
+
+function scrollToPlaying(list) {
+  const row = list.querySelector('.qrow.playing') || list.querySelector('.qrow:not(.header):not(.played)');
+  if (!row) return;
+  const head = list.querySelector('.qrow.header');
+  const prev = row.previousElementSibling?.classList.contains('played') ? row.previousElementSibling : null;
+  const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top
+    - (head ? head.offsetHeight : 0) - (prev ? prev.offsetHeight : 0);
+  if (Math.abs(offset) < 2) return;
+  queueFollow.programmatic = true;
+  list.scrollTop += offset;
+}
+
 function renderQueue() {
   previewCache = conductor.previewTransitions();
   const list = $('#queue');
   const q = conductor.queue;
+  followQueue(list);
+  const keepTop = list.scrollTop;
   list.innerHTML = '';
   if (!q.length) {
     list.innerHTML = loadingFolder
@@ -656,6 +691,16 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
   list.appendChild(tail);
 
   $('#queue-info').textContent = (filter ? `${hits} Treffer · ` : '') + `${q.length} Tracks · ${fmtTime(total)} gesamt · ${fmtTime(remaining)} verbleibend`;
+  // Neuer Track läuft (oder erstes Zeichnen): mitrollen – außer man hat gerade selbst gescrollt
+  // oder sucht etwas; sonst die eigene Scroll-Position behalten
+  const moved = queueFollow.pos !== conductor.pos;
+  if (moved && !filter && Date.now() - queueFollow.userAt > 8000) {
+    queueFollow.pos = conductor.pos;
+    setTimeout(() => scrollToPlaying(list), 0);
+  } else {
+    queueFollow.programmatic = list.scrollTop !== keepTop;
+    list.scrollTop = keepTop;
+  }
   renderRemoved();
   renderPlanInfo();
 }
