@@ -9,7 +9,8 @@ import { drawTimeline } from './ui/timeline.js';
 import { pickFolder, scanFolder } from './lib/tauri.js';
 import { loadSettings, saveSettings, gridOverride, setGridOverride, genreOverrides, setGenreOverride } from './lib/store.js';
 import { GENRES } from './mix/genre.js';
-import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedback } from './mix/feedback.js';
+import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedback, saveFeedback, feedbackListeners } from './mix/feedback.js';
+import { exportFeedback, importFeedback, mergeFeedback } from './lib/sync.js';
 import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 import { createWebGenre } from './lib/webgenre.js';
@@ -755,6 +756,21 @@ const ALL_PLAYLISTS = '__all__';
 let folderFiles = [];
 let folderRoot = '';
 
+/**
+ * Stand für den PC-/Handy-Abgleich melden: Musik-Ordner + Bewertungen (Track-Bezüge relativ zum
+ * Ordner). Der PC hält ihn für das Handy bereit, das Handy für den nächsten Abgleich mit dem PC.
+ */
+function pushSync() {
+  if (!folderRoot) return;
+  try {
+    const p = window.__TAURI__?.core?.invoke('sync_set', { root: folderRoot, feedback: JSON.stringify(exportFeedback(loadFeedback(), folderRoot)) });
+    p?.catch?.(() => {});
+  } catch {
+    /* ältere Hülle ohne Abgleich */
+  }
+}
+feedbackListeners.add(() => pushSync());
+
 /** Unterordner (erste Ebene) eines Pfads relativ zum gewählten Oberordner. */
 function playlistOf(path) {
   const rel = path.slice(folderRoot.length).replace(/^[\\/]+/, '');
@@ -807,6 +823,7 @@ async function loadFolder(path, playlist = loadSettings().playlists ?? loadSetti
     }
     folderRoot = path;
     folderFiles = files;
+    pushSync();
     $('#folder').textContent = path;
     $('#folder').title = path;
     saveSettings({ folder: path });
@@ -1367,6 +1384,20 @@ async function boot() {
       lastTrick: () => (lastTrick ? { kind: lastTrick.kind, name: lastTrick.name || TRICKS[lastTrick.kind] || '' } : null),
       rateTrick,
       wish: (text) => doWish(text),
+      // Abgleich mit dem anderen Gerät: Bewertungen zusammenführen, neue Tracks einlesen
+      mergeFeedback: (entries) => {
+        if (!Array.isArray(entries) || !folderRoot) return;
+        const before = loadFeedback();
+        const merged = mergeFeedback(before, importFeedback(entries, folderRoot), 400);
+        if (merged.length === before.length && merged.every((e, i) => e === before[i])) return;
+        saveFeedback(merged);
+        applyLearned();
+        const added = merged.length - before.length;
+        if (added > 0) toast(`${added} Bewertung${added > 1 ? 'en' : ''} vom anderen Gerät übernommen`);
+      },
+      reloadLibrary: () => {
+        if (folderRoot && !loadingFolder) loadFolder(folderRoot);
+      },
       undoWish: () => $('#wish-undo').click(),
       lastWish: () => lastWish,
       lastPair: () => (lastPair ? { title: lastPair.title } : null),

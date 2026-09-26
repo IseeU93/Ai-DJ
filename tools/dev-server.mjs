@@ -3,7 +3,9 @@
 // Handy-App (Port 7779, PIN 1234 – 7777 bleibt für die echte App frei), damit sich die App auch gegen den Browser testen lässt.
 //   node tools/dev-server.mjs <musikordner> [port]
 import { createServer } from 'node:http';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdir, rename } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { extname, join, resolve } from 'node:path';
 
 const root = resolve(new URL('../app', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
@@ -20,6 +22,7 @@ window.__TAURI__ = { core: { invoke: async (cmd, args) => {
   if (cmd === 'companion_push') return fetch('/__companion/push', { method: 'POST', body: args.state });
   if (cmd === 'companion_event') return fetch('/__companion/event', { method: 'POST', body: args.event });
   if (cmd === 'companion_info') return (await fetch('/__companion/info')).json();
+  if (cmd === 'sync_set') return fetch('/__companion/sync', { method: 'POST', body: JSON.stringify(args) });
   if (cmd === 'web_get') { const r = await fetch('/__web?u=' + encodeURIComponent(args.url)); if (!r.ok) throw new Error(await r.text()); return r.text(); }
   throw new Error('unbekannt: ' + cmd);
 } }, event: { listen: async (name, cb) => {
@@ -38,7 +41,26 @@ window.__TAURI__ = { core: { invoke: async (cmd, args) => {
 
 // ---- Companion-Emulation (gleiche API wie src-tauri/src/companion.rs)
 const PIN = '1234';
-const comp = { seq: 0, state: 'null', events: [], waiters: [], cmds: [], cmdWaiters: [], lastSeen: 0 };
+const comp = { seq: 0, state: 'null', events: [], waiters: [], cmds: [], cmdWaiters: [], lastSeen: 0, sync: { root: '', feedback: '[]' } };
+const AUDIO_EXT = /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i;
+// wie resolve() in companion.rs: nur im Musik-Ordner, nur Audio, keine ".."
+const resolveSync = (rel) => {
+  if (!comp.sync.root || !rel) return null;
+  const parts = rel.split('/');
+  if (parts.some((x) => !x || x === '.' || x === '..' || x.includes('\\') || x.includes(':'))) return null;
+  const full = join(comp.sync.root, ...parts);
+  return AUDIO_EXT.test(full) ? full : null;
+};
+const walkSync = async (dir, depth, out) => {
+  for (const name of await readdir(dir)) {
+    const p = join(dir, name);
+    const st = await stat(p);
+    if (st.isDirectory()) { if (depth < 4) await walkSync(p, depth + 1, out); continue; }
+    if (!AUDIO_EXT.test(name)) continue;
+    out.push({ p: p.slice(comp.sync.root.length).replace(/^[\\/]+/, '').split(/[\\/]/).join('/'), size: st.size, mtime: Math.floor(st.mtimeMs / 1000) });
+  }
+  return out;
+};
 const wake = () => { for (const w of comp.waiters.splice(0)) w(); };
 const readBody = (req) => new Promise((ok) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => ok(d)); });
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' }); res.end(typeof obj === 'string' ? obj : JSON.stringify(obj)); };
@@ -54,6 +76,29 @@ createServer(async (req, res) => {
     if (comp.seq <= since && wait > 0) await new Promise((ok) => { comp.waiters.push(ok); setTimeout(ok, wait * 1000); });
     const ev = comp.events.filter((e) => e.seq > since).map((e) => e.data);
     return json(res, 200, `{"seq":${comp.seq},"state":${comp.state},"events":[${ev.join(',')}]}`);
+  }
+  if (url.pathname === '/api/sync/feedback') return json(res, 200, `{"root":${JSON.stringify(comp.sync.root)},"feedback":${comp.sync.feedback || '[]'}}`);
+  if (url.pathname === '/api/sync/library') {
+    if (!comp.sync.root) return json(res, 409, { error: 'am PC ist noch kein Musik-Ordner geladen' });
+    return json(res, 200, await walkSync(comp.sync.root, 0, []));
+  }
+  if (url.pathname === '/api/sync/file') {
+    const f = resolveSync(url.searchParams.get('p') || '');
+    if (!f || !existsSync(f)) return json(res, 404, { error: 'Datei nicht gefunden' });
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': (await stat(f)).size });
+    return createReadStream(f).pipe(res);
+  }
+  if (url.pathname === '/api/sync/upload' && req.method === 'POST') {
+    const f = resolveSync(url.searchParams.get('p') || '');
+    if (!f) return json(res, 400, { error: 'Pfad nicht erlaubt' });
+    if (existsSync(f)) { req.resume(); return json(res, 200, { ok: true, skipped: true }); }
+    await mkdir(dirname(f), { recursive: true });
+    const tmp = f.replace(/\.[^.]+$/, '.part');
+    await new Promise((ok, fail) => req.pipe(createWriteStream(tmp)).on('finish', ok).on('error', fail));
+    await rename(tmp, f);
+    comp.cmds.push('{"cmd":"reloadLibrary"}');
+    for (const w of comp.cmdWaiters.splice(0)) w();
+    return json(res, 200, { ok: true });
   }
   if (url.pathname === '/api/cmd' && req.method === 'POST') {
     const b = await readBody(req);
@@ -96,6 +141,11 @@ createServer(async (req, res) => {
       comp.events.push({ seq: comp.seq, data: await readBody(req) });
       comp.events = comp.events.slice(-50);
       wake();
+      return json(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__companion/sync') {
+      const b = JSON.parse(await readBody(req));
+      comp.sync = { root: b.root || '', feedback: b.feedback || '[]' };
       return json(res, 200, { ok: true });
     }
     if (url.pathname === '/__companion/info') {

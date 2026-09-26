@@ -128,6 +128,8 @@ export function initCompanion({ engine, conductor, actions, onWarning }) {
     rateTrick: ({ verdict }) => actions.rateTrick?.(verdict),
     setPlaylists: ({ names }) => actions.setPlaylists?.(names),
     wish: ({ text }) => actions.wish?.(text),
+    mergeFeedback: ({ entries }) => actions.mergeFeedback?.(entries),
+    reloadLibrary: () => actions.reloadLibrary?.(),
     undoWish: () => actions.undoWish?.(),
     rateOrder: ({ verdict, reason }) => actions.rateOrder?.(verdict, reason),
     setPlaylistGenre: ({ genre }) => actions.setPlaylistGenre?.(genre),

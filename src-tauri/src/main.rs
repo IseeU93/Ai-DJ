@@ -145,6 +145,12 @@ async fn web_get(url: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Stand für den Handy-Abgleich: Musik-Ordner + Bewertungen (vom Mixer-Fenster).
+#[tauri::command]
+fn sync_set(root: String, feedback: String, comp: tauri::State<'_, Arc<companion::Companion>>) {
+    comp.set_sync(root, feedback);
+}
+
 #[tauri::command]
 fn companion_info(comp: tauri::State<'_, Arc<companion::Companion>>) -> companion::CompanionInfo {
     comp.info()
@@ -165,7 +171,8 @@ fn main() {
             companion_push,
             companion_event,
             companion_info,
-            web_get
+            web_get,
+            sync_set
         ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der App");

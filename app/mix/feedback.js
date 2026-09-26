@@ -38,16 +38,24 @@ export function loadFeedback() {
   }
 }
 
-export function addFeedback(entry) {
-  const all = loadFeedback();
-  all.push({ time: Date.now(), ...entry });
+/** Wer mitbekommen will, dass sich die Bewertungen geändert haben (z. B. der PC-/Handy-Abgleich). */
+export const feedbackListeners = new Set();
+
+export function saveFeedback(all) {
   while (all.length > MAX) all.shift();
   try {
     localStorage.setItem(STORE, JSON.stringify(all));
   } catch {
     /* voll/privat – egal */
   }
+  for (const f of feedbackListeners) f(all);
   return all;
+}
+
+export function addFeedback(entry) {
+  const all = loadFeedback();
+  all.push({ time: Date.now(), ...entry });
+  return saveFeedback(all);
 }
 
 export function clearFeedback() {
