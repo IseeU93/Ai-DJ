@@ -3,3 +3,4 @@ src-tauri/target/
 src-tauri/gen/
 .venv/
 app/vendor/
+tools/phone.local.json
