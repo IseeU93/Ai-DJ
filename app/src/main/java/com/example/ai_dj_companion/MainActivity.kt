@@ -34,6 +34,8 @@ class MainActivity : AppCompatActivity() {
     private var mixerVisible = false
     private var syncedThisStart = false
     private var engineTest = false
+    private var engineHadStorage = false
+    private var askedStorage = false
     private var suppressSwitch = false
 
     private val v by lazy { Views(this) }
@@ -171,7 +173,17 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         // aus den Einstellungen zurück (Speicher-Zugriff erteilt?) -> Mixer starten
-        if (DjRepo.selfMode && !SelfEngine.running && hasStorage()) startEngine()
+        if (DjRepo.selfMode) {
+            val ok = hasStorage()
+            if (ok && (!SelfEngine.running || !engineHadStorage)) {
+                // Zugriff gerade erteilt: Mixer neu laden, damit er den Musik-Ordner lesen kann
+                SelfEngine.stop()
+                startEngine()
+            } else if (!ok && !askedStorage) {
+                askedStorage = true
+                askStorage()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -212,6 +224,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startEngine() {
+        engineHadStorage = hasStorage()
         SelfEngine.start(this, v.engineHost)
         // mit dem PC abgleichen, wenn er erreichbar ist (einmal pro Start)
         if (!syncedThisStart && DjRepo.configured) {
