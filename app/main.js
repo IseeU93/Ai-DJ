@@ -1155,6 +1155,7 @@ async function boot() {
   vocalScan.addEventListener('done', (e) => {
     conductor.trackUpdated(e.detail);
     renderScan();
+    if (scanWholeSet && vocalScan.wanted.length === 0) toast('Gesang-Scan fertig: das ganze Set ist vorbereitet');
   });
   vocalScan.addEventListener('status', renderScan);
   vocalScan.addEventListener('error', (e) => {
