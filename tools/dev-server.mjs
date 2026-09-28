@@ -11,7 +11,7 @@ import { extname, join, resolve } from 'node:path';
 const root = resolve(new URL('../app', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const music = resolve(process.argv[2] || '.');
 const port = +(process.argv[3] || 5174);
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
 const AUDIO = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a']);
 
 const SHIM = `<script>
@@ -164,8 +164,9 @@ createServer(async (req, res) => {
       return res.end(await r.text());
     }
     if (url.pathname === '/__file') {
+      const data = await readFile(url.searchParams.get('p')); // erst lesen: fehlt die Datei, sauber 404
       res.writeHead(200, { 'content-type': 'application/octet-stream' });
-      return res.end(await readFile(url.searchParams.get('p')));
+      return res.end(data);
     }
     const path = join(root, url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname));
     let body = await readFile(path);

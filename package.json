@@ -5,7 +5,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/vendor.mjs",
     "dev": "tauri dev",
+    "prebuild": "node scripts/vendor.mjs",
     "build": "tauri build",
     "tauri": "tauri",
     "sync:laser": "node scripts/sync-laser.mjs",
@@ -15,6 +17,7 @@
     "phone:tracks": "node tools/phone.mjs tracks"
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "@tauri-apps/cli": "^2.11.4"
   }
 }

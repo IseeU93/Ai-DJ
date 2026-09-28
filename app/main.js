@@ -13,6 +13,7 @@ import { REASONS, ORDER_REASONS, addFeedback, learn, describeLearned, loadFeedba
 import { TRICKS } from './mix/freestyle.js';
 import { initCompanion } from './lib/companion.js';
 import { createWebGenre } from './lib/webgenre.js';
+import { VocalScan } from './lyrics/vocalscan.js';
 import { dedupeTracks } from './mix/dedupe.js';
 import { versionPriority } from './mix/eastereggs.js';
 
@@ -861,6 +862,7 @@ async function loadPlaylist(names) {
     const { tracks: unique, dropped } = dedupeTracks(found, versionPriority);
     if (dropped.length) toast(`${dropped.length} doppelte Song${dropped.length > 1 ? 's' : ''} (in mehreren Playlists) nur einmal eingereiht`);
     conductor.setLibrary(unique, resolveGenre);
+    attachScans(unique);
     webGenre.lookup(conductor.queue.map((id) => conductor.track(id)).filter(Boolean));
   } catch (err) {
     toast(`Playlist konnte nicht geladen werden: ${err.message || err}`);
@@ -876,6 +878,43 @@ async function loadPlaylist(names) {
 
 const lib = { root: '', files: [], selected: [], tracks: [], loading: 0 };
 let webGenre = null;
+let vocalScan = null;
+let scanWholeSet = false;
+
+// ------------------------------------------------------------------ Gesang-Scan (Songtexte)
+// Whisper erkennt lokal, wo in jedem Song gesungen wird – auf den Schlag genau. Automatisch für den
+// laufenden und die nächsten Songs; "Set vorbereiten" scannt die ganze Queue vorab (fürs Battle).
+
+/** Schon gescannte Songs aus dem Cache übernehmen (ohne neu zu rechnen). */
+function attachScans(tracks) {
+  vocalScan?.attach(tracks).then((done) => {
+    for (const t of done) conductor.trackUpdated(t);
+    renderScan();
+  });
+}
+
+function scanAhead() {
+  if (!vocalScan) return;
+  const ids = [conductor.decks[conductor.master]?.track?.id, ...conductor.queue.slice(Math.max(0, conductor.pos), scanWholeSet ? undefined : conductor.pos + 4)];
+  vocalScan.want([...new Set(ids)].map((id) => conductor.track(id)).filter(Boolean));
+  renderScan();
+}
+
+function renderScan() {
+  const btn = $('#btn-vscan');
+  if (!btn || !vocalScan) return;
+  const q = conductor.queue.slice(Math.max(0, conductor.pos)).map((id) => conductor.track(id)).filter(Boolean);
+  const done = q.filter((t) => t.analysis?.vocalSource === 'lyrics').length;
+  const m = vocalScan.model;
+  const loadingModel = vocalScan.busy && m && m.total && m.loaded < m.total;
+  btn.textContent = !vocalScan.enabled ? 'Gesang-Scan aus'
+    : loadingModel ? `KI-Modell lädt ${Math.round((100 * m.loaded) / m.total)} %`
+      : vocalScan.busy ? `Gesang-Scan ${done}/${q.length} …` : `Gesang ✓ ${done}/${q.length}`;
+  btn.classList.toggle('on', scanWholeSet);
+  btn.title = `Gesang-Scan: erkennt per Songtext-KI (lokal), wo gesungen wird – auf den Schlag genau, damit nie in eine Zeile gemixt wird.
+${done} von ${q.length} Songs der Queue gescannt${vocalScan.busy ? ` · gerade: ${vocalScan.busy.title}` : ''}.
+Klick: ganzes Set vorab scannen (vor dem Auftritt empfohlen). Rechtsklick: an/aus.`;
+}
 
 function libPlaylistOf(path) {
   const rel = path.slice(lib.root.length).replace(/^[\\/]+/, '');
@@ -994,6 +1033,7 @@ async function showLibPlaylist(names) {
   if (token !== lib.loading) return;
   webGenre.attach(found);
   lib.tracks = sortByTitle([...known, ...conductor.addTracks(found)]);
+  attachScans(found);
   webGenre.lookup(lib.tracks);
   done();
   renderLibTracks();
@@ -1105,7 +1145,37 @@ async function boot() {
       if (final) toast(`Genre online ergänzt: ${tracks.length} Song${tracks.length > 1 ? 's' : ''}`);
     },
   });
-  window.automix = { engine, conductor }; // für Debugging in den DevTools
+  vocalScan = new VocalScan();
+  vocalScan.enabled = loadSettings().vocalScan !== false;
+  // kein Scan-Start, während ein Übergang läuft oder gleich beginnt – die Wiedergabe hat Vorrang
+  vocalScan.shouldWait = () => {
+    const p = conductor.plan;
+    return !!p && (p.committed || (p.firstStepTime ?? Infinity) - engine.now < 20);
+  };
+  vocalScan.addEventListener('done', (e) => {
+    conductor.trackUpdated(e.detail);
+    renderScan();
+  });
+  vocalScan.addEventListener('status', renderScan);
+  vocalScan.addEventListener('error', (e) => {
+    if (!vocalScan.device) toast(`Gesang-Scan nicht möglich: ${e.detail.error?.message || e.detail.error}`);
+  });
+  conductor.addEventListener('queue', scanAhead);
+  conductor.addEventListener('transitionDone', scanAhead);
+  $('#btn-vscan').onclick = () => {
+    if (!vocalScan.enabled) return;
+    scanWholeSet = !scanWholeSet;
+    toast(scanWholeSet ? 'Ganzes Set wird vorab auf Gesang gescannt (läuft im Hintergrund)' : 'Gesang-Scan nur noch für die nächsten Songs');
+    scanAhead();
+  };
+  $('#btn-vscan').oncontextmenu = (e) => {
+    e.preventDefault();
+    vocalScan.enabled = !vocalScan.enabled;
+    saveSettings({ vocalScan: vocalScan.enabled });
+    toast(vocalScan.enabled ? 'Gesang-Scan an' : 'Gesang-Scan aus – dann zählt nur die Signal-Analyse');
+    scanAhead();
+  };
+  window.automix = { engine, conductor, vocalScan }; // für Debugging in den DevTools
   buildDeck(0);
   buildDeck(1);
   buildStrip(0);

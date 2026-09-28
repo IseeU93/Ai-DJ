@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeTrack } from '../app/analysis/analyze.js';
-import { synthSong } from './synth.mjs';
+import { synthSong, SYNTH } from './synth.mjs';
 
 const SECTIONS = [
   { bars: 16, kick: true, bass: false, pad: false, vocal: false }, // Intro
@@ -14,7 +14,7 @@ const SECTIONS = [
 for (const bpm of [124, 128, 140, 95]) {
   test(`Beatgrid & Struktur bei ${bpm} BPM`, () => {
     const song = synthSong({ bpm, sections: SECTIONS, offset: 0.37 });
-    const a = analyzeTrack(song.L, song.R, song.sr);
+    const a = analyzeTrack(song.L, song.R, song.sr, SYNTH);
     assert.ok(Math.abs(a.bpm - bpm) < 0.05, `bpm ${a.bpm}`);
     const beat = 60 / bpm;
     // Beat-Phase: firstBeat muss auf dem Raster der echten Beats liegen
@@ -58,7 +58,7 @@ test('Taktanfang über Backbeat (Snare auf 2+4) bei stehendem Akkord', () => {
   const secs = [{ bars: 48, kick: true, snare: true, bass: true, pad: true }];
   for (const offset of [0.3, 0.3 + 60 / 124, 0.3 + 120 / 124]) {
     const song = synthSong({ bpm: 124, sections: secs, offset, staticChord: true });
-    const a = analyzeTrack(song.L, song.R, song.sr);
+    const a = analyzeTrack(song.L, song.R, song.sr, SYNTH);
     const dbTime = a.firstBeat + a.downbeat * a.beatInterval;
     const bars = (dbTime - offset) / (4 * 60 / 124);
     assert.ok(Math.abs(bars - Math.round(bars)) < 0.02, `offset ${offset}: downbeat liegt bei ${bars} Takten`);
@@ -67,8 +67,8 @@ test('Taktanfang über Backbeat (Snare auf 2+4) bei stehendem Akkord', () => {
 
 test('Unpräzises Timing senkt die Grid-Zuverlässigkeit', () => {
   const secs = [{ bars: 40, kick: true, snare: true, bass: true }];
-  const tight = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs })).slice(0, 3));
-  const loose = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs, jitter: 0.012 })).slice(0, 3));
+  const tight = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs })).slice(0, 3), SYNTH);
+  const loose = analyzeTrack(...Object.values(synthSong({ bpm: 120, sections: secs, jitter: 0.012 })).slice(0, 3), SYNTH);
   assert.ok(tight.gridConfidence > loose.gridConfidence + 0.2, `${tight.gridConfidence} vs ${loose.gridConfidence}`);
 });
 
@@ -77,21 +77,21 @@ const HARD = [{ bars: 32, kick: true, bass: true, pad: true, vocal: false }];
 for (const bpm of [200, 240, 280]) {
   test(`Uptempo: ${bpm} BPM wird nicht als halbes Tempo erkannt`, () => {
     const song = synthSong({ bpm, sections: HARD });
-    const a = analyzeTrack(song.L, song.R, song.sr);
+    const a = analyzeTrack(song.L, song.R, song.sr, SYNTH);
     assert.ok(Math.abs(a.bpm - bpm) < 0.1, `bpm ${a.bpm}`);
   });
 }
 
 test('House mit Offbeat-Bass bleibt bei 126 BPM (kein falsches Verdoppeln)', () => {
   const song = synthSong({ bpm: 126, sections: HARD, offbeatBass: true });
-  const a = analyzeTrack(song.L, song.R, song.sr);
+  const a = analyzeTrack(song.L, song.R, song.sr, SYNTH);
   assert.ok(Math.abs(a.bpm - 126) < 0.1, `bpm ${a.bpm}`);
 });
 
 test('Uptempo-Playlist-Hinweis und getapptes Tempo', () => {
   const song = synthSong({ bpm: 120, sections: HARD });
-  assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { bpmMin: 170 }).bpm - 240) < 0.1);
-  assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { bpm: 119.5 }).bpm - 120) < 0.1);
+  assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { ...SYNTH, bpmMin: 170 }).bpm - 240) < 0.1);
+  assert.ok(Math.abs(analyzeTrack(song.L, song.R, song.sr, { ...SYNTH, bpm: 119.5 }).bpm - 120) < 0.1);
 });
 
 import { evaluate } from '../tools/beatbench.mjs';

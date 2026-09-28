@@ -109,13 +109,25 @@ export function auditPlan(plan, va, vb) {
     const ob = plan.outBar + tCut;
     const b = Math.floor(ob + 1e-6);
     const frac = ob - b;
-    if (frac < 0.15 ? sung(b - 1) && sung(b) : sung(b) && frac < 0.9) lineCut = 1;
+    if (va.hasBeats) {
+      // Songtext-Scan: auf den Schlag genau – läuft die Zeile über den Moment, in dem der Track weg ist?
+      const k = Math.min(3, Math.floor(frac * 4 + 0.15));
+      if (va.beatVocal(b, k) >= 0.4 && va.beatVocal(b, k - 1) >= 0.4) lineCut = 1;
+    } else if (frac < 0.15 ? sung(b - 1) && sung(b) : sung(b) && frac < 0.9) lineCut = 1;
   }
   // neue Zeile des alten Tracks beginnt, solange er noch hörbar ist -> wird angeschnitten
   const tEnd = Math.min(tGone ?? t1, loopFrom);
   for (let t = Math.max(0, t0); t < tEnd - STEP / 2; t += 0.5) {
     const bar = Math.floor(plan.outBar + t);
-    if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 && va.vocal(bar - 1) < 0.3 && plan.outBar + tEnd - bar < 3) lineCut = 1;
+    if (va.hasBeats) {
+      // eine neue Zeile setzt ein (Schlag davor frei), während der alte Track noch deutlich zu hören ist
+      for (let k = 0; k < 2; k++) {
+        const x = plan.outBar + t + k * 0.25;
+        const bb = Math.floor(x);
+        const kk = Math.floor((x - bb) * 4);
+        if (audible(t + k * 0.25) >= 0.5 && va.beatVocal(bb, kk) >= 0.5 && va.beatVocal(bb, kk - 1) < 0.3 && plan.outBar + tEnd - x > 0.5) lineCut = 1;
+      }
+    } else if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 && va.vocal(bar - 1) < 0.3 && plan.outBar + tEnd - bar < 3) lineCut = 1;
   }
 
   // Übersprungene Hauptteile des alten Tracks (bei Clubmusik: der letzte Drop fehlt dann)

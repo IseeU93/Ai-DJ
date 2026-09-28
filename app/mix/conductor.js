@@ -413,6 +413,16 @@ export class Conductor extends EventTarget {
     return true;
   }
 
+  /**
+   * Die Analyse eines Songs wurde verfeinert (z. B. Gesang-Scan): läuft er gerade oder kommt er als
+   * Nächstes, wird der noch nicht gestartete Übergang mit den genaueren Daten neu geplant.
+   */
+  trackUpdated(t) {
+    const ids = [this.decks[0].track?.id, this.decks[1].track?.id, this.queue[this.pos], this.queue[this.pos + 1]];
+    if (ids.includes(t.id)) this.invalidatePlan();
+    this.emit('plan');
+  }
+
   invalidatePlan() {
     if (this.plan && !this.plan.committed) {
       this.plan = null;
@@ -792,6 +802,8 @@ export class Conductor extends EventTarget {
       outKeyShift: md.keyShift || 0,
       earliestBar: instant ? nowBar + (INSTANT_LEAD * rate) / barTrackSec : soon ? nowBar + leadBars + 1 : this.extendFrom ?? null,
       latestBar: soon ? nowBar + leadBars + 32 : null,
+      // wo der laufende Song eingestiegen ist (z. B. direkt im Refrain) – für die Mindest-Spielzeit
+      entryBar: this.entry?.id === out.id ? this.entry.bar : null,
       instant,
       freestyle: this.freestyle,
       keylock: od.keylock,
@@ -914,6 +926,7 @@ export class Conductor extends EventTarget {
     });
     this.master = p.inDeck;
     this.lastPlan = p;
+    this.entry = { id: p.inId, bar: p.inBar };
     this.played.add(p.outId);
     this.pos = Math.max(this.pos + 1, this.queue.indexOf(p.inId));
     this.history.push(p.type);

@@ -99,6 +99,12 @@ class TrackView {
   }
 
   vocal(bar) { return this._at(this.a.vocals, bar, 0); }
+  /** Gesang im Schlag k (0..3, negativ = Takt davor) von Takt `bar` – nur mit Songtext-Scan. */
+  beatVocal(bar, k) {
+    const v = this.a.vocalBeats?.[(this.a.downbeat || 0) + 4 * Math.floor(bar) + k];
+    return v === undefined ? null : v;
+  }
+  get hasBeats() { return !!this.a.vocalBeats; }
   drums(bar) { return this._at(this.a.barDrums, bar, 0.5); }
   bass(bar) { return this._at(this.a.barBass, bar, -6); }
   energy(bar) { return this._at(this.a.barEnergy, bar, -6); }
@@ -340,7 +346,11 @@ function lastExit(va) {
 function lineSafe(va, bar) {
   // in diesem Takt wird nicht gesungen (auch nicht leise) und im nächsten beginnt keine neue Zeile –
   // das Ausblenden dauert etwa einen Takt, sonst würde die nächste Passage angeschnitten
-  return va.vocal(bar) < 0.35 && va.vocal(bar + 1) < 0.5;
+  if (va.vocal(bar) < 0.35 && va.vocal(bar + 1) < 0.5) return true;
+  // Mit Songtext-Scan genauer: die Zeile endet vor der Eins (letzter Schlag davor frei) und die
+  // nächste beginnt frühestens auf Schlag 3 – dort atmet der Song, ein Ausstieg schneidet nichts ab
+  if (!va.hasBeats) return false;
+  return va.beatVocal(bar, -1) < 0.3 && va.beatVocal(bar, 0) < 0.3 && va.beatVocal(bar, 1) < 0.35;
 }
 
 /**
@@ -400,7 +410,7 @@ function choosePoints(ctx, lengths, allowFull = false) {
   const drops = a.points.drops?.length ? a.points.drops : [a.points.dropBar];
   const arrivals = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).slice(0, 2);
   const earliest = ctx.earliestBar !== null ? ctx.earliestBar : 0;
-  const minOut = Math.max(va.grid(earliest, 4), va.grid(E * 0.45, 4));
+  const minOut = Math.max(va.grid(earliest, 4), va.grid(E * 0.45, 4), Math.min(va.grid(ctx.minExit ?? 0, 4), va.grid(E - 8, 4, 'floor')));
   let lastMainEnd = 0;
   for (let bar = 0; bar < E; bar++) if (va.label(bar) === 'main') lastMainEnd = bar + 1;
   const quietFrom = Math.max(lastMainEnd, (a.points.vocalLast ?? -1) + 1);
@@ -545,7 +555,8 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
       lpOpen: 0.8 + (inDark ? 0.4 : 0) + (ctx.keyDist >= 0.3 ? 0.3 : 0),
       hpIn: 0.7 + ((b.brightness ?? -10) > -8 ? 0.2 : 0) + (ctx.energyUp > 0.1 ? 0.2 : 0),
     },
-    inMod: { none: 0.6, ...(sw >= 2 ? { flangerIn: 0.45 + extra + (club ? 0.15 : -0.1) + (inDark ? 0.15 : 0) } : {}) },
+    // (Flanger klingt über Gesang schnell billig – bei Pop sparsam)
+    inMod: { none: 0.6, ...(sw >= 2 ? { flangerIn: 0.45 + extra + (club ? 0.15 : -0.25) + (inDark ? 0.15 : 0) } : {}) },
     // Noise-Riser nur, wenn es danach wirklich losgeht und genug Anlauf da ist
     inTension: { none: 0.6, ...(sw >= 4 && ctx.energyUp > -0.05 ? { riser: 0.45 + extra + (ctx.energyUp > 0.1 ? 0.3 : 0) + (club ? 0.15 : -0.35) } : {}) },
     outFilter: {
@@ -555,7 +566,7 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
     },
     outEcho: { none: 0.75, echoOut: 0.35 + extra + (ctx.energyUp > 0.25 ? 0.25 : 0) },
     outReverb: { none: 0.75, reverbOut: 0.4 + extra + (ctx.energyUp < 0 ? 0.2 : 0) + (ctx.keyDist >= 0.3 ? 0.1 : 0) },
-    outMod: { none: 0.6, ...(L - fadeFrom >= 1 ? { flangerOut: 0.4 + extra + (club ? 0.15 : 0) } : {}) },
+    outMod: { none: 0.6, ...(L - fadeFrom >= 1 ? { flangerOut: 0.4 + extra + (club ? 0.15 : -0.2) } : {}) },
     outGate: { none: 0.65, ...(L - fadeFrom >= 1 && !ctx.loopExt ? { gateOut: 0.35 + extra + (club ? 0.15 : -0.1) + (ctx.energyUp > 0.1 ? 0.15 : 0) } : {}) },
     outLoop: { none: 0.65, ...(canLoopOut ? { loopOut: 0.5 + extra } : {}) },
   };
@@ -571,9 +582,11 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
     });
     picks[g] = best;
   }
-  // Kombinationen frei – nur nicht alles auf einmal (höchstens fünf Zusatz-Effekte, die stärksten bleiben)
+  // Kombinationen frei – aber geschmackvoll: ein Profi stapelt bei Songs mit Gesang höchstens zwei
+  // Zusatz-Effekte (Club: drei, Freestyle: vier), die stärksten bleiben
+  const maxExtras = (club ? 3 : 2) + (ctx.freestyle ? 1 : 0);
   const extraGroups = EXTRA_GROUPS.filter((g) => picks[g].k !== 'none');
-  extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(5).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
+  extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(maxExtras).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
 
   const en = picks.inFilter.k;
   const ex = picks.outFilter.k;
@@ -653,17 +666,19 @@ function applyFx(ctx, steps, L) {
   const minAt = Math.min(0, ...steps.map((s) => s.at));
   const chance = {
     riser: tSwap - 4 >= minAt && ctx.energyUp > -0.05 ? 0.2 + (club ? 0.15 : 0) + (ctx.energyUp > 0.1 ? 0.15 : 0) : 0,
-    flangerIn: !usesParam('in', 'flanger') && tEnd - tIn >= 1 ? 0.2 + (club ? 0.05 : 0) : 0,
+    flangerIn: !usesParam('in', 'flanger') && tEnd - tIn >= 1 ? 0.2 + (club ? 0.05 : -0.08) : 0,
     echoOut: !usesParam('out', 'echo') && tEnd >= 1 ? 0.12 : 0,
     reverbOut: !usesParam('out', 'reverb') && tEnd >= 1 ? 0.14 + (ctx.energyUp < 0 ? 0.06 : 0) : 0,
-    flangerOut: !usesParam('out', 'flanger') && tEnd >= 2 ? 0.18 + (club ? 0.07 : 0) : 0,
+    flangerOut: !usesParam('out', 'flanger') && tEnd >= 2 ? 0.18 + (club ? 0.07 : -0.08) : 0,
     gateOut: !usesAction('out', 'gate') && !usesAction('out', 'loop') && tEnd >= 1 ? 0.15 + (club ? 0.1 : -0.05) : 0,
   };
-  const extras = [];
+  let extras = [];
   for (const [k, c] of Object.entries(chance)) {
     const want = c + extra - (recent.includes(`x:${k}`) ? 0.12 : 0);
-    if (c > 0 && hash(`${roll}|${k}`) < want) extras.push(k);
+    if (c > 0 && hash(`${roll}|${k}`) < want) extras.push({ k, sc: want - hash(`${roll}|${k}`) });
   }
+  // nicht überladen: bei Songs mit Gesang höchstens zwei Effekte auf einmal (die "sichersten" bleiben)
+  extras = extras.sort((x, y) => y.sc - x.sc).slice(0, (club ? 3 : 2) + (ctx.freestyle ? 1 : 0)).map((x) => x.k);
   const has = (k) => extras.includes(k);
   if (has('riser')) {
     steps.push(act(tSwap - 4, 'fx', 'riser', { bars: 4, level: 0.1 }), act(tSwap, 'fx', 'downlifter', { bars: 2, level: 0.06 }));
@@ -1187,7 +1202,7 @@ function composeEcho(ctx) {
 function chorusExit(ctx) {
   const { va } = ctx;
   const E = va.end;
-  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(E * 0.4, 4);
+  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(Math.max(E * 0.4, Math.min(ctx.minExit ?? 0, E * 0.8)), 4);
   // Nicht bis ins leere Ende: spätestens, solange noch Musik/Gesang da ist
   const vocalEnd = (va.a.points.vocalLast ?? E) + 1;
   // (Gesangserkennung verpasst manchmal späte Zeilen/Samples – bis 80 % darf es immer gehen)
@@ -1281,7 +1296,14 @@ function chorusSteps(ctx, exit, pre, entryNote) {
   if (pre > 0) {
     steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1));
     steps.push(act(0, 'in', 'play'));
-    steps.push(p(0, 'in', 'fader', 0.8, Math.max(1, pre - 0.5)));
+    // Tonarten beißen sich: vom neuen Intro nur Beat/Hi-Hats (Hochpass) unter dem Refrain – keine
+    // Akkorde gegen Akkorde. Die Harmonie kommt erst mit dem Wechsel.
+    const clash = ctx.keyDist >= 0.5;
+    steps.push(p(0, 'in', 'fader', clash ? 0.65 : 0.8, Math.max(1, pre - 0.5)));
+    if (clash) {
+      steps.push(p(0, 'in', 'filter', 0.55), p(pre - 0.1, 'in', 'filter', 0, 0.1));
+      ctx.notes.push('Tonarten passen nicht: vom neuen Intro vorher nur Beat und Hi-Hats, die Harmonie erst beim Wechsel');
+    }
     // alter Refrain wird zum Ende etwas schlanker, damit das neue Intro Platz hat
     steps.push(p(Math.max(0, pre - 2), 'out', 'low', -8, 2));
   } else {
@@ -1611,6 +1633,20 @@ function scoreStyles(ctx) {
  * @param earliestBar: frühester Takt im laufenden Track (Planung ab "jetzt")
  * @param instant: "Jetzt mixen" – so schnell wie möglich, auf dem nächsten Takt
  */
+/**
+ * Mindest-Spielzeit: Ein Song, der gerade erst übernommen hat (z. B. direkt in seinen Refrain),
+ * wird nicht nach einer halben Minute wieder weggemixt – mindestens ~80 s (Club: ~100 s) ab dem
+ * Einstieg. Gilt nicht bei "Jetzt mixen"/Sprüngen (earliestBar) und nie über das Songende hinaus.
+ */
+function minExitBar(ctx, entryBar) {
+  if (ctx.earliestBar !== null) return null;
+  const { a, va } = ctx;
+  const entry = entryBar ?? a.points.startBar ?? 0;
+  const barSec = 4 * (a.beatInterval || 60 / a.bpm);
+  const bars = Math.min((ctx.profile.shortForm ? 80 : 100) / barSec, (va.end - entry) * 0.5);
+  return Math.min(entry + bars, va.end * 0.8);
+}
+
 /** Allgemeine Stellschrauben + die für den laufenden Song (z. B. "bei diesem Song zu früh"). */
 function mergeTune(g, t) {
   const base = { lengthScale: 1, exitShift: 0, hardness: 0, ...(g || {}) };
@@ -1627,11 +1663,19 @@ function mergeTune(g, t) {
  * zwei Basslines, Lautstärke-Loch, Wechsel neben der Eins, abgeschnittene Zeile) und nimmt die
  * beste. Erzwungene Techniken und "Jetzt mixen" werden nur geprüft, nicht ersetzt.
  */
+function addEarlyPenalty(plan, opts, va) {
+  if (!plan.minExit || plan.outBar >= plan.minExit - 0.5) return;
+  const early = plan.minExit - plan.outBar;
+  plan.audit.penalty += Math.min(3, early * 0.08);
+  plan.audit.issues.push('Song würde zu kurz gespielt');
+}
+
 export function planTransition(opts) {
   const first = planSingle(opts);
   const va = new TrackView(opts.out.analysis);
   const vb = new TrackView(opts.inc.analysis);
   first.audit = auditPlan(first, va, vb);
+  addEarlyPenalty(first, opts, va);
   const forced = opts.type && opts.type !== 'auto' && opts.type in TRANSITIONS;
   let best = first;
   if (!forced && !opts.instant && first.ranked) {
@@ -1649,6 +1693,7 @@ export function planTransition(opts) {
       if (alt.type !== k) continue; // Technik passte nicht (Rückfall auf Blend)
       usable++;
       alt.audit = auditPlan(alt, va, vb);
+      addEarlyPenalty(alt, opts, va);
       const total = alt.score - alt.audit.penalty;
       if (total > bestTotal + 0.05) {
         best = alt;
@@ -1663,6 +1708,7 @@ export function planTransition(opts) {
         const alt = planSingle(opts, k);
         if (alt.type !== k) continue;
         alt.audit = auditPlan(alt, va, vb);
+        addEarlyPenalty(alt, opts, va);
         if (alt.audit.lineCut) continue;
         const total = alt.score - alt.audit.penalty;
         if (!clean || total > clean.total) clean = { plan: alt, total };
@@ -1686,7 +1732,7 @@ export function planTransition(opts) {
   return best;
 }
 
-function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null }, pick = null) {
+function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, entryBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null }, pick = null) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -1713,6 +1759,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     tune: mergeTune(mergeTune(tune, trackTune?.[out.id]), trackTune?.[inc.id]),
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
+  ctx.minExit = minExitBar(ctx, entryBar);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
   if (ks.semis) {
     ctx.notes.push(`Key-Sync: neuer Track um ${ks.semis > 0 ? '+' : ''}${ks.semis} Halbton${Math.abs(ks.semis) > 1 ? 'e' : ''} angeglichen (${b.key.camelot} → ${shiftCamelot(b.key.camelot, ks.semis)} passt zu ${outKey})`);
@@ -1836,6 +1883,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     steps: cleaned,
     score: chosenScore,
     ranked,
+    minExit: ctx.minExit,
   };
 }
 

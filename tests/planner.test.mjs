@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { analyzeTrack } from '../app/analysis/analyze.js';
 import { planTransition } from '../app/mix/planner.js';
 import { assignEnergy, buildSetOrder, camelotDistance, keySync, shiftCamelot, tempoRelation } from '../app/mix/order.js';
-import { synthSong } from './synth.mjs';
+import { synthSong, SYNTH } from './synth.mjs';
 
 const SECTIONS = [
   { bars: 16, kick: true },
@@ -18,7 +18,7 @@ function track(id, bpm, root = 57) {
   const k = `${bpm}-${root}`;
   if (!cache.has(k)) {
     const s = synthSong({ bpm, root, sections: SECTIONS, offset: 0.2 });
-    cache.set(k, analyzeTrack(s.L, s.R, s.sr));
+    cache.set(k, analyzeTrack(s.L, s.R, s.sr, SYNTH));
   }
   return { id, analysis: cache.get(k), energy: 0.5, genre: 'edm' };
 }
@@ -179,7 +179,7 @@ const SHORT_OUTRO = [
 
 function trackWith(id, bpm, sections, root = 57) {
   const s = synthSong({ bpm, root, sections, offset: 0.2 });
-  return { id, analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5, genre: 'edm' };
+  return { id, analysis: analyzeTrack(s.L, s.R, s.sr, SYNTH), energy: 0.5, genre: 'edm' };
 }
 
 test('Blend verlängert ein zu kurzes Outro per Loop auf gesangsfreien Takten', () => {
@@ -294,7 +294,7 @@ test('Leises Ausklingen am Ende: kein Loop, der laut/leise springt, Übergang en
     s.L[i] *= g * g;
     s.R[i] *= g * g;
   }
-  const out = { id: 'f', analysis: analyzeTrack(s.L, s.R, s.sr), energy: 0.5 };
+  const out = { id: 'f', analysis: analyzeTrack(s.L, s.R, s.sr, SYNTH), energy: 0.5 };
   const a = out.analysis;
   for (const type of ['blend', 'loop', 'filter']) {
     const plan = planTransition({ out, inc: track('b', 128), type });
@@ -482,7 +482,7 @@ function popTrack(id, bpm, root) {
   const k = `pop-${bpm}-${root}`;
   if (!cache.has(k)) {
     const s = synthSong({ bpm, root, sections: POP, offset: 0.2, seed: root });
-    cache.set(k, analyzeTrack(s.L, s.R, s.sr));
+    cache.set(k, analyzeTrack(s.L, s.R, s.sr, SYNTH));
   }
   return { id, analysis: cache.get(k), energy: 0.5, genre: 'pop' };
 }

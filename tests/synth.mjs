@@ -12,6 +12,9 @@ function rng(seed) {
  * sections: [{bars, kick, bass, pad, vocal}]; Akkordwechsel auf jedem Downbeat.
  * Liefert {L, R, sr, firstBeat, bpm}.
  */
+/** Analyse-Option für synthetische Songs: klassische Gesangserkennung (siehe analyze.js). */
+export const SYNTH = { classicVocals: true };
+
 export function synthSong({ bpm = 128, sr = 22050, offset = 0.37, root = 57, sections, seed = 1, staticChord = false, jitter = 0, offbeatBass = false }) {
   const beat = 60 / bpm;
   const totalBars = sections.reduce((a, s) => a + s.bars, 0);

@@ -68,8 +68,12 @@ export function transitionCost(a, b, w = null) {
   const d = rel.diff;
   const tempo = d <= 0.02 ? d * 5 : d <= BEATMATCH_LIMIT ? 0.1 + (d - 0.02) * 8 : 0.7 + (d - BEATMATCH_LIMIT) * 4;
   // Tonart: Key-Sync kann bis ±2 Halbtöne angleichen (klingt aber nicht ganz so natürlich)
-  const ks = keySync(A.key.camelot, B.key.camelot);
-  const key = ks.dist + 0.12 * Math.abs(ks.semis);
+  // (wie im Planer: Songs mit Gesang werden nie verschoben – Stimmen klängen sonst falsch)
+  const vocalB = B.vocals?.length ? B.vocals.reduce((x, v) => x + v, 0) / B.vocals.length : 0;
+  const conf = Math.min(A.key.confidence ?? 1, B.key.confidence ?? 1);
+  const ks = keySync(A.key.camelot, B.key.camelot, vocalB < 0.2 && conf > 0.15);
+  // unsichere Tonart-Erkennung zählt weniger – sichere Clashes voll
+  const key = (ks.dist + 0.12 * Math.abs(ks.semis)) * (0.55 + 0.45 * Math.min(1, conf / 0.5));
   const energy = Math.abs((a.energy ?? 0.5) - (b.energy ?? 0.5));
   // Stimmung: Party-Kracher direkt vor einer Ballade (oder umgekehrt) passt nie, egal wie gut
   // Tempo und Tonart zusammenpassen
@@ -91,7 +95,7 @@ export function transitionCost(a, b, w = null) {
   // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
   const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
     + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
-  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
+  return (w?.tempo ?? 1) * tempo + 1.1 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
