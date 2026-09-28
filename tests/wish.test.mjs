@@ -40,6 +40,20 @@ test('Musikwunsch: passende Songs, gut mixbar sortiert', () => {
   assert.deepEqual(pickWish(tracks, parseWish('Reggae'), cur), []);
 });
 
+test('Musikwunsch "ruhig": nie Hardstyle/Uptempo, auch wenn der Beat wenig tanzbar wirkt', () => {
+  const cur = mk('jetzt', 'pop', { energy: 0.5 });
+  // Uptempo-/Hardstyle-Songs mit gebrochenem Beat (niedrige Tanzbarkeit) und ein rasender Pop-Remix
+  const tracks = [
+    mk('ballade', 'pop', { grid: 0.15, ff: 0.5, pulse: 5, energy: 0.2 }),
+    mk('uptempo-gebrochen', 'uptempo', { bpm: 190, grid: 0.2, ff: 0.3, pulse: 4, energy: 0.4 }),
+    mk('hardstyle-intro', 'hardstyle', { bpm: 150, grid: 0.2, ff: 0.4, pulse: 4, energy: 0.3 }),
+    mk('pop-remix-160', 'pop', { bpm: 160, grid: 0.2, ff: 0.4, pulse: 4, energy: 0.3 }),
+  ];
+  for (const wish of ['ruhig', 'was ruhiges', 'chillig bitte']) {
+    assert.deepEqual(pickWish(tracks, parseWish(wish), cur).map((t) => t.id), ['ballade'], wish);
+  }
+});
+
 test('Doppelte Songs aus mehreren Playlists nur einmal', async () => {
   const { dedupeTracks } = await import('../app/mix/dedupe.js');
   const t = (id, artist, title, duration) => ({ id, artist, title, analysis: { duration } });

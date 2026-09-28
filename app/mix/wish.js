@@ -96,7 +96,18 @@ export function wishScore(t, w, cur) {
     } else s += 3 * hit;
   }
   const d = danceability(t);
-  if (w.mood < 0) s += (0.55 - d) * 5;
+  const e0 = t.energy ?? 0.5;
+  if (w.mood < 0) {
+    // "ruhig" heißt nie Hardstyle/Uptempo, nichts Rasendes und nichts mit voller Wucht –
+    // egal wie die Tanzbarkeit ausfällt
+    if (['hardstyle', 'uptempo', 'edm'].includes(t.genre) || (t.analysis?.bpm ?? 120) >= 145 || e0 >= 0.72) return null;
+    const st = styleText(t);
+    if (/house|techno|electro|trance|eurodance|club|dance|hardstyle|party|schlager-?party|après/.test(st) && !/ballad|acoustic|singer|folk/.test(st)) return null;
+    const bpm0 = t.analysis?.bpm ?? 120;
+    s += (0.55 - d) * 5 + (0.5 - e0) * 3
+      - (bpm0 >= 125 ? 1.2 : 0) - ((t.analysis?.fourFloor ?? 0.5) >= 0.75 ? 0.8 : 0)
+      + (/ballad|acoustic|singer|folk|soul|piano/.test(st) ? 1 : 0);
+  }
   if (w.mood > 0) s += (d - 0.5) * 5;
   const e = t.energy ?? 0.5;
   const ce = cur?.energy ?? 0.5;
