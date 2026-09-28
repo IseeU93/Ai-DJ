@@ -1,6 +1,6 @@
 // Conductor: Queue + Automix. Plant den nächsten Übergang, lädt den nächsten Track vor und
 // setzt den Plan kurz vor dem Einsatz sample-genau in Deck-Befehle und Parameter-Automation um.
-import { planTransition, barToSeconds, secondsToBar, beatToSeconds, secondsToBeat } from './planner.js';
+import { planTransition, barToSeconds, secondsToBar, beatToSeconds, secondsToBeat, localBpm } from './planner.js';
 import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
@@ -519,15 +519,34 @@ export class Conductor extends EventTarget {
       this.reorderAI();
       return;
     }
-    const nextId = this.queue[this.pos + 1];
+    let nextId = this.queue[this.pos + 1];
+    if (!nextId && !this.plan?.committed && this.recycleIfNeeded()) {
+      // Queue leer: die Musik darf nicht ausgehen – schon gespielte Songs kommen wieder
+      this.emit('queue');
+      nextId = this.queue[this.pos + 1];
+    }
     if (!nextId) return;
 
     if (od.track?.id !== nextId || this.loading[other]) {
       if (!this.plan?.committed && !this.loading[other] && !od.status.playing) {
-        this.loadDeck(other, nextId).catch((err) => this.emit('error', `Laden fehlgeschlagen: ${err.message || err}`));
+        this.loadDeck(other, nextId).catch((err) => {
+          // nicht ladbar (Datei weg/kaputt): Song überspringen statt stehen zu bleiben
+          this.emit('error', `Laden fehlgeschlagen, übersprungen: ${this.track(nextId)?.title || nextId} (${err.message || err})`);
+          const i = this.queue.indexOf(nextId);
+          if (i > this.pos) {
+            this.queue.splice(i, 1);
+            this.removed.push(nextId);
+            this.emit('queue');
+          }
+        });
       }
+      // Sicherheitsnetz auch, wenn der nächste Song noch lädt
+      this.guardEnd(now);
       return;
     }
+
+    // Sicherheitsnetz: gleich ist der Song zu Ende und kein Übergang startet rechtzeitig
+    if (this.guardEnd(now)) return;
 
     // Nach einem Sprung warten, bis er wirklich passiert ist (sonst Planung mit alter Position)
     if (now < (this.holdPlanningUntil || 0)) return;
@@ -552,11 +571,14 @@ export class Conductor extends EventTarget {
         return;
       }
       if (now < this.rampUntil || md.status.loopLen > 0 || od.status.playing) return;
+      if (now < (this.planRetryAt || 0)) return;
       try {
         this.plan = this.makePlan();
       } catch (err) {
-        this.emit('error', `Planung fehlgeschlagen: ${err.message || err}`);
-        this.automix = false;
+        // nicht aufgeben: in 2 s nochmal – und notfalls überblendet das Sicherheitsnetz am Songende
+        console.error('Planung fehlgeschlagen', err);
+        this.planRetryAt = now + 2;
+        this.plan = null;
       }
       this.emit('plan');
       return;
@@ -570,6 +592,79 @@ export class Conductor extends EventTarget {
       }
       this.commit(this.plan);
     }
+  }
+
+  /** Sekunden, bis der laufende Track zu Ende ist. */
+  secondsLeft(now = this.engine.now) {
+    const md = this.masterDeck;
+    if (!md.track || !md.length) return Infinity;
+    return (md.length - md.realAt(now)) / ((md.status.rate || 1) * this.engine.sr);
+  }
+
+  /**
+   * Sicherheitsnetz: Sind nur noch ~9 s übrig und kein Übergang startet rechtzeitig (Planung
+   * gescheitert, Plan zu spät, gerade neu geplant …), wird über die letzten Sekunden im Takt
+   * übergeblendet – mit angeglichenem Tempo. Die Musik darf nie einfach aufhören.
+   */
+  guardEnd(now) {
+    if (this.plan?.committed) return false;
+    const left = this.secondsLeft(now);
+    if (left > 9) return false;
+    const plan = this.plan;
+    // ein eingeplanter Übergang, der rechtzeitig vor dem Ende fertig wird, darf laufen
+    if (plan && plan.firstStepTime > now + 0.3 && plan.tDone <= now + left + 0.5) return false;
+    return this.emergencyMix(now, left);
+  }
+
+  emergencyMix(now, left) {
+    const md = this.masterDeck;
+    const inDeck = 1 - this.master;
+    const inn = this.decks[inDeck];
+    const nextId = this.queue[this.pos + 1];
+    if (!nextId || inn.track?.id !== nextId || this.loading[inDeck]) return false; // lädt noch
+    const a = md.track.analysis;
+    const b = inn.track.analysis;
+    const sr = this.engine.sr;
+    const rate = md.status.rate || 1;
+    const tEnd = now + Math.max(0.5, left);
+    // Start: 7 s vor dem Ende (oder sofort), auf dem nächsten Schlag des alten Tracks
+    const want = Math.max(now + 0.15, tEnd - 7);
+    const sec = md.realAt(now) / sr;
+    const beatNow = secondsToBeat(a, sec + (want - now) * rate);
+    const k = Math.ceil(beatNow - 1e-6);
+    let tStart = now + (beatToSeconds(a, k) - sec) / rate;
+    if (tStart > tEnd - 1) tStart = Math.max(now + 0.15, want);
+    // Tempo angleichen, wenn es nicht zu weit auseinanderliegt; der neue startet auf seiner Eins
+    const outBpm = (a.beats ? localBpm(a, secondsToBar(a, sec)) : a.bpm) * rate;
+    const rel = tempoRelation(outBpm, b.bpm);
+    const inRate = rel.diff <= 0.16 ? (rel.m * outBpm) / b.bpm : 1;
+    const inStart = Math.max(0, barToSeconds(b, b.points?.startBar ?? 0));
+    const fade = Math.max(0.5, tEnd - tStart);
+    this.plan = null;
+    inn.cancel({ transport: true, ratesAfter: now });
+    for (const name of PARAMS) inn.cancelFrom(name, now);
+    inn.resetParams();
+    inn.setNow('fader', 0);
+    inn.rateAt(tStart, inRate, 0);
+    inn.playAt(tStart, inStart * sr);
+    inn.ramp('fader', tStart, 0, tStart + fade, 1);
+    md.ramp('fader', tStart, md.get('fader'), tStart + fade, 0);
+    md.stopAt(tEnd + 0.05);
+    const barSec = (4 * 60) / outBpm;
+    let rampEnd = 0;
+    if (Math.abs(inRate - 1) > 0.001) {
+      inn.rateAt(tEnd + barSec, 1, 16 * barSec); // danach unmerklich zurück aufs Originaltempo
+      rampEnd = tEnd + 17 * barSec;
+    }
+    this.plan = {
+      type: 'blend', label: 'Notfall-Überblendung', genres: [md.track.genre, inn.track.genre], bars: fade / barSec,
+      outBar: secondsToBar(a, sec), inBar: b.points?.startBar ?? 0, audit: null, flavors: null, steps: [], notes: ['Sicherheitsnetz: kurz vor Songende im Takt übergeblendet'],
+      T0: tStart, barSec, firstStepTime: tStart, tDone: tEnd + 0.3, outDeck: this.master, inDeck,
+      outId: md.track.id, inId: inn.track.id, outRate: rate, inRate, masterBpm: outBpm, rampEnd, committed: true, emergency: true,
+    };
+    this.emit('error', `Sicherheitsnetz: Notfall-Überblendung zu „${inn.track.title}“`);
+    this.emit('plan');
+    return true;
   }
 
   /**
