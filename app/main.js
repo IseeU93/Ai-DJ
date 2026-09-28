@@ -571,7 +571,9 @@ function renderQueue() {
     drawStructure($('.struct', row), a);
     const gsel = document.createElement('select');
     gsel.className = 'sel';
-    gsel.innerHTML = `<option value="auto">Auto · ${GENRES[t.genreWeb || t.genreAuto] || '?'}${t.style ? ` (${t.style})` : ''}</option>` +
+    // "Auto" = was ohne eigene Einstellung gilt: die Playlist-Richtung, sonst online/Audio
+    const plGenre = genreOverrides()[t.path] ? null : resolveGenre(t);
+    gsel.innerHTML = `<option value="auto">Auto · ${GENRES[plGenre || t.genreWeb || t.genreAuto] || '?'}${plGenre ? ' (Playlist)' : t.style ? ` (${t.style})` : ''}</option>` +
       Object.entries(GENRES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
     gsel.value = genreOverrides()[t.path] || 'auto';
     gsel.title = 'Musikrichtung dieses Tracks (bestimmt, wie gemixt wird)' + (t.webInfo
@@ -726,21 +728,42 @@ function renderRemoved() {
 let currentPlaylists = []; // gewählte Unterordner (mehrere möglich)
 const playlistKey = (name) => `${folderRoot}|${name}`;
 
-/** Track-Override > Override seiner Playlist (Unterordner) > Override für "Alle" > automatisch */
+const HARD = new Set(['hardstyle', 'uptempo']);
+
+/**
+ * Track-Override > Override seiner Playlist (Unterordner) > Override für "Alle" > automatisch.
+ * Harte Playlists (Hardstyle, Rawstyle, Uptempo gemischt): dort entscheidet pro Track das Tempo –
+ * ab 168 BPM Uptempo, sonst Hardstyle/Rawstyle.
+ */
 function resolveGenre(t) {
   const all = genreOverrides();
-  return all[t.path] || all[playlistKey(playlistOf(t.path))] || all[playlistKey(ALL_PLAYLISTS)] || null;
+  if (all[t.path]) return all[t.path];
+  const pl = all[playlistKey(playlistOf(t.path))] || all[playlistKey(ALL_PLAYLISTS)] || null;
+  if (HARD.has(pl) && t.analysis?.bpm) return t.analysis.bpm >= 168 ? 'uptempo' : 'hardstyle';
+  return pl;
 }
 
-// Uptempo gesetzt (Track oder ganze Playlist) heißt: das Tempo liegt sicher im Uptempo-Bereich.
-// Nur dort – bei anderen Richtungen kann ein Track durchaus halb so schnell sein.
-analysis.hintFor = (f) => (resolveGenre(f) === 'uptempo' ? { bpmMin: 170 } : null);
+// Harte Musik (Track oder Playlist): halbiert erkanntes Tempo hochfalten – Hardstyle/Rawstyle liegt
+// über 135 BPM, ein einzeln als Uptempo markierter Track über 170. (Nicht bis 300 falten: ein
+// 150er-Hardstyle-Track bliebe sonst nicht bei 150.)
+analysis.hintFor = (f) => {
+  if (genreOverrides()[f.path] === 'uptempo') return { bpmMin: 170 };
+  return HARD.has(resolveGenre(f)) ? { bpmMin: 135 } : null;
+};
 
-/** Nach Genre-Änderung: Tracks mit falsch halbiertem Uptempo-Tempo neu analysieren. */
+/** Nach Genre-Änderung: nur Tracks neu analysieren, deren Tempo-Hinweis sich wirklich geändert hat. */
 async function refreshUptempo() {
-  const todo = [...conductor.tracks.values()].filter((t) => t.analysis && resolveGenre(t) === 'uptempo' && t.analysis.bpm < 170);
+  const todo = [...conductor.tracks.values()].filter((t) => {
+    if (!t.analysis) return false;
+    const want = analysis.hintFor(t)?.bpmMin ?? null;
+    const had = t.analysis.gridOverride?.bpmMin ?? null;
+    if (want === had) return false;
+    // Hinweis weg: wieder ohne Faltung; neuer Hinweis: halbes Tempo hochfalten bzw. eine frühere,
+    // zu hohe Faltung (alter 170er-Hinweis) korrigieren
+    return want === null || had !== null || t.analysis.bpm < want;
+  });
   if (!todo.length) return;
-  toast(`Uptempo: ${todo.length} Track(s) werden mit Uptempo-Tempo neu analysiert …`);
+  toast(`Harte Musik: ${todo.length} Track(s) werden mit passendem Tempo neu analysiert …`);
   for (const t of todo) {
     try {
       const fresh = await analysis.analyzeOne(t);
@@ -749,6 +772,7 @@ async function refreshUptempo() {
       console.error(err);
     }
   }
+  conductor.applyGenres(resolveGenre); // Richtung hängt bei harten Playlists am (jetzt richtigen) Tempo
 }
 
 const ROOT_PLAYLIST = '__root__';

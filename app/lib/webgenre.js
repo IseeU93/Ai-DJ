@@ -87,7 +87,8 @@ export function combineGenre(a, web) {
   const ff = a.fourFloor ?? 0.5;
   // Eindeutig harte Musik im Audio (durchgehende Kick ab 142 BPM): ein "Rap"/"Pop"-Tag aus dem Netz
   // ist dann meist eine Verwechslung (gleichnamiger Künstler, zu wenige Stimmen) – zählt kaum
-  const hardAudio = ff >= 0.6 && a.bpm >= 142;
+  const drums = a.barDrums?.length ? Array.from(a.barDrums).reduce((s, v) => s + v, 0) / a.barDrums.length : 0;
+  const hardAudio = (ff >= 0.6 && a.bpm >= 142) || (a.bpm >= 150 && drums >= 0.85 && ff >= 0.35);
   const add = (g, w) => {
     if (!g) return;
     if (hardAudio && (g === 'rap' || g === 'pop')) w *= 0.25;

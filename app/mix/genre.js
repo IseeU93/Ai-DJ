@@ -18,6 +18,10 @@ export function detectGenre(a) {
   const ff = a.fourFloor ?? 0.5;
   const voc = a.vocals?.length ? Array.from(a.vocals).reduce((s, v) => s + v, 0) / a.vocals.length : 0;
   const bass = a.bassWeight ?? -10;
+  // harte Tanzmusik: schnell und durchgehend treibend (verzerrte Kicks erkennt die Four-on-the-floor-
+  // Messung oft nicht – dann zählt, dass fast jeder Takt voller Drums ist)
+  const drums = a.barDrums?.length ? Array.from(a.barDrums).reduce((s, v) => s + v, 0) / a.barDrums.length : 0;
+  if (bpm >= 150 && (ff >= 0.6 || (drums >= 0.85 && ff >= 0.35))) return bpm >= 168 ? 'uptempo' : 'hardstyle';
   if (bpm >= 165 && ff >= 0.6) return 'uptempo';
   if (bpm >= 142 && bpm < 165 && ff >= 0.6 && bass > -12) return 'hardstyle';
   if (ff < 0.55 && voc >= 0.25 && (bpm < 108 || bpm >= 130)) return 'rap';
