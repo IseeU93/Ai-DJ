@@ -89,7 +89,7 @@ export function auditPlan(plan, va, vb) {
   // während er gerade singt und weitersingen würde – beim Mitsingen das Schlimmste. Gilt für alle
   // Techniken, auch Echo-Out und Drop-Cut.
   let lineCut = 0;
-  const sung = (bar) => va.vocal(bar) >= 0.5;
+  const sung = (bar) => va.vocal(bar) >= 0.4;
   const audible = (t) => {
     if (t >= stopOut) return 0;
     const f = val('out', 'filter', t);
@@ -110,6 +110,12 @@ export function auditPlan(plan, va, vb) {
     const b = Math.floor(ob + 1e-6);
     const frac = ob - b;
     if (frac < 0.15 ? sung(b - 1) && sung(b) : sung(b) && frac < 0.9) lineCut = 1;
+  }
+  // neue Zeile des alten Tracks beginnt, solange er noch hörbar ist -> wird angeschnitten
+  const tEnd = Math.min(tGone ?? t1, loopFrom);
+  for (let t = Math.max(0, t0); t < tEnd - STEP / 2; t += 0.5) {
+    const bar = Math.floor(plan.outBar + t);
+    if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 && va.vocal(bar - 1) < 0.3 && plan.outBar + tEnd - bar < 3) lineCut = 1;
   }
 
   // Übersprungene Hauptteile des alten Tracks (bei Clubmusik: der letzte Drop fehlt dann)

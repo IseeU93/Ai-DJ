@@ -336,7 +336,9 @@ function lastExit(va) {
 
 /** Ausstieg bei diesem Takt schneidet keine Zeile ab: in dem Takt wird nicht gesungen. */
 function lineSafe(va, bar) {
-  return va.vocal(bar) < 0.5;
+  // in diesem Takt wird nicht gesungen (auch nicht leise) und im nächsten beginnt keine neue Zeile –
+  // das Ausblenden dauert etwa einen Takt, sonst würde die nächste Passage angeschnitten
+  return va.vocal(bar) < 0.35 && va.vocal(bar + 1) < 0.5;
 }
 
 /**
@@ -976,7 +978,7 @@ function outroStart(va) {
 function hardExit(ctx) {
   const { va, a } = ctx;
   const exit = chorusExit(ctx);
-  if (exit) return exit.bar;
+  if (exit) return safeExit(va, exit.bar);
   if (ctx.earliestBar !== null) return safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
   return outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
 }
@@ -1031,7 +1033,7 @@ function composeSongCut(ctx) {
   const { vb, b } = ctx;
   const exit = chorusExit(ctx);
   if (!exit) return null;
-  ctx.outBar = exit.bar;
+  ctx.outBar = safeExit(ctx.va, exit.bar);
   // Hat der neue Song ein langes Intro ohne Gesang, kurz vor seiner ersten Zeile einsteigen –
   // sonst läuft minutenlang nur ein Beat ohne etwas zum Mitsingen
   const start = b.points.startBar ?? 0;
@@ -1553,7 +1555,30 @@ export function planTransition(opts) {
         bestTotal = total;
       }
     }
-    if (best !== first) {
+    // Mitsingen hat Vorrang: schneidet der Beste eine Zeile ab, alle Techniken durchprobieren
+    if (best.audit.lineCut) {
+      let clean = null;
+      for (const [k] of first.ranked) {
+        if (k === best.type) continue;
+        const alt = planSingle(opts, k);
+        if (alt.type !== k) continue;
+        alt.audit = auditPlan(alt, va, vb);
+        if (alt.audit.lineCut) continue;
+        const total = alt.score - alt.audit.penalty;
+        if (!clean || total > clean.total) clean = { plan: alt, total };
+      }
+      // notfalls: Echo-Out am Ende des Gesangsblocks (der Ausstieg wartet, bis die Zeile vorbei ist)
+      if (!clean) {
+        const echo = planSingle({ ...opts, type: 'echo' });
+        echo.audit = auditPlan(echo, va, vb);
+        if (!echo.audit.lineCut) clean = { plan: echo };
+      }
+      if (clean) {
+        clean.plan.notes.push(`Selbstcheck: statt ${TRANSITIONS[best.type]} – die hätte eine Gesangszeile abgeschnitten`);
+        best = clean.plan;
+      }
+    }
+    if (best !== first && !best.notes.some((n) => n.startsWith('Selbstcheck: statt'))) {
       best.notes.push(`Selbstcheck: statt ${TRANSITIONS[first.type]} (${first.audit.issues.join(', ') || 'knapp schlechter'})`);
     }
   }
