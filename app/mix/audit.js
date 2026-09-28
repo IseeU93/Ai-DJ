@@ -40,7 +40,7 @@ export function auditPlan(plan, va, vb) {
   const t0 = Math.min(0, ...steps.map((s) => s.at));
   const t1 = Math.max(...steps.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0)));
   const m = plan.m || 1;
-  const quietStyle = plan.type === 'echo' || plan.type === 'cut';
+  const quietStyle = plan.type === 'echo' || plan.type === 'cut' || plan.type === 'breakdown';
 
   let vocalClash = 0;
   let bassBoth = 0;

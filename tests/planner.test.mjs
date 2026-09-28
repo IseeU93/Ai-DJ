@@ -49,7 +49,8 @@ test('Blend: Outro des alten trifft Intro des neuen, Drop landet am Ende', () =>
 
 test('Zu großer Tempo-Sprung -> Echo-Out ohne Beatmatch', () => {
   const plan = planTransition({ out: track('a', 128), inc: track('c', 100) });
-  assert.equal(plan.type, 'echo', plan.type);
+  // ohne Beatmatch: Echo-Out oder Break-Übergang (im Teil ohne Schlagzeug) – nie Beat gegen Beat
+  assert.ok(['echo', 'breakdown'].includes(plan.type), plan.type);
   assert.equal(plan.beatmatch, false);
   assert.equal(plan.inRate, 1);
 });
@@ -804,4 +805,15 @@ test('Reihenfolge: anderes Publikum (Pop 2014 -> Rock-Hymne 1977) kostet, 👎 g
   // ... macht auch Shake It Off -> Bohemian Rhapsody teurer (ähnliches Paar), Pop -> Pop nicht
   assert.ok(learnedFeatureCost(orderFeatures(shake), orderFeatures(bohemian), L.features) > 0.5);
   assert.equal(learnedFeatureCost(orderFeatures(shake), orderFeatures(blank), L.features), 0);
+});
+
+test('Break-Übergang: neuer Track startet im ruhigen Teil des alten, Wechsel auf der Eins, Bass erst danach', () => {
+  const out = popTrack('bk1', 96, 57);
+  const plan = planTransition({ out, inc: track('bk2', 128), type: 'breakdown' });
+  if (plan.type !== 'breakdown') return; // kein ruhiger Teil ohne Gesang -> anderer Weg ist richtig
+  assert.equal(plan.beatmatch, false);
+  assert.ok(!plan.audit.issues.includes('Wechsel nicht auf der Eins'), plan.audit.issues.join());
+  const bassIn = plan.steps.find((x) => x.deck === 'in' && x.param === 'low' && x.to === 0);
+  const outGone = plan.steps.find((x) => x.deck === 'out' && x.param === 'fader' && x.to === 0);
+  assert.ok(bassIn.at >= outGone.at + outGone.dur, 'zwei Basslines');
 });

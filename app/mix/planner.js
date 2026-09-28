@@ -21,6 +21,7 @@ export const TRANSITIONS = {
   echo: 'Echo-Out',
   build: 'Build-up & Drop',
   ramp: 'Tempo-Rampe',
+  breakdown: 'Break-Übergang',
 };
 
 export const KILL = -26; // dB, EQ-"Kill"
@@ -738,6 +739,52 @@ function composeRamp(ctx) {
     'genau auf der Eins setzt der neue Track in seinem Originaltempo ein, dann ein normaler Blend',
   );
   return { L: A(L), steps };
+}
+
+/**
+ * Break-Übergang (der DJ-Weg bei ganz verschiedenem Tempo): Der alte Track läuft in einen Teil ohne
+ * Schlagzeug (Breakdown/Bridge/ruhiges Outro). Genau dort startet der neue und übernimmt über
+ * 4 Takte – ohne Beat im alten Track hört man den Tempo-Unterschied nicht, es gibt kein Echo-Loch.
+ */
+function composeBreakdown(ctx) {
+  const { va, vb, b } = ctx;
+  if (ctx.instant) return null;
+  const E = va.end;
+  const from = Math.max(ctx.earliestBar ?? 0, Math.floor(E * (ctx.profile.shortForm ? 0.55 : 0.45)));
+  // der letzte passende Teil ohne Drums (4 Takte), in dem nicht gesungen wird
+  let bar = null;
+  for (let x = va.grid(E - 4, 4, 'floor'); x >= from; x -= 4) {
+    // ruhiger Teil: als Break erkannt und ohne Bass/Kick-Druck (oder deutlich leiser) – dort stört
+    // ein anderes Tempo nicht
+    const calm = va.label(x) !== 'main' && va.label(x + 3) !== 'main'
+      && (va.mean(va.bass, x, x + 4) < -9 || va.mean(va.energy, x, x + 4) < -5);
+    if (!calm && va.mean(va.drums, x, x + 4) >= 0.3) continue;
+    // in keinem der Takte wird gesungen (der alte Track ist erst am Ende weg)
+    let sung = false;
+    for (let y = x; y <= x + 4; y++) if (va.vocal(y) >= 0.4) sung = true;
+    if (sung) continue;
+    if (va.mean(va.energy, x, x + 4) < -18) continue; // schon Stille/ausgeklungen
+    bar = x;
+    break;
+  }
+  if (bar === null) return null;
+  ctx.outBar = bar;
+  const start = b.points.startBar ?? 0;
+  ctx.inBar = start;
+  // neuer Track: öffnet sich aus dem Tiefpass, wird lauter; alter Track verklingt mit Hall
+  // (Bass des neuen erst, wenn der alte weg ist; der alte blendet ab der Eins aus)
+  const steps = [
+    p(0, 'in', 'fader', 0), act(0, 'in', 'play'), p(0, 'in', 'filter', -0.6), p(0, 'in', 'low', KILL),
+    p(0, 'in', 'fader', 1, 3), p(1, 'in', 'filter', 0, 3),
+    p(1, 'out', 'reverb', 0.5, 1), p(0, 'out', 'fader', 0, 3.5),
+    p(4, 'in', 'low', 0, 0.25),
+    act(4.5, 'out', 'stop'),
+  ];
+  ctx.notes.unshift(
+    `Break-Übergang: im Teil ohne Schlagzeug des alten Tracks (Takt ${bar}) startet der neue`,
+    'kein Beat gegen Beat – der Tempo-Unterschied fällt nicht auf',
+  );
+  return { L: 4.5, steps };
 }
 
 function composeBlend(ctx) {
@@ -1490,6 +1537,7 @@ const COMPOSERS = {
   echo: composeEcho,
   build: composeBuild,
   ramp: composeRamp,
+  breakdown: composeBreakdown,
 };
 
 // ------------------------------------------------------------------ Auswahl
@@ -1532,6 +1580,8 @@ function scoreStyles(ctx) {
   } else {
     // Tempo-Rampe: der DJ-Weg für 8–13 % Unterschied (statt Echo-Schnitt)
     if (rel.m === 1 && rel.diff <= 0.13) c.ramp = ctx.profile.shortForm ? 2.7 : 1.8;
+    // Break-Übergang: im Teil ohne Drums wechseln – klingt natürlicher als ein Echo-Schnitt
+    c.breakdown = ctx.profile.shortForm ? 2.75 : 1.7;
     // ohne Beatmatch: Cut nur in einen echten Drop, sonst sauber per Echo
     if (realDrop(vb, b) !== null) c.cut = rel.diff <= 0.2 ? 1.6 : 1.0;
     c.echo = rel.diff <= 0.2 ? 1.2 : 1.5;
@@ -1710,22 +1760,24 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   const maxSec = (ctx.profile.shortForm ? 20 : 65) * ctx.tune.lengthScale; // House/Techno dürfen lang verweben, Pop nicht
   const byTime = Math.max(Math.min(...ctx.profile.lengths), [32, 16, 8, 4].find((L) => L * barSec <= maxSec) ?? 4);
   ctx.maxL = Math.min(ctx.maxL, byTime);
-  if (forced && chosen !== 'echo' && chosen !== 'cut' && rel.diff > FORCED_LIMIT) {
+  if (forced && !['echo', 'cut', 'breakdown'].includes(chosen) && rel.diff > FORCED_LIMIT) {
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
     chosen = 'echo';
   }
   // (Tempo-Rampe: der alte Track passt sich an, der neue läuft in seinem Originaltempo)
-  const beatmatch = chosen !== 'echo' && chosen !== 'ramp' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
+  const beatmatch = chosen !== 'echo' && chosen !== 'ramp' && chosen !== 'breakdown' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
   if (!beatmatch) ctx.m = 1;
 
   let result = COMPOSERS[chosen](ctx);
   if (!result) {
-    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : chosen === 'mashup' || chosen === 'mashin' ? 'kein passender Abschnitt ohne Gesang' : 'keine passenden Gesangszeilen'}) – Blend`;
-    chosen = 'blend';
-    chosenScore = ranked?.find(([k]) => k === 'blend')?.[1] ?? chosenScore; // Rückfall zählt als Blend
+    // Rückfall: Blend nur, wenn das Tempo angeglichen werden kann – sonst nie Beat gegen Beat, dann Echo-Out
+    const fb = beatmatch ? 'blend' : 'echo';
+    note = `${TRANSITIONS[chosen]} passt hier nicht (${chosen === 'loop' ? 'keine sauber loopbare Stelle' : chosen === 'mashup' || chosen === 'mashin' ? 'kein passender Abschnitt ohne Gesang' : chosen === 'breakdown' ? 'kein Teil ohne Schlagzeug' : chosen === 'ramp' ? 'keine ruhige Stelle für die Rampe' : 'keine passenden Gesangszeilen'}) – ${TRANSITIONS[fb]}`;
+    chosen = fb;
+    chosenScore = ranked?.find(([k]) => k === fb)?.[1] ?? chosenScore; // Rückfall zählt als diese Technik
     ctx.notes = [];
     ctx.loopExt = null;
-    result = composeBlend(ctx);
+    result = fb === 'blend' ? composeBlend(ctx) : composeEcho(ctx);
   }
   let { L, steps } = result;
   if (!instant && chosen !== 'blend' && chosen !== 'build' && !ctx.flavors) steps = applyFx(ctx, steps, L);
@@ -1787,7 +1839,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   };
 }
 
-const SELF_TIMED = new Set(['cut', 'echo', 'chorus', 'roll', 'mashin', 'pingpong', 'build', 'ramp']);
+const SELF_TIMED = new Set(['cut', 'echo', 'chorus', 'roll', 'mashin', 'pingpong', 'build', 'ramp', 'breakdown']);
 const TEASE_STYLES = new Set(['blend', 'filter', 'loop', 'handoff', 'vocal', 'wordplay']);
 const TEASE_LEVEL = 0.4;
 
