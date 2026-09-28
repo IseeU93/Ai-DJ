@@ -893,10 +893,14 @@ function attachScans(tracks) {
   });
 }
 
-function scanAhead() {
+async function scanAhead() {
   if (!vocalScan) return;
   const ids = [conductor.decks[conductor.master]?.track?.id, ...conductor.queue.slice(Math.max(0, conductor.pos), scanWholeSet ? undefined : conductor.pos + 4)];
-  vocalScan.want([...new Set(ids)].map((id) => conductor.track(id)).filter(Boolean));
+  const tracks = [...new Set(ids)].map((id) => conductor.track(id)).filter(Boolean);
+  // schon gescannte Songs zuerst aus dem Speicher holen – gescannt werden nur neue/geänderte Dateien
+  const got = await vocalScan.attach(tracks);
+  for (const t of got) conductor.trackUpdated(t);
+  vocalScan.want(tracks);
   renderScan();
 }
 
@@ -1145,6 +1149,8 @@ async function boot() {
       if (final) toast(`Genre online ergänzt: ${tracks.length} Song${tracks.length > 1 ? 's' : ''}`);
     },
   });
+  // dauerhaften Speicher anfordern: Analysen und Gesang-Scans sollen nie automatisch aufgeräumt werden
+  navigator.storage?.persist?.().catch(() => {});
   vocalScan = new VocalScan();
   vocalScan.enabled = loadSettings().vocalScan !== false;
   // kein Scan-Start, während ein Übergang läuft – die Wiedergabe hat Vorrang

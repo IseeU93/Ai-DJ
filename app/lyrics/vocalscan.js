@@ -133,8 +133,27 @@ export class VocalScan extends EventTarget {
     this.shouldWait = () => false; // z. B. während ein Übergang läuft: Rechenzeit für die Wiedergabe
   }
 
+  /**
+   * Speicher-Schlüssel: Dateiname + Größe. Überlebt verschobene Ordner und angefasste Änderungsdaten
+   * (Sync-Tools, Kopieren) – neu gescannt wird nur eine neue oder wirklich geänderte Datei.
+   */
   static key(t) {
+    const name = String(t.path || t.id).split(/[\\/]/).pop();
+    return `vscan|v${VERSION}|${name}|${t.size ?? ''}`;
+  }
+
+  /** früherer Schlüssel (mit Pfad und Änderungsdatum) – alte Ergebnisse werden übernommen */
+  static oldKey(t) {
     return `vscan|v${VERSION}|${t.path || t.id}|${t.size ?? ''}|${t.modified ?? ''}`;
+  }
+
+  /** Gespeicherte Wörter eines Songs (oder undefined). */
+  static async stored(t) {
+    const words = await cacheGet(VocalScan.key(t));
+    if (words) return words;
+    const old = await cacheGet(VocalScan.oldKey(t));
+    if (old) cachePut(VocalScan.key(t), old);
+    return old;
   }
 
   /** Ein gerade gescannter Song (für die Anzeige). */
@@ -177,14 +196,14 @@ export class VocalScan extends EventTarget {
 
   /** Schon gescannte Songs sofort übernehmen (aus dem Cache), ohne zu rechnen. */
   async attach(tracks) {
+    const todo = tracks.filter((t) => t?.analysis && t.analysis.vocalSource !== 'lyrics');
+    const found = await Promise.all(todo.map((t) => VocalScan.stored(t)));
     const done = [];
-    for (const t of tracks) {
-      if (!t?.analysis || t.analysis.vocalSource === 'lyrics') continue;
-      const words = await cacheGet(VocalScan.key(t));
-      if (!words) continue;
-      t.analysis = withLyricVocals(t.analysis, words);
+    todo.forEach((t, i) => {
+      if (!found[i] || t.analysis.vocalSource === 'lyrics') return;
+      t.analysis = withLyricVocals(t.analysis, found[i]);
       done.push(t);
-    }
+    });
     return done;
   }
 
@@ -219,7 +238,7 @@ export class VocalScan extends EventTarget {
     this.emit('status');
     try {
       const key = VocalScan.key(t);
-      let words = await cacheGet(key);
+      let words = await VocalScan.stored(t);
       if (!words) {
         const bytes = await readFile(t.path || t.id);
         const ctx = new OfflineAudioContext(1, 1, SR);
@@ -230,7 +249,7 @@ export class VocalScan extends EventTarget {
           for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels;
         }
         words = await this._run(wi, mono, guessLanguage(t));
-        cachePut(key, words);
+        await cachePut(key, words);
       }
       if (t.analysis.vocalSource !== 'lyrics') t.analysis = withLyricVocals(t.analysis, words);
       this.running.delete(t.id);
