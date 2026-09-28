@@ -1136,6 +1136,62 @@ function renderLibTracks() {
 
 // ------------------------------------------------------------------ Start
 
+// ------------------------------------------------------------------ Ausgabegerät
+
+/**
+ * Auswahl des Ausgabegeräts (gespeichert). Windows liefert die Gerätenamen erst, wenn die App einmal
+ * Audio-Zugriff hatte – dafür gibt es den Eintrag "Gerätenamen anzeigen …" (fragt einmal nach).
+ */
+function setupOutputDevice() {
+  const sel = $('#out-dev');
+  if (typeof engine.ctx.setSinkId !== 'function' || !navigator.mediaDevices?.enumerateDevices) {
+    sel.hidden = true;
+    return;
+  }
+  const wanted = loadSettings().outputDevice || '';
+  const fill = async () => {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    const named = devs.some((d) => d.label);
+    sel.innerHTML = '';
+    sel.append(new Option('Standard-Ausgabe', ''));
+    devs.forEach((d, i) => sel.append(new Option(d.label || `Ausgabegerät ${i + 1}`, d.deviceId)));
+    if (!named) sel.append(new Option('Geräte anzeigen …', '__names'));
+    sel.value = [...sel.options].some((o) => o.value === (engine.outputDevice ?? wanted)) ? (engine.outputDevice ?? wanted) : '';
+  };
+  const apply = async (id, quiet = false) => {
+    try {
+      await engine.setOutputDevice(id);
+      saveSettings({ outputDevice: id });
+      if (!quiet) toast(`Ausgabe: ${sel.selectedOptions[0]?.textContent || 'Standard'}`);
+    } catch (err) {
+      toast(`Ausgabegerät nicht verfügbar – bleibt beim Standard (${err.message || err})`);
+      await engine.setOutputDevice('').catch(() => {});
+      sel.value = '';
+    }
+  };
+  sel.onchange = async () => {
+    if (sel.value === '__names') {
+      // einmal kurz Audio-Zugriff: danach verrät Windows die Namen der Geräte
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+        st.getTracks().forEach((t) => t.stop());
+      } catch {
+        toast('Ohne Audio-Freigabe zeigt Windows keine Gerätenamen – die Auswahl geht trotzdem');
+      }
+      await fill();
+      return;
+    }
+    await apply(sel.value);
+  };
+  navigator.mediaDevices.addEventListener?.('devicechange', fill);
+  fill().then(() => {
+    if (wanted) {
+      sel.value = [...sel.options].some((o) => o.value === wanted) ? wanted : '';
+      if (sel.value) apply(wanted, true);
+    }
+  });
+}
+
 async function boot() {
   await engine.init();
   conductor = new Conductor(engine);
@@ -1189,6 +1245,7 @@ async function boot() {
   buildStrip(1);
 
   const masterSlider = new Slider($('#master-vol'), { value: 1, onInput: (v) => engine.setMasterVolume(v) });
+  setupOutputDevice();
   new Slider($('#xfader'), { value: 0.5, onInput: (v) => engine.setCrossfader(v) });
 
   // Playlist-Auswahl: mehrere an-/abwählen, mit "Übernehmen" laden

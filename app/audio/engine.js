@@ -139,6 +139,17 @@ export class Engine {
     this.decks[1].xfade.gain.setTargetAtTime(Math.min(1, 2 * x), t, 0.005);
   }
 
+  /**
+   * Ausgabegerät wählen (z. B. ein bestimmter Voicemeeter-Eingang oder das DJ-Interface).
+   * '' = Windows-Standardgerät. Liefert false, wenn der Browser das nicht kann.
+   */
+  async setOutputDevice(id) {
+    if (typeof this.ctx.setSinkId !== 'function') return false;
+    await this.ctx.setSinkId(id || '');
+    this.outputDevice = id || '';
+    return true;
+  }
+
   setMasterVolume(v) {
     this.masterVolume = v;
     this.master.gain.setTargetAtTime(v, this.now, 0.01);

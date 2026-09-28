@@ -467,3 +467,4 @@ select.sel:disabled { opacity: 0.5; }
 .wish-input:focus { outline: none; border-color: var(--a); }
 .wish-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .qrow.wished .idx { color: var(--a); font-weight: 600; }
+#out-dev { max-width: 170px; }
