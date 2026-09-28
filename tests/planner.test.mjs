@@ -264,9 +264,19 @@ test('Key-Sync: Tonart-Clash wird per Halbton-Verschiebung harmonisch', () => {
   assert.equal(keySync('8A', '9A').semis, 0); // passt schon -> nicht verschieben
 });
 
-test('Mittlerer Tempo-Sprung (12 %) -> sauberer Drop-Cut statt Echo', () => {
-  const plan = planTransition({ out: track('a', 128), inc: track('d', 113) });
-  assert.equal(plan.type, 'cut', plan.type);
+test('Mittlerer Tempo-Sprung (12 %) -> Tempo-Rampe wie am Pitch-Fader (sonst Drop-Cut)', () => {
+  const out = track('a', 128);
+  const plan = planTransition({ out, inc: track('d', 113) });
+  assert.ok(['ramp', 'cut'].includes(plan.type), plan.type);
+  const ramp = planTransition({ out, inc: track('d', 113), type: 'ramp' });
+  assert.equal(ramp.type, 'ramp');
+  const r = ramp.steps.find((x) => x.action === 'rate' && x.deck === 'out');
+  assert.ok(Math.abs(r.to - 113 / out.analysis.bpm) < 0.01, `Zieltempo ${r.to}`);
+  // Rampe über 8 Takte des alten Tracks: endet genau auf der Eins, dort startet der neue
+  const play = ramp.steps.find((x) => x.action === 'play');
+  assert.ok(Math.abs(r.dur * (1 + r.to) / 2 - 8) < 1e-6);
+  assert.ok(Math.abs(play.at - r.dur) < 1e-6);
+  assert.equal(ramp.inRate, 1, 'neuer Track läuft in seinem Originaltempo');
 });
 
 test('Leises Ausklingen am Ende: kein Loop, der laut/leise springt, Übergang endet vor dem Fade', () => {

@@ -20,6 +20,7 @@ export const TRANSITIONS = {
   cut: 'Drop-Cut',
   echo: 'Echo-Out',
   build: 'Build-up & Drop',
+  ramp: 'Tempo-Rampe',
 };
 
 export const KILL = -26; // dB, EQ-"Kill"
@@ -692,6 +693,52 @@ function applyFx(ctx, steps, L) {
 }
 
 // ------------------------------------------------------------------ Composer je Technik
+
+/**
+ * Tempo-Rampe (für Songs, deren Tempo 8–13 % auseinanderliegt – zu viel zum einfachen Angleichen):
+ * Wie ein DJ am Pitch-Fader zieht der Mixer das Tempo des alten Tracks über 8 seiner Takte langsam
+ * an das des neuen heran. Die Rampe ist so bemessen, dass sie genau auf einer Eins endet; dort
+ * setzt der neue Track in seinem Originaltempo ein und die beiden werden normal übergeblendet.
+ */
+function composeRamp(ctx) {
+  const { va, vb, b, rel, masterBpm } = ctx;
+  if (ctx.instant || rel.m !== 1) return null;
+  const r = b.bpm / masterBpm; // Zieltempo des alten Tracks (relativ)
+  if (Math.abs(r - 1) <= BEATMATCH_LIMIT || Math.abs(r - 1) > 0.13) return null;
+  const K = 8; // Takte des alten Tracks, über die das Tempo gleitet
+  const R = (2 * K) / (1 + r); // Dauer der Rampe in Takten des Anfangstempos (linear -> endet auf der Eins)
+  const L = 8; // Blend nach der Rampe (Takte im neuen Tempo)
+  const A = (j) => R + j / r; // Blend-Takt j -> Zeit in Takten des Anfangstempos
+  // Ende im alten Track an einer Stelle ohne Gesang, davor Rampe + Blend
+  let end;
+  if (ctx.earliestBar !== null) {
+    // ab "jetzt": Rampe beginnt an der nächsten Phrasengrenze, Ende an einer Stelle ohne Gesang
+    end = safeExit(va, va.grid(ctx.earliestBar, 4) + K + L, 16);
+  } else end = safeExit(va, exitBar(ctx, L) + L);
+  const start = end - L - K;
+  if (start < 0 || (ctx.earliestBar !== null && start < ctx.earliestBar - 1e-6) || end > (va.a.points.lastBar ?? va.end)) return null;
+  // im Blend-Teil darf der alte Track nicht singen (zwei Stimmen mit leicht anderem Tempo gehen nie gut)
+  if (va.mean(va.vocal, start + K, end) >= 0.4) return null;
+  const inStart = b.points.startBar ?? 0;
+  ctx.outBar = start;
+  ctx.inBar = Math.max(inStart, vb.grid((b.points.dropBar ?? inStart + L) - L, 4, 'floor'));
+  const steps = [
+    act(0, 'out', 'rate', { to: r, dur: R }),
+    p(0, 'in', 'fader', 0),
+    act(A(0), 'in', 'play'), p(A(0), 'in', 'low', KILL), p(A(0), 'in', 'filter', 0.35),
+    p(A(0), 'in', 'fader', 0.9, A(2) - A(0)),
+    p(A(2), 'in', 'filter', 0, A(4) - A(2)),
+    p(A(4), 'out', 'low', KILL, 0.25), p(A(4), 'in', 'low', 0, 0.25), p(A(4) + 0.01, 'in', 'fader', 1, 1),
+    p(A(6), 'out', 'fader', 0, A(L) - A(6)),
+    act(A(L), 'out', 'stop'),
+  ];
+  const pct = Math.round((r - 1) * 100);
+  ctx.notes.unshift(
+    `Tempo-Rampe: der alte Track gleitet über ${K} Takte ${pct > 0 ? '+' : ''}${pct} % auf ${b.bpm.toFixed(0)} BPM`,
+    'genau auf der Eins setzt der neue Track in seinem Originaltempo ein, dann ein normaler Blend',
+  );
+  return { L: A(L), steps };
+}
 
 function composeBlend(ctx) {
   const { va, vb, b, m } = ctx;
@@ -1442,6 +1489,7 @@ const COMPOSERS = {
   cut: composeCut,
   echo: composeEcho,
   build: composeBuild,
+  ramp: composeRamp,
 };
 
 // ------------------------------------------------------------------ Auswahl
@@ -1482,6 +1530,8 @@ function scoreStyles(ctx) {
     // Build-up & Drop: wenn der neue Track einen echten Drop hat und es energetisch nach oben geht
     if (dropOk && !ctx.profile.shortForm) c.build = 0.5 + (energyUp > 0.1 ? 0.35 : 0) + (inLead < 8 ? 0.2 : 0);
   } else {
+    // Tempo-Rampe: der DJ-Weg für 8–13 % Unterschied (statt Echo-Schnitt)
+    if (rel.m === 1 && rel.diff <= 0.13) c.ramp = ctx.profile.shortForm ? 2.7 : 1.8;
     // ohne Beatmatch: Cut nur in einen echten Drop, sonst sauber per Echo
     if (realDrop(vb, b) !== null) c.cut = rel.diff <= 0.2 ? 1.6 : 1.0;
     c.echo = rel.diff <= 0.2 ? 1.2 : 1.5;
@@ -1664,7 +1714,8 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     note = `${TRANSITIONS[chosen]} geht bei diesem Tempo-Sprung nicht – Echo-Out`;
     chosen = 'echo';
   }
-  const beatmatch = chosen !== 'echo' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
+  // (Tempo-Rampe: der alte Track passt sich an, der neue läuft in seinem Originaltempo)
+  const beatmatch = chosen !== 'echo' && chosen !== 'ramp' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
   if (!beatmatch) ctx.m = 1;
 
   let result = COMPOSERS[chosen](ctx);
@@ -1736,7 +1787,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   };
 }
 
-const SELF_TIMED = new Set(['cut', 'echo', 'chorus', 'roll', 'mashin', 'pingpong', 'build']);
+const SELF_TIMED = new Set(['cut', 'echo', 'chorus', 'roll', 'mashin', 'pingpong', 'build', 'ramp']);
 const TEASE_STYLES = new Set(['blend', 'filter', 'loop', 'handoff', 'vocal', 'wordplay']);
 const TEASE_LEVEL = 0.4;
 

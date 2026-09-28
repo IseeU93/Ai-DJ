@@ -80,7 +80,7 @@ export function auditPlan(plan, va, vb) {
 
   // Wechsel auf der Eins – in beiden Tracks auf einer 4-Takt-Grenze
   let misaligned = 0;
-  if (sw) {
+  if (sw && plan.type !== 'ramp') { // (Rampe: Takte laufen dort nicht gleich schnell – eigene Rechnung)
     const onGrid = (bar, off) => Math.abs(((((bar - off) % 4) + 4) % 4) - 0) < 0.3 || Math.abs(((((bar - off) % 4) + 4) % 4) - 4) < 0.3;
     if (!onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
     if (plan.beatmatch !== false && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
