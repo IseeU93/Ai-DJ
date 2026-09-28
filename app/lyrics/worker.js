@@ -28,9 +28,9 @@ async function gpuUsable() {
   }
 }
 
-async function load() {
+async function load(prefer = 'auto') {
   if (asr) return asr;
-  if (await gpuUsable()) {
+  if (prefer !== 'wasm' && (await gpuUsable())) {
     try {
       asr = await pipeline('automatic-speech-recognition', MODEL, {
         device: 'webgpu', dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' }, progress_callback: progress,
@@ -47,8 +47,8 @@ async function load() {
   return asr;
 }
 
-async function transcribe(audio, language) {
-  const model = await load();
+async function transcribe(audio, language, prefer) {
+  const model = await load(prefer);
   return model(audio, {
     return_timestamps: 'word', chunk_length_s: 30, stride_length_s: 5, language: language || 'english', task: 'transcribe',
     // gegen Endlosschleifen erfundener Wörter (Whisper in Instrumentalteilen): mehr als ~120 Wörter
@@ -58,19 +58,19 @@ async function transcribe(audio, language) {
 }
 
 self.onmessage = async (e) => {
-  const { id, audio, language } = e.data;
+  const { id, audio, language, device: prefer } = e.data;
   try {
     const t0 = performance.now();
     let out;
     try {
-      out = await transcribe(audio, language);
+      out = await transcribe(audio, language, prefer);
     } catch (err) {
       if (device !== 'webgpu') throw err;
       // Grafikkarte hat mitten drin versagt: einmal auf der CPU wiederholen
       console.warn('WebGPU-Fehler, wiederhole auf der CPU:', err?.message || err);
       gpuBroken = true;
       asr = null;
-      out = await transcribe(audio, language);
+      out = await transcribe(audio, language, prefer);
     }
     const words = (out.chunks || [])
       .map((c) => ({ w: c.text.trim(), t: c.timestamp[0], e: c.timestamp[1] ?? c.timestamp[0] + 0.3 }))

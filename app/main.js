@@ -1147,10 +1147,10 @@ async function boot() {
   });
   vocalScan = new VocalScan();
   vocalScan.enabled = loadSettings().vocalScan !== false;
-  // kein Scan-Start, während ein Übergang läuft oder gleich beginnt – die Wiedergabe hat Vorrang
+  // kein Scan-Start, während ein Übergang läuft – die Wiedergabe hat Vorrang
   vocalScan.shouldWait = () => {
     const p = conductor.plan;
-    return !!p && (p.committed || (p.firstStepTime ?? Infinity) - engine.now < 20);
+    return !!p && p.committed; // nur solange ein Übergang wirklich läuft
   };
   vocalScan.addEventListener('done', (e) => {
     conductor.trackUpdated(e.detail);

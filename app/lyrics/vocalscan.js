@@ -111,16 +111,22 @@ export function withLyricVocals(a, words) {
   };
 }
 
-/** Warteschlange für den Scan (immer nur ein Song gleichzeitig – Whisper ist rechenintensiv). */
+/**
+ * Warteschlange für den Scan: mehrere Worker parallel (je nach Rechner 1–3, jeder mit einem CPU-Kern
+ * bzw. der erste auf der Grafikkarte), immer in Wiedergabe-Reihenfolge. Ergebnisse bleiben dauerhaft
+ * gespeichert – kein Song wird zweimal gescannt.
+ */
 export class VocalScan extends EventTarget {
   constructor() {
     super();
     this.enabled = true;
-    this.worker = null;
+    const cores = globalThis.navigator?.hardwareConcurrency || 4;
+    this.size = Math.max(1, Math.min(3, Math.floor(cores / 4))); // 16 Threads -> 3, 8 -> 2, 4 -> 1
+    this.workers = [];
     this.seq = 0;
     this.pending = new Map();
     this.wanted = []; // Tracks in Wunsch-Reihenfolge
-    this.busy = null; // Track, der gerade gescannt wird
+    this.running = new Map(); // Track-ID -> Track (wird gerade gescannt)
     this.failed = new Set();
     this.device = null;
     this.model = null; // Lade-Fortschritt des Modells
@@ -131,10 +137,15 @@ export class VocalScan extends EventTarget {
     return `vscan|v${VERSION}|${t.path || t.id}|${t.size ?? ''}|${t.modified ?? ''}`;
   }
 
-  _worker() {
-    if (!this.worker) {
-      this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-      this.worker.onmessage = (e) => {
+  /** Ein gerade gescannter Song (für die Anzeige). */
+  get busy() {
+    return this.running.values().next().value || null;
+  }
+
+  _worker(i) {
+    if (!this.workers[i]) {
+      const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      w.onmessage = (e) => {
         const m = e.data;
         if (m.type === 'progress') {
           this.model = m;
@@ -144,16 +155,20 @@ export class VocalScan extends EventTarget {
         const p = this.pending.get(m.id);
         this.pending.delete(m.id);
         if (!p) return;
-        this.device = m.device || this.device;
+        if (i === 0 || !this.device) this.device = m.device || this.device;
         if (m.error) p.reject(new Error(m.error));
         else p.resolve(m.words);
       };
-      this.worker.onerror = (e) => {
-        for (const p of this.pending.values()) p.reject(new Error(e.message || 'Worker-Fehler'));
-        this.pending.clear();
+      w.onerror = (e) => {
+        for (const [id, p] of this.pending) {
+          if (p.worker !== i) continue;
+          p.reject(new Error(e.message || 'Worker-Fehler'));
+          this.pending.delete(id);
+        }
       };
+      this.workers[i] = w;
     }
-    return this.worker;
+    return this.workers[i];
   }
 
   emit(type, detail) {
@@ -175,24 +190,32 @@ export class VocalScan extends EventTarget {
 
   /** Diese Songs (in dieser Reihenfolge) scannen lassen – ersetzt die bisherige Wunschliste. */
   want(tracks) {
-    this.wanted = tracks.filter((t) => t?.analysis && t.analysis.vocalSource !== 'lyrics' && !this.failed.has(t.id));
+    this.wanted = tracks.filter((t) => t?.analysis && t.analysis.vocalSource !== 'lyrics' && !this.failed.has(t.id) && !this.running.has(t.id));
     this.emit('status');
     this._pump();
   }
 
   get left() {
-    return this.wanted.length + (this.busy ? 1 : 0);
+    return this.wanted.length + this.running.size;
   }
 
-  async _pump() {
-    if (this.busy || !this.enabled || !this.wanted.length) return;
-    if (this.shouldWait()) {
+  _pump() {
+    if (!this.enabled) return;
+    // während ein Übergang läuft, startet kein neuer Scan (die Wiedergabe hat Vorrang)
+    const limit = this.shouldWait() ? 0 : this.size;
+    for (let i = 0; i < this.size && this.running.size < limit && this.wanted.length; i++) {
+      if ([...this.running.values()].some((x) => x.__vsw === i)) continue;
+      this._scan(this.wanted.shift(), i);
+    }
+    if (this.wanted.length && this.running.size < this.size) {
       clearTimeout(this.waitTimer);
       this.waitTimer = setTimeout(() => this._pump(), 2000);
-      return;
     }
-    const t = this.wanted.shift();
-    this.busy = t;
+  }
+
+  async _scan(t, wi) {
+    t.__vsw = wi;
+    this.running.set(t.id, t);
     this.emit('status');
     try {
       const key = VocalScan.key(t);
@@ -206,28 +229,30 @@ export class VocalScan extends EventTarget {
           const d = buf.getChannelData(ch);
           for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels;
         }
-        words = await this._run(mono, guessLanguage(t));
+        words = await this._run(wi, mono, guessLanguage(t));
         cachePut(key, words);
       }
       if (t.analysis.vocalSource !== 'lyrics') t.analysis = withLyricVocals(t.analysis, words);
+      this.running.delete(t.id);
       this.emit('done', t);
     } catch (err) {
       console.warn('Gesang-Scan fehlgeschlagen:', t.title, err?.message || err);
       this.failed.add(t.id);
+      this.running.delete(t.id);
       this.emit('error', { track: t, error: err });
     } finally {
-      this.busy = null;
+      this.running.delete(t.id);
       this.emit('status');
-      // Pause zwischen zwei Songs: Rechner (auch Laptops) nicht dauerhaft voll auslasten
-      setTimeout(() => this._pump(), 3000);
+      this._pump();
     }
   }
 
-  _run(audio, language) {
+  _run(wi, audio, language) {
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this._worker().postMessage({ id, audio, language }, [audio.buffer]);
+      this.pending.set(id, { resolve, reject, worker: wi });
+      // erster Worker darf die Grafikkarte nehmen, die übrigen rechnen je auf einem CPU-Kern
+      this._worker(wi).postMessage({ id, audio, language, device: wi === 0 ? 'auto' : 'wasm' }, [audio.buffer]);
     });
   }
 }
