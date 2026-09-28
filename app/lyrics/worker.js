@@ -49,7 +49,12 @@ async function load() {
 
 async function transcribe(audio, language) {
   const model = await load();
-  return model(audio, { return_timestamps: 'word', chunk_length_s: 30, stride_length_s: 5, language: language || 'english', task: 'transcribe' });
+  return model(audio, {
+    return_timestamps: 'word', chunk_length_s: 30, stride_length_s: 5, language: language || 'english', task: 'transcribe',
+    // gegen Endlosschleifen erfundener Wörter (Whisper in Instrumentalteilen): mehr als ~120 Wörter
+    // passen nicht in 30 s Gesang – so dauert kein Song ewig
+    max_new_tokens: 192,
+  });
 }
 
 self.onmessage = async (e) => {
