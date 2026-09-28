@@ -496,6 +496,8 @@ function choosePoints(ctx, lengths, allowFull = false) {
         // Gesangszeilen des alten Tracks nicht abschneiden: Zeile läuft über das Ende hinaus
         // oder fällt in die Ausblendphase (zweite Hälfte) -> stark bestrafen
         if (va.vocalSmooth(outEnd - 1) >= 0.55 && va.vocalSmooth(outEnd) >= 0.55) sc -= 0.8;
+        // mit Songtext-Scan genau: wo der alte Track verschwindet, muss die Zeile zu Ende sein
+        if (va.hasBeats && outEnd < E && !lineSafe(va, outEnd)) sc -= 1.2;
         let lateVocal = 0;
         for (let t = Math.floor(L / 2); t < L; t++) if (va.vocalSmooth(outBar + t) >= 0.55) lateVocal++;
         sc -= lateVocal * 0.08;
@@ -1105,7 +1107,9 @@ function composeBuild(ctx) {
   if (ctx.instant) return null;
   const arrival = realDrop(vb, b);
   if (arrival === null) return null;
-  ctx.outBar = Math.min(hardExit(ctx), lastExit(va));
+  // der Drop landet dort, wo die Phrase des alten endet – immer auf dem 4er-Raster (der alte ist am
+  // Ende ohnehin hinter Hochpass und Gate versteckt, eine Atempause mitten in der Phrase zählt hier nicht)
+  ctx.outBar = va.grid(Math.min(hardExit(ctx), lastExit(va)), 4, 'floor');
   ctx.inBar = arrival;
   // Anlauf: 8 Takte, bei "bald mixen" so viel, wie noch Platz ist
   const B = ctx.earliestBar !== null ? Math.max(2, Math.min(8, Math.floor(ctx.outBar - ctx.earliestBar) + 2)) : 8;
@@ -1163,11 +1167,15 @@ function composeSongCut(ctx) {
     hookIn = true;
   }
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
+  // beginnt im alten Track gleich nach der Eins schon die nächste Zeile, schneller weg (Echo trägt)
+  const va = ctx.va;
+  const nextLine = va.hasBeats && (va.beatVocal(ctx.outBar, 2) >= 0.4 || va.beatVocal(ctx.outBar, 3) >= 0.4);
+  const fadeOut = nextLine ? 0.4 : 1;
   // Der neue startet genau auf der Eins (nicht einen Schlag später) und blendet kurz ein, der alte
   // verklingt über einen Takt in Echo und Hall – kein harter Schnitt, kein Loch
   const steps = [
     p(-1, 'out', 'filter', 0.3, 1), p(-0.25, 'out', 'echo', 0.55, 0.25), p(-0.5, 'out', 'reverb', 0.45, 0.5),
-    p(0, 'out', 'fader', 0, 1), p(0, 'in', 'fader', 0), p(0, 'in', 'fader', 1, beatless ? 0.25 : 0.5),
+    p(0, 'out', 'fader', 0, fadeOut), p(0, 'in', 'fader', 0), p(0, 'in', 'fader', 1, beatless ? 0.25 : 0.5),
     act(0, 'in', 'play'),
     p(1.5, 'out', 'echo', 0), act(2, 'out', 'stop'),
   ];
@@ -1283,7 +1291,11 @@ function composeChorus(ctx) {
   // Abwechslung), direkt in seinen Refrain/Hook. Dann läuft der Takt davor ohne Gesang/Bass an.
   const hook = hookBar(vb, b);
   const dice = hash(`${ctx.outId}|${ctx.inId}|entry`);
-  if (!ctx.instant && hook !== null && (ctx.energyUp > 0.08 || dice < 0.35)) {
+  // Energie halten: der alte Refrain endet laut, der neue Song fängt leise an -> direkt in seinen Refrain
+  const eOld = va.mean(va.energy, exit.bar - 4, exit.bar);
+  const eNew = vb.mean(vb.energy, start, start + 4);
+  const dip = eOld - eNew > 5 && eOld > -4 && hook !== null && vb.energy(hook) > eNew + 3;
+  if (!ctx.instant && hook !== null && (ctx.energyUp > 0.08 || dice < 0.35 || dip)) {
     const hp = 4;
     ctx.outBar = exit.bar - hp;
     ctx.inBar = Math.max(start, Math.round(hook - hp * m));

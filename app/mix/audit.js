@@ -82,7 +82,11 @@ export function auditPlan(plan, va, vb) {
   let misaligned = 0;
   if (sw && plan.type !== 'ramp') { // (Rampe: Takte laufen dort nicht gleich schnell – eigene Rechnung)
     const onGrid = (bar, off) => Math.abs(((((bar - off) % 4) + 4) % 4) - 0) < 0.3 || Math.abs(((((bar - off) % 4) + 4) % 4) - 4) < 0.3;
-    if (!onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
+    // Echo/Schnitt ohne Überlappung: ein ganzer Takt (Atempause im Gesang) reicht – die 4er-Phrase
+    // zählt nur, wenn beide Tracks hörbar zusammen laufen
+    const barOnly = quietStyle && plan.beatmatch === false;
+    const wholeBar = Math.abs(sw.ob - Math.round(sw.ob)) < 0.1;
+    if (barOnly ? !wholeBar : !onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
     // im neuen Track zählt die Phrase nur, wenn danach beide noch zusammen laufen – ist der alte beim
     // Wechsel praktisch weg (Refrain-Wechsel, Echo), fängt der neue einfach an seinem Anfang an
     const gone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));

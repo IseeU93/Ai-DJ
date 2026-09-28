@@ -498,7 +498,10 @@ test('Pop: Refrain-Wechsel nach ~2/3 des Songs, neuer Song von vorn, nie zwei St
   assert.ok(!auto.audit.issues.includes('alte Gesangszeile wird abgeschnitten'), `${auto.type}: ${auto.audit.issues}`);
   const swap = plan.outBar + plan.bars;
   assert.ok(swap / E > 0.55 && swap / E < 0.88, `Wechsel bei Takt ${swap} von ${E}`);
-  assert.equal(plan.inBar, inc.analysis.points.startBar ?? 0, 'neuer Song startet nicht am Anfang');
+  // neuer Song von vorn – oder, wenn sein Anfang viel leiser ist als der alte Refrain, direkt vor
+  // seinem Refrain (Energie halten)
+  const hookIn = plan.notes.some((n) => n.includes('direkt vor seinem Refrain'));
+  assert.ok(plan.inBar === (inc.analysis.points.startBar ?? 0) || hookIn, `neuer Song startet bei Takt ${plan.inBar}`);
   // neuer Gesang bleibt stumm, solange der alte Track noch voll da ist
   const vocalOn = plan.steps.find((s) => s.deck === 'in' && s.param === 'vocal' && s.to === 0);
   const outGone = plan.steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to === 0);
