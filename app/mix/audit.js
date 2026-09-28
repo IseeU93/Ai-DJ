@@ -99,7 +99,9 @@ export function auditPlan(plan, va, vb) {
     // Wechsel praktisch weg (Refrain-Wechsel, Echo), fängt der neue einfach an seinem Anfang an
     const gone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
     const together = Math.min(stopOut, t1, gone.length ? Math.min(...gone) : Infinity) - sw.t;
-    if (plan.beatmatch !== false && together >= 1 && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
+    // (startet der neue an seinem natürlichen Anfang und ist der alte binnen zwei Takten weg, passt es)
+    const naturalStart = Math.abs(plan.inBar - (vb.a.points?.startBar ?? 0)) < 0.5 && together <= 2;
+    if (plan.beatmatch !== false && together >= 1 && !naturalStart && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
   }
   // Zeile abgeschnitten: der Gesang des alten Tracks wird unhörbar (Fader, Filter, Vocal-Cut, Loop),
   // während er gerade singt und weitersingen würde – beim Mitsingen das Schlimmste. Gilt für alle

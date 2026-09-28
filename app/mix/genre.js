@@ -33,11 +33,11 @@ export function detectGenre(a) {
  *  vocal    – wie stark Gesang geschützt wird
  */
 export const PROFILES = {
-  edm: { lengths: [32, 16, 8], swap: 0.25, vocal: 1, styles: { mashup: 0.1, mashin: 0.05, roll: 0.05, chorus: -0.6, blend: 0.2, filter: 0.1, loop: 0.1, vocal: 0, handoff: -0.2, cut: -0.4, echo: -0.3, build: 0.2 } },
-  pop: { lengths: [16, 8], swap: 0.5, vocal: 1.6, shortForm: true, styles: { mashup: 0.15, mashin: 0.1, roll: -0.25, chorus: 0.6, blend: 0, filter: 0.1, vocal: -0.4, handoff: 0.2, loop: -0.4, cut: -0.1, echo: -0.3, build: -0.5 } },
+  edm: { lengths: [32, 16, 8], swap: 0.5, vocal: 1, styles: { mashup: 0.1, mashin: 0.05, roll: 0.05, chorus: -0.6, blend: 0.2, filter: 0.1, loop: 0.1, vocal: 0, handoff: -0.2, cut: -0.4, echo: -0.3, build: 0.2 } },
+  pop: { lengths: [16, 8], swap: 1, vocal: 1.6, shortForm: true, styles: { mashup: 0.15, mashin: 0.1, roll: -0.25, chorus: 0.6, blend: 0, filter: 0.1, vocal: -0.4, handoff: 0.2, loop: -0.4, cut: -0.1, echo: -0.3, build: -0.5 } },
   hardstyle: { lengths: [8, 4], swap: 0.25, vocal: 1.2, styles: { mashup: -0.2, mashin: -0.1, roll: 0.3, chorus: -0.8, blend: 0.1, filter: 0, loop: -0.3, vocal: -0.5, cut: 0.35, echo: -0.2, build: 0.45 } },
   uptempo: { lengths: [8, 4], swap: 0.25, vocal: 1, styles: { mashup: -0.3, mashin: -0.2, roll: 0.4, chorus: -0.8, blend: 0, filter: -0.1, loop: -0.4, vocal: -0.6, cut: 0.5, echo: -0.2, build: 0.45 } },
-  rap: { lengths: [8, 4], swap: 0.5, vocal: 2, shortForm: true, styles: { mashup: 0.2, mashin: 0.15, roll: -0.1, chorus: 0.6, blend: -0.1, filter: 0.1, handoff: 0.4, loop: -0.5, vocal: -0.4, cut: 0.3, echo: -0.2, build: -0.5 } },
+  rap: { lengths: [8, 4], swap: 0.75, vocal: 2, shortForm: true, styles: { mashup: 0.2, mashin: 0.15, roll: -0.1, chorus: 0.6, blend: -0.1, filter: 0.1, handoff: 0.4, loop: -0.5, vocal: -0.4, cut: 0.3, echo: -0.2, build: -0.5 } },
 };
 
 /** Profil für einen Übergang zwischen zwei Richtungen (das vorsichtigere gewinnt). */
