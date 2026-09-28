@@ -1176,22 +1176,41 @@ function composeSongCut(ctx) {
   const firstLine = b.points.vocalFirst ?? start;
   ctx.inBar = firstLine - start > 8 ? vb.grid(firstLine - 4, 4, 'floor') : start;
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
-  // beginnt im alten Track gleich nach der Eins schon die nächste Zeile, schneller weg (Echo trägt)
+  // beginnt im alten Track gleich nach der Eins schon die nächste Zeile, schneller weg
   const va = ctx.va;
   const nextLine = va.hasBeats && (va.beatVocal(ctx.outBar, 2) >= 0.4 || va.beatVocal(ctx.outBar, 3) >= 0.4);
-  const fadeOut = nextLine ? 0.4 : 1;
-  // Der neue startet genau auf der Eins (nicht einen Schlag später) und blendet kurz ein, der alte
-  // verklingt über einen Takt in Echo und Hall – kein harter Schnitt, kein Loch
+  const exitNote = `Ausstieg nach dem Refrain (Takt ${exit.bar}) in einer Atempause des Gesangs`;
+  // Gleiches Tempo: kein Echo-Schlag, sondern ein kurzer Blend im Takt – der alte taucht im Tiefpass
+  // ab, der neue läuft synchron darunter an und bekommt seinen Bass auf der Eins
+  if (ctx.rel.diff <= BEATMATCH_LIMIT && ctx.rel.m === 1) {
+    ctx.forceBeatmatch = true;
+    ctx.label = 'Kurz-Blend';
+    const out = nextLine ? 0.75 : 1.5;
+    const steps = [
+      p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
+      p(0, 'out', 'low', KILL, 0.5), p(0, 'in', 'low', 0, 0.5),
+      p(0, 'out', 'filter', -0.55, out), p(0, 'out', 'reverb', 0.3, 0.5), p(0, 'out', 'fader', 0, out),
+      // Stimme des neuen erst, wenn der alte weg ist
+      p(out, 'in', 'vocal', 0, 0.5),
+      act(2, 'out', 'stop'),
+    ];
+    softVocalEntry(ctx, steps, 0.5);
+    ctx.notes.unshift(exitNote, 'kurzer Blend im Takt: der alte taucht im Tiefpass ab, der neue kommt synchron und weich darunter hoch');
+    return { L: 2, steps };
+  }
+  // Tempo zu verschieden: weicher Echo-Out – der alte versinkt über zwei Takte in Tiefpass, Echo
+  // und Hall, statt abrupt abzubrechen
+  const fadeOut = nextLine ? 0.6 : 1.5;
   const steps = [
-    p(-1, 'out', 'filter', 0.3, 1), p(-0.25, 'out', 'echo', 0.55, 0.25), p(-0.5, 'out', 'reverb', 0.45, 0.5),
+    p(-2, 'out', 'filter', -0.5, 2), p(-0.25, 'out', 'echo', 0.5, 0.25), p(-1, 'out', 'reverb', 0.55, 1),
     p(0, 'out', 'fader', 0, fadeOut), p(0, 'in', 'fader', 0),
     act(0, 'in', 'play'),
     p(0.05, 'out', 'echo', 0, 0.1), act(2, 'out', 'stop'),
   ];
-  softVocalEntry(ctx, steps, beatless ? 0.25 : 0.5);
+  softVocalEntry(ctx, steps, beatless ? 0.5 : 1);
   ctx.notes.unshift(
-    `Ausstieg nach dem Refrain (Takt ${exit.bar})${ctx.rel.diff > BEATMATCH_LIMIT ? ' – Tempo zu verschieden zum Angleichen' : ' – sauberer Schnitt statt langer Überblendung (beide Songs singen fast durchgehend)'}`,
-    'alter Track verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang',
+    `${exitNote} – Tempo zu verschieden zum Angleichen`,
+    'alter Track versinkt weich in Tiefpass, Echo und Hall, der neue kommt darunter hoch',
   );
   return { L: 2, steps };
 }
@@ -1652,7 +1671,7 @@ function scoreStyles(ctx) {
     // ohne Beatmatch: Cut nur in einen echten Drop, sonst sauber per Echo
     if (realDrop(vb, b) !== null) c.cut = rel.diff <= 0.2 ? 1.6 : 1.0;
     c.echo = rel.diff <= 0.2 ? 1.2 : 1.5;
-    if (ctx.profile.shortForm) c.echo = 2.6; // sauber verhallen statt hart in einen Beat schneiden
+    if (ctx.profile.shortForm) c.echo = 1.5; // weich verhallen – aber Rampe und Break-Übergang klingen natürlicher
   }
   for (const k of Object.keys(c)) c[k] += ctx.profile.styles[k] ?? 0;
   // freier: auch ohne Freestyle pro Songpaar etwas Zufall, damit nicht immer dieselbe Technik gewinnt
@@ -1857,7 +1876,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     chosen = 'echo';
   }
   // (Tempo-Rampe: der alte Track passt sich an, der neue läuft in seinem Originaltempo)
-  const beatmatch = chosen !== 'echo' && chosen !== 'ramp' && chosen !== 'breakdown' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
+  let beatmatch = chosen !== 'echo' && chosen !== 'ramp' && chosen !== 'breakdown' && rel.diff <= (forced ? FORCED_LIMIT : BEATMATCH_LIMIT);
   if (!beatmatch) ctx.m = 1;
 
   let result = COMPOSERS[chosen](ctx);
@@ -1872,6 +1891,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     result = fb === 'blend' ? composeBlend(ctx) : composeEcho(ctx);
   }
   let { L, steps } = result;
+  if (ctx.forceBeatmatch) beatmatch = true; // Kurz-Blend bei gleichem Tempo läuft synchron
   if (!instant && chosen !== 'blend' && chosen !== 'build' && !ctx.flavors) steps = applyFx(ctx, steps, L);
   steps = closeSends(steps);
   // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
@@ -1907,7 +1927,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   }
   return {
     type: chosen,
-    label: TRANSITIONS[chosen] + (ctx.flavors
+    label: (ctx.label || TRANSITIONS[chosen]) + (ctx.flavors
       ? [ctx.flavors.entry !== 'eq' ? ENTRY_FLAVORS[ctx.flavors.entry] : null, ctx.flavors.exit !== 'fade' ? EXIT_FLAVORS[ctx.flavors.exit] : null,
         ...(ctx.flavors.extras || []).map((k) => ENTRY_FLAVORS[k] || EXIT_FLAVORS[k])]
         .filter(Boolean).map((x) => ` · ${x}`).join('')

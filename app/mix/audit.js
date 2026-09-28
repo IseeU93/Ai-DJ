@@ -92,7 +92,7 @@ export function auditPlan(plan, va, vb) {
     const onGrid = (bar, off) => Math.abs(((((bar - off) % 4) + 4) % 4) - 0) < 0.3 || Math.abs(((((bar - off) % 4) + 4) % 4) - 4) < 0.3;
     // Echo/Schnitt ohne Überlappung: ein ganzer Takt (Atempause im Gesang) reicht – die 4er-Phrase
     // zählt nur, wenn beide Tracks hörbar zusammen laufen
-    const barOnly = quietStyle && plan.beatmatch === false;
+    const barOnly = quietStyle; // (auch der kurze Blend im Takt: höchstens 1,5 Takte gemeinsam)
     const wholeBar = Math.abs(sw.ob - Math.round(sw.ob)) < 0.1;
     if (barOnly ? !wholeBar : !onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
     // im neuen Track zählt die Phrase nur, wenn danach beide noch zusammen laufen – ist der alte beim
