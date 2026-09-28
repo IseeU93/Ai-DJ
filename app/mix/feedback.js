@@ -38,24 +38,16 @@ export function loadFeedback() {
   }
 }
 
-/** Wer mitbekommen will, dass sich die Bewertungen geändert haben (z. B. der PC-/Handy-Abgleich). */
-export const feedbackListeners = new Set();
-
-export function saveFeedback(all) {
+export function addFeedback(entry) {
+  const all = loadFeedback();
+  all.push({ time: Date.now(), ...entry });
   while (all.length > MAX) all.shift();
   try {
     localStorage.setItem(STORE, JSON.stringify(all));
   } catch {
     /* voll/privat – egal */
   }
-  for (const f of feedbackListeners) f(all);
   return all;
-}
-
-export function addFeedback(entry) {
-  const all = loadFeedback();
-  all.push({ time: Date.now(), ...entry });
-  return saveFeedback(all);
 }
 
 export function clearFeedback() {
@@ -86,23 +78,27 @@ export function learn(entries = loadFeedback()) {
     // Ein Übergang gilt vor allem für genau diese Songs – allgemein nur schwach
     add(e.type, (e.outId ? 0.4 : 1) * d);
     add(`${e.type}@${e.genres?.[0]}>${e.genres?.[1]}`, (e.outId ? 0.8 : 1.5) * d);
-    if (e.outId) add(`${e.type}#out:${e.outId}`, 2 * d);
-    if (e.inId) add(`${e.type}#in:${e.inId}`, 1.5 * d);
+    // konsequent pro Song: was bei diesem Song (und genau diesem Paar) schlecht war, kommt nicht wieder
+    if (e.outId) add(`${e.type}#out:${e.outId}`, 4 * d);
+    if (e.inId) add(`${e.type}#in:${e.inId}`, 3 * d);
+    if (e.outId && e.inId) add(`${e.type}#pair:${e.outId}>${e.inId}`, 8 * d);
     for (const r of e.reasons || []) {
       count[r] = (count[r] ?? 0) + (e.outId ? 0.4 : 1) * w;
-      if (e.outId) {
-        const tc = (trackCount[e.outId] ||= {});
+      // Gründe gelten für den alten Song; "zu hart"/"passt nicht" auch für den neuen
+      const ids = [e.outId, ...(['hard', 'mismatch', 'vocals'].includes(r) ? [e.inId] : [])].filter(Boolean);
+      for (const id of ids) {
+        const tc = (trackCount[id] ||= {});
         tc[r] = (tc[r] ?? 0) + w;
       }
     }
   });
-  for (const k of Object.keys(bias)) bias[k] = clamp(bias[k], -1.5, 0.8);
+  for (const k of Object.keys(bias)) bias[k] = clamp(bias[k], k.includes('#') ? -5 : -1.5, k.includes('#') ? 1.5 : 0.8);
   const tuneOf = (cnt) => {
     const c = (k) => cnt[k] ?? 0;
     return {
       lengthScale: clamp(1 - 0.08 * c('long') + 0.08 * c('short'), 0.55, 1.5),
       exitShift: clamp(0.15 * (c('early') - c('late')), -0.8, 0.8),
-      hardness: clamp(0.2 * c('hard'), 0, 1.2),
+      hardness: clamp(0.3 * c('hard') + 0.15 * c('mismatch'), 0, 2),
     };
   };
   const tune = tuneOf(count);

@@ -760,3 +760,20 @@ test('Hin und her: alter Track läuft nicht in einen neuen Teil oder eine neue G
     assert.ok(!(a.vocals[x] >= 0.5 && a.vocals[x - 1] < 0.35), `neue Gesangszeile bei Takt ${x}`);
   }
 });
+
+test('Bewertung gilt konsequent pro Song: 👎 bei genau diesem Paar schlägt allgemeines 👍', () => {
+  const out = track('a', 128);
+  const inc = track('b', 127);
+  const base = planTransition({ out, inc });
+  const entries = [
+    ...Array.from({ length: 5 }, () => ({ verdict: 'up', type: base.type, genres: base.genres })), // allgemein beliebt
+    { verdict: 'down', type: base.type, genres: base.genres, outId: out.id, inId: inc.id, reasons: ['hard'] },
+  ];
+  const L = learn(entries);
+  const again = planTransition({ out, inc, bias: L.bias, tune: L.tune, trackTune: L.trackTune });
+  assert.notEqual(again.type, base.type, `${base.type} kommt bei diesem Paar trotz 👎 wieder`);
+  // anderes Paar: allgemeine Vorliebe bleibt
+  assert.ok((L.bias[base.type] ?? 0) > 0);
+  // "zu hart" wirkt auch für den neuen Song
+  assert.ok(L.trackTune[inc.id]?.hardness > 0);
+});

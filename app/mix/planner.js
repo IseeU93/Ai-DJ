@@ -1535,12 +1535,17 @@ export function planTransition(opts) {
   if (!forced && !opts.instant && first.ranked) {
     let bestTotal = first.score - first.audit.penalty;
     const tried = new Set([first.type]);
+    let usable = 1;
+    let attempts = 0;
     for (const [k] of first.ranked) {
-      if (tried.size >= 4) break;
+      // bis zu 3 echte Alternativen; Techniken, die hier gar nicht passen, zählen nicht mit
+      if (usable >= 4 || attempts >= 10) break;
       if (tried.has(k)) continue;
       tried.add(k);
+      attempts++;
       const alt = planSingle(opts, k);
       if (alt.type !== k) continue; // Technik passte nicht (Rückfall auf Blend)
+      usable++;
       alt.audit = auditPlan(alt, va, vb);
       const total = alt.score - alt.audit.penalty;
       if (total > bestTotal + 0.05) {
@@ -1580,7 +1585,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     m: 1, notes: [], loopExt: null, maxL: 32,
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory, freestyle,
-    tune: mergeTune(tune, trackTune?.[out.id]),
+    tune: mergeTune(mergeTune(tune, trackTune?.[out.id]), trackTune?.[inc.id]),
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
@@ -1601,9 +1606,12 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     // + was du genau bei diesen beiden Songs bewertet hast (zählt am stärksten)
     for (const k of Object.keys(c)) {
       c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0)
-        + (bias?.[`${k}#out:${ctx.outId}`] ?? 0) + (bias?.[`${k}#in:${ctx.inId}`] ?? 0);
+        + (bias?.[`${k}#out:${ctx.outId}`] ?? 0) + (bias?.[`${k}#in:${ctx.inId}`] ?? 0)
+        + (bias?.[`${k}#pair:${ctx.outId}>${ctx.inId}`] ?? 0);
     }
-    for (const k of ['cut', 'roll', 'mashin']) if (k in c) c[k] -= ctx.tune.hardness;
+    // harte Techniken: grundsätzlich zurückhaltend (bei Pop/Rap noch mehr), plus was du als "zu hart" bewertet hast
+    const soft = 0.25 + (ctx.profile.shortForm ? 0.3 : 0);
+    for (const k of ['cut', 'roll', 'mashin', 'build', 'pingpong']) if (k in c) c[k] -= soft + 1.5 * ctx.tune.hardness;
     ranked = Object.entries(c)
       // Abwechslung: dieselbe Technik direkt nochmal kostet (bei Pop/Rap mehr – dort fällt es auf)
       .map(([k, score]) => [k, score - (k === last ? (ctx.profile.shortForm ? 0.5 : 0.3) : 0) - (k === prev ? (ctx.profile.shortForm ? 0.25 : 0.15) : 0)])
