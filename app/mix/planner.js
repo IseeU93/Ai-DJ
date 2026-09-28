@@ -235,6 +235,9 @@ function outBarAt(ctx, t) {
  * Verhindert, dass zwei Stimmen gleichzeitig laufen: vor dem Bass-Swap wird der Gesang des
  * neuen Tracks abgesenkt, danach der des alten.
  */
+// ab hier gilt ein Takt als "singt" (wie im Selbstcheck – sonst hört man zwei Stimmen, die der Schutz übersieht)
+const VOICE = 0.35;
+
 function vocalGuard(ctx, steps, L, sw) {
   const { va, vb, m } = ctx;
   let lastBefore = -1;
@@ -243,7 +246,7 @@ function vocalGuard(ctx, steps, L, sw) {
     const ov = va.vocalSmooth(outBarAt(ctx, t));
     let iv = 0;
     for (let k = 0; k < Math.max(1, m); k++) iv = Math.max(iv, vb.vocalSmooth(ctx.inBar + t * m + k));
-    if (ov >= 0.45 && iv >= 0.45) {
+    if (ov >= VOICE && iv >= VOICE) {
       if (t < sw) lastBefore = t;
       else clashAfter = true;
     }
@@ -255,7 +258,7 @@ function vocalGuard(ctx, steps, L, sw) {
       const ov = va.vocalSmooth(outBarAt(ctx, t));
       let iv = 0;
       for (let k = 0; k < Math.max(1, m); k++) iv = Math.max(iv, vb.vocalSmooth(ctx.inBar + t * m + k));
-      if (ov >= 0.45 && iv >= 0.45) {
+      if (ov >= VOICE && iv >= VOICE) {
         last = Math.max(last, t);
         break;
       }
@@ -302,7 +305,8 @@ function extendWithLoop(ctx, steps, L) {
   // nur loopen, wenn sich die Stelle wirklich wiederholt und gleich laut bleibt
   if (!loop || !loopable(va, loop, loop.bar + loop.len - 1)) {
     ctx.notes.push('altes Outro zu kurz – Übergang verkürzt');
-    return Math.max(2, Math.floor(avail / 2) * 2);
+    // auf ganze 4-Takt-Gruppen, damit der Bass-Wechsel auf einer Phrasengrenze bleibt
+    return avail >= 4 ? Math.floor(avail / 4) * 4 : Math.max(2, Math.floor(avail / 2) * 2);
   }
   ctx.loopExt = loop;
   steps.push(act(loop.bar - outBar, 'out', 'loop', { bars: loop.len, anchor: loop.bar - outBar }));
@@ -1148,6 +1152,16 @@ function composeSongCut(ctx) {
   const start = b.points.startBar ?? 0;
   const firstLine = b.points.vocalFirst ?? start;
   ctx.inBar = firstLine - start > 8 ? vb.grid(firstLine - 4, 4, 'floor') : start;
+  // Energie halten: endet der alte Song laut (Refrain) und fängt der neue leise an, fällt die Party
+  // in ein Loch – dann wie ein Profi: Echo raus und direkt in den Refrain des neuen Songs
+  const eOld = ctx.va.mean(ctx.va.energy, ctx.outBar - 4, ctx.outBar);
+  const eNew = vb.mean(vb.energy, ctx.inBar, ctx.inBar + 4);
+  const hook = hookBar(vb, b);
+  let hookIn = false;
+  if (!ctx.instant && hook !== null && eOld - eNew > 5 && eOld > -4 && vb.energy(hook) > eNew + 3) {
+    ctx.inBar = hook;
+    hookIn = true;
+  }
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
   // Der neue startet genau auf der Eins (nicht einen Schlag später) und blendet kurz ein, der alte
   // verklingt über einen Takt in Echo und Hall – kein harter Schnitt, kein Loch
@@ -1158,8 +1172,10 @@ function composeSongCut(ctx) {
     p(1.5, 'out', 'echo', 0), act(2, 'out', 'stop'),
   ];
   ctx.notes.unshift(
-    `Ausstieg nach dem Refrain (Takt ${exit.bar}) – Tempo zu verschieden zum Angleichen`,
-    'alter Track verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang',
+    `Ausstieg nach dem Refrain (Takt ${exit.bar})${ctx.rel.diff > BEATMATCH_LIMIT ? ' – Tempo zu verschieden zum Angleichen' : ' – sauberer Schnitt statt langer Überblendung (beide Songs singen fast durchgehend)'}`,
+    hookIn
+      ? `alter Track verhallt auf der Eins im Echo, der neue springt direkt in seinen Refrain (Takt ${ctx.inBar}) – kein Energieloch`
+      : 'alter Track verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang',
   );
   return { L: 2, steps };
 }
@@ -1342,6 +1358,9 @@ function composeMashup(ctx) {
   if (!runs.length) return null;
   const inst = beatWithoutVocal(vb, b.points.startBar ?? 0, (b.points.vocalFirst ?? vb.end) + 2, U * m);
   if (inst === null) return null;
+  // der Drop des neuen Tracks darf das Mashup nicht mittendrin abschneiden (sonst Wechsel neben der Eins)
+  const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > inst);
+  if (nextDrop !== undefined && (nextDrop - inst) / m < U) return null;
   ctx.outBar = va.grid(runs[0].from, 4, 'floor');
   ctx.inBar = inst;
   const steps = [
@@ -1530,7 +1549,8 @@ function composeHandoff(ctx) {
     // alter Track: Beat und Bass weg -> Stimme steht fast a cappella über dem neuen Beat
     p(0, 'out', 'low', KILL, 0.5),
     p(0.5, 'out', 'filter', 0.35, 1),
-    p(1, 'in', 'low', 0, 0.5),
+    // Bass des neuen Tracks ab der Eins der Phrase (über einen Takt hochgezogen)
+    p(0, 'in', 'low', 0, 1),
     // Übergabe: Zeile endet, neue Stimme setzt ein
     p(u - 0.25, 'in', 'vocal', 0, 0.25),
     p(u - 0.25, 'in', 'fader', 1, 0.25),

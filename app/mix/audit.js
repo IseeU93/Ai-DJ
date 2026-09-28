@@ -83,7 +83,11 @@ export function auditPlan(plan, va, vb) {
   if (sw && plan.type !== 'ramp') { // (Rampe: Takte laufen dort nicht gleich schnell – eigene Rechnung)
     const onGrid = (bar, off) => Math.abs(((((bar - off) % 4) + 4) % 4) - 0) < 0.3 || Math.abs(((((bar - off) % 4) + 4) % 4) - 4) < 0.3;
     if (!onGrid(sw.ob, va.a.phraseOffset || 0)) misaligned += 1;
-    if (plan.beatmatch !== false && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
+    // im neuen Track zählt die Phrase nur, wenn danach beide noch zusammen laufen – ist der alte beim
+    // Wechsel praktisch weg (Refrain-Wechsel, Echo), fängt der neue einfach an seinem Anfang an
+    const gone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
+    const together = Math.min(stopOut, t1, gone.length ? Math.min(...gone) : Infinity) - sw.t;
+    if (plan.beatmatch !== false && together >= 1 && !onGrid(sw.ib, vb.a.phraseOffset || 0)) misaligned += 0.5;
   }
   // Zeile abgeschnitten: der Gesang des alten Tracks wird unhörbar (Fader, Filter, Vocal-Cut, Loop),
   // während er gerade singt und weitersingen würde – beim Mitsingen das Schlimmste. Gilt für alle
