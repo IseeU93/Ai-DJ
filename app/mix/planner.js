@@ -1146,6 +1146,25 @@ function realDrop(v, t) {
  * verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang. Kein harter Schnitt
  * mitten in einen laufenden Beat.
  */
+/**
+ * Weicher Einstieg, wenn der neue Song sofort singt (kein Intro): nicht mit voller Stimme auf die Eins
+ * knallen, sondern über zwei Takte aus dem Tiefpass und der Lautstärke hochkommen, während der
+ * alte darunter verhallt. Ohne Gesang am Anfang: kurzes normales Einblenden (`dur` Takte).
+ */
+function softVocalEntry(ctx, steps, dur) {
+  const { vb } = ctx;
+  const sings = vb.vocal(ctx.inBar) >= 0.3 || vb.vocal(ctx.inBar + 1) >= 0.4;
+  if (!sings) {
+    steps.push(p(0, 'in', 'fader', 1, dur));
+    return;
+  }
+  steps.push(
+    p(0, 'in', 'filter', -0.6), p(0.25, 'in', 'filter', 0, 1.75),
+    p(0, 'in', 'fader', 0.8, 1.75), p(1.75, 'in', 'fader', 1, 0.5),
+  );
+  ctx.notes.push('neuer Song singt sofort – er kommt über zwei Takte weich aus dem Tiefpass hoch, statt hart auf die Eins zu knallen');
+}
+
 function composeSongCut(ctx) {
   const { vb, b } = ctx;
   const exit = chorusExit(ctx);
@@ -1156,16 +1175,6 @@ function composeSongCut(ctx) {
   const start = b.points.startBar ?? 0;
   const firstLine = b.points.vocalFirst ?? start;
   ctx.inBar = firstLine - start > 8 ? vb.grid(firstLine - 4, 4, 'floor') : start;
-  // Energie halten: endet der alte Song laut (Refrain) und fängt der neue leise an, fällt die Party
-  // in ein Loch – dann wie ein Profi: Echo raus und direkt in den Refrain des neuen Songs
-  const eOld = ctx.va.mean(ctx.va.energy, ctx.outBar - 4, ctx.outBar);
-  const eNew = vb.mean(vb.energy, ctx.inBar, ctx.inBar + 4);
-  const hook = hookBar(vb, b);
-  let hookIn = false;
-  if (!ctx.instant && hook !== null && eOld - eNew > 5 && eOld > -4 && vb.energy(hook) > eNew + 3) {
-    ctx.inBar = hook;
-    hookIn = true;
-  }
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
   // beginnt im alten Track gleich nach der Eins schon die nächste Zeile, schneller weg (Echo trägt)
   const va = ctx.va;
@@ -1175,15 +1184,14 @@ function composeSongCut(ctx) {
   // verklingt über einen Takt in Echo und Hall – kein harter Schnitt, kein Loch
   const steps = [
     p(-1, 'out', 'filter', 0.3, 1), p(-0.25, 'out', 'echo', 0.55, 0.25), p(-0.5, 'out', 'reverb', 0.45, 0.5),
-    p(0, 'out', 'fader', 0, fadeOut), p(0, 'in', 'fader', 0), p(0, 'in', 'fader', 1, beatless ? 0.25 : 0.5),
+    p(0, 'out', 'fader', 0, fadeOut), p(0, 'in', 'fader', 0),
     act(0, 'in', 'play'),
-    p(1.5, 'out', 'echo', 0), act(2, 'out', 'stop'),
+    p(0.05, 'out', 'echo', 0, 0.1), act(2, 'out', 'stop'),
   ];
+  softVocalEntry(ctx, steps, beatless ? 0.25 : 0.5);
   ctx.notes.unshift(
     `Ausstieg nach dem Refrain (Takt ${exit.bar})${ctx.rel.diff > BEATMATCH_LIMIT ? ' – Tempo zu verschieden zum Angleichen' : ' – sauberer Schnitt statt langer Überblendung (beide Songs singen fast durchgehend)'}`,
-    hookIn
-      ? `alter Track verhallt auf der Eins im Echo, der neue springt direkt in seinen Refrain (Takt ${ctx.inBar}) – kein Energieloch`
-      : 'alter Track verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang',
+    'alter Track verhallt auf der Eins im Echo, der neue startet sauber an seinem Anfang',
   );
   return { L: 2, steps };
 }
@@ -1295,7 +1303,9 @@ function composeChorus(ctx) {
   const eOld = va.mean(va.energy, exit.bar - 4, exit.bar);
   const eNew = vb.mean(vb.energy, start, start + 4);
   const dip = eOld - eNew > 5 && eOld > -4 && hook !== null && vb.energy(hook) > eNew + 3;
-  if (!ctx.instant && hook !== null && (ctx.energyUp > 0.08 || dice < 0.35 || dip)) {
+  // (selten und nur, wenn es wirklich nach oben gehen soll: direkt in fremde Refrain-Lyrics zu
+  // springen fühlt sich sonst schnell hart an)
+  if (!ctx.instant && hook !== null && ctx.energyUp > 0.15 && (dip || dice < 0.5)) {
     const hp = 4;
     ctx.outBar = exit.bar - hp;
     ctx.inBar = Math.max(start, Math.round(hook - hp * m));
@@ -1335,13 +1345,16 @@ function chorusSteps(ctx, exit, pre, entryNote) {
     // alter Refrain wird zum Ende etwas schlanker, damit das neue Intro Platz hat
     steps.push(p(Math.max(0, pre - 2), 'out', 'low', -8, 2));
   } else {
-    steps.push(p(0, 'in', 'fader', 1), act(0, 'in', 'play'));
+    steps.push(p(0, 'in', 'fader', 0), act(0, 'in', 'play'));
+    softVocalEntry(ctx, steps, 0.25);
   }
   // Umschalten genau auf der Eins nach dem Refrain
   steps.push(p(pre - 0.25, 'out', 'echo', 0.35, 0.25));
   steps.push(p(pre, 'out', 'fader', 0, 0.5), p(pre, 'out', 'low', KILL, 0.1));
-  steps.push(p(pre, 'in', 'low', 0, 0.1), p(pre, 'in', 'vocal', 0, 0.1), p(pre, 'in', 'fader', 1, 0.1));
-  steps.push(p(pre + 1, 'out', 'echo', 0), act(pre + 1.5, 'out', 'stop'));
+  steps.push(p(pre, 'in', 'low', 0, 0.1), p(pre, 'in', 'vocal', 0, 0.1));
+  if (pre > 0) steps.push(p(pre, 'in', 'fader', 1, 0.1)); // ohne Vorlauf blendet softVocalEntry selbst ein
+  // Echo fängt nur den letzten Schlag des Refrains ein (danach Send zu, die Fahne klingt aus)
+  steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + 1.5, 'out', 'stop'));
   ctx.notes.unshift(
     `Ausstieg nach dem Refrain (Takt ${exit.bar} von ${va.end}), nicht erst am Songende`,
     entryNote,
@@ -1860,6 +1873,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   }
   let { L, steps } = result;
   if (!instant && chosen !== 'blend' && chosen !== 'build' && !ctx.flavors) steps = applyFx(ctx, steps, L);
+  steps = closeSends(steps);
   // Der alte Track muss weg sein, bevor der neue in seinen (ersten) Drop geht –
   // zwei Tracks im Drop klingen immer nach Unfall.
   // (Refrain-Wechsel schaltet selbst genau auf der Eins um – sein Echo-Schweif darf ausklingen)
@@ -1965,6 +1979,30 @@ function addTeaser(ctx, steps) {
   if (!composerVocal) out.splice(7, 0, p(-0.05, 'in', 'vocal', 0, 0.04));
   ctx.notes.push('neuer Track wird zwei Takte vorher angeteasert (Hi-Hats/Snare, ohne Bass und Gesang)');
   return out;
+}
+
+/**
+ * Echo und Hall hängen vor dem Lautstärkeregler (damit die Fahne nach dem Ausblenden weiterklingt).
+ * Ist der alte Track weg, muss der Send zu sein – sonst läuft seine nächste Zeile als Geister-Hall
+ * unter dem neuen Song weiter. Die Fahne selbst klingt trotzdem natürlich aus.
+ */
+function closeSends(steps) {
+  const gone = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
+  if (!gone.length) return steps;
+  const tGone = Math.min(...gone);
+  const out = [];
+  for (const name of ['echo', 'reverb']) {
+    const list = steps.filter((s) => s.deck === 'out' && s.param === name).sort((x, y) => x.at - y.at);
+    if (!list.length || !list.some((s) => s.to > 0)) continue;
+    // offen, solange der Track weg ist? -> spätestens dann schließen
+    const lastOpen = list.filter((s) => s.to > 0).at(-1);
+    const closeAfter = list.find((s) => s.to === 0 && s.at >= lastOpen.at);
+    if (!closeAfter || closeAfter.at > tGone + 0.05) {
+      for (const s of list) if (s.to === 0 && s.at > tGone) s.drop = true;
+      out.push(p(Math.max(tGone, lastOpen.at), 'out', name, 0, 0.1));
+    }
+  }
+  return [...steps.filter((s) => !s.drop), ...out];
 }
 
 /** Alle Aktionen des alten Decks enden spätestens bei tEnd (Fader dann sicher auf 0). */

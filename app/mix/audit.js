@@ -42,6 +42,8 @@ export function auditPlan(plan, va, vb) {
   const m = plan.m || 1;
   const quietStyle = plan.type === 'echo' || plan.type === 'cut' || plan.type === 'breakdown';
 
+  const outGoneAt = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
+  const tOutGone = outGoneAt.length ? Math.min(...outGoneAt) : null;
   let vocalClash = 0;
   let bassBoth = 0;
   let gap = 0;
@@ -66,7 +68,13 @@ export function auditPlan(plan, va, vb) {
     // Lautstärke: Summe der Leistung beider Decks (relativ zur jeweiligen Takt-Lautheit)
     const lo = outOn ? 10 ** (va.energy(Math.floor(ob)) / 20) : 0;
     const li = inOn ? 10 ** (vb.energy(Math.floor(ib)) / 20) : 0;
-    const level = fo * fo * lo * lo + fi * fi * li * li;
+    // Echo-/Hallfahne des alten Tracks klingt nach dem Ausblenden weiter und füllt die Lücke
+    let tail = 0;
+    if (tOutGone !== null && t > tOutGone) {
+      const send = Math.max(val('out', 'echo', tOutGone - 0.1), val('out', 'reverb', tOutGone - 0.1));
+      tail = 0.6 * send * Math.exp(-(t - tOutGone) / 0.75) * (10 ** (va.energy(Math.floor(plan.outBar + tOutGone - 0.5)) / 20));
+    }
+    const level = fo * fo * lo * lo + fi * fi * li * li + tail * tail;
     if (!quietStyle && t > t0 + 0.5 && t < t1 - 0.5 && level < 0.12) gap += STEP;
   }
   // Der hörbare Wechsel ist der Bass-Tausch (neuer Bass geht auf) – ohne Bass-Tausch der Moment,
@@ -138,6 +146,31 @@ export function auditPlan(plan, va, vb) {
     } else if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 && va.vocal(bar - 1) < 0.3 && plan.outBar + tEnd - bar < 3) lineCut = 1;
   }
 
+  // Neuer Gesang setzt hart ein: der neue Track ist eben noch kaum zu hören und einen Takt später
+  // singt er schon voll – ohne Vorlauf, Einblenden oder Filter. Klingt wie ein Schnitt in fremde
+  // Lyrics und zerstört das Gefühl (ein natürlicher Gesangseinsatz nach dem Intro zählt nicht).
+  let hardEntry = 0;
+  const inAudible = (t) => {
+    if (t < tPlay) return 0;
+    const f = val('in', 'filter', t);
+    // Filter als Verlauf (ein Tiefpass, der sich öffnet, macht die Stimme allmählich hörbar)
+    return val('in', 'fader', t) * (f < 0 ? 1 + 0.75 * f : 1 - 0.6 * f);
+  };
+  const newVoice = (t) => {
+    if (t < tPlay) return 0;
+    const ib = plan.inBar + inOffset + (t - tPlay) * m;
+    return inAudible(t) * (1 - 0.8 * val('in', 'vocal', t)) * vb.vocal(Math.floor(ib));
+  };
+  // hart = von "gerade hörbar" bis "singt laut" in weniger als einem Dreivierteltakt
+  let tHeard = null;
+  for (let t = Math.max(t0, tPlay); t <= t1 + 2 + 1e-9; t += STEP) {
+    if (tHeard === null && inAudible(t) >= 0.15) tHeard = t;
+    if (newVoice(t) >= 0.5) {
+      if (tHeard === null || t - tHeard < 0.75) hardEntry = 1;
+      break;
+    }
+  }
+
   // Übersprungene Hauptteile des alten Tracks (bei Clubmusik: der letzte Drop fehlt dann)
   let skippedMain = 0;
   const endAt = sw ? sw.ob : plan.outBar;
@@ -145,13 +178,14 @@ export function auditPlan(plan, va, vb) {
   const shortForm = (plan.genres || []).slice(0, 1).some((g) => g === 'pop' || g === 'rap');
   const skipCost = skippedMain * (shortForm ? 0.004 : 0.02);
 
-  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 2 + skipCost;
+  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 2 + hardEntry * 0.9 + skipCost;
   const issues = [];
   if (vocalClash >= 1) issues.push(`${vocalClash.toFixed(1)} Takte zwei Stimmen gleichzeitig`);
   if (bassBoth > 1) issues.push(`${bassBoth.toFixed(1)} Takte zwei Basslines übereinander`);
   if (gap >= 0.5) issues.push(`${gap.toFixed(1)} Takte Lautstärke-Loch`);
   if (misaligned) issues.push('Wechsel nicht auf der Eins');
   if (lineCut) issues.push('alte Gesangszeile wird abgeschnitten');
+  if (hardEntry) issues.push('neuer Gesang setzt hart ein');
   if (!shortForm && skippedMain >= 8) issues.push(`${skippedMain} Takte Hauptteil des alten Tracks übersprungen`);
-  return { vocalClash, bassBoth, gap, misaligned, lineCut, skippedMain, penalty, issues };
+  return { vocalClash, bassBoth, gap, misaligned, lineCut, hardEntry, skippedMain, penalty, issues };
 }
