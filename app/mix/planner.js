@@ -1033,7 +1033,7 @@ function composeFilter(ctx) {
   if (ctx.inBar !== vb.grid(ctx.inBar, 4, 'round')) ctx.inBar = vb.grid(ctx.inBar, 4, 'ceil');
   L = extendWithLoop(ctx, steps, L);
   const down = ctx.energyUp < -0.05;
-  const depth = down ? -0.7 : 0.55 + Math.min(0.25, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 48);
+  const depth = down ? -0.6 : 0.45 + Math.min(0.2, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 48);
   // Bass-Wechsel auf einer 4-Takt-Grenze (vorher landete er bei 8 Takten auf Takt 7 – mitten in der Phrase)
   const sw = L >= 16 ? L - 4 : L >= 8 ? 4 : L;
 
@@ -1042,8 +1042,12 @@ function composeFilter(ctx) {
   steps.push(p(0, 'in', 'fader', 1, L * 0.3));
   steps.push(p(0, 'out', 'filter', depth, L * 0.85));
   steps.push(p(L * 0.1, 'in', 'filter', 0, L * 0.65));
-  steps.push(p(sw, 'out', 'low', KILL, 0.25), p(sw, 'in', 'low', 0, 0.25));
-  steps.push(p(L * 0.8, 'out', 'fader', 0, L * 0.2));
+  // weich raus: Bass über einen Takt tauschen, Lautstärke über die ganze zweite Hälfte, Höhen sanft
+  const swapDur = Math.min(1, Math.max(0.5, L / 4));
+  steps.push(p(sw, 'out', 'low', KILL, swapDur), p(sw, 'in', 'low', 0, swapDur));
+  const fadeFrom = Math.min(Math.max(sw, L * 0.5), L - 1);
+  steps.push(p(fadeFrom, 'out', 'high', -8, L - fadeFrom));
+  steps.push(p(fadeFrom, 'out', 'fader', 0, L - fadeFrom));
   steps.push(act(L, 'out', 'stop'));
   vocalGuard(ctx, steps, L, sw);
   ctx.notes.unshift(
