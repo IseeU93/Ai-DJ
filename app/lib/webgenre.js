@@ -145,7 +145,8 @@ async function itunes(t) {
     const sc = Math.min(hit, back);
     if (!best || sc > best.sc) best = { sc, r };
   }
-  return best && best.sc >= 0.5 ? { genre: best.r.primaryGenreName, artist: best.r.artistName, name: best.r.trackName, sc: best.sc } : null;
+  const year = best ? new Date(best.r.releaseDate).getFullYear() : null;
+  return best && best.sc >= 0.5 ? { genre: best.r.primaryGenreName, artist: best.r.artistName, name: best.r.trackName, sc: best.sc, year: Number.isFinite(year) ? year : null } : null;
 }
 
 /** MusicBrainz: Genres/Tags des Interpreten (gewichtet), gecacht pro Interpret. */
@@ -179,6 +180,7 @@ export function createWebGenre({ onUpdate }) {
     t.genreWeb = genre;
     t.style = style;
     t.webInfo = e;
+    t.year = e.year ?? null;
     // Datei ohne Tags: Namen aus dem Dateinamen nur geraten -> sicheren Online-Treffer übernehmen
     if (t.tagged === false && e.name && e.artist) {
       const title = tidyMeta({ title: e.name, artist: e.artist });
@@ -229,6 +231,7 @@ export function createWebGenre({ onUpdate }) {
         const e = { itunes: it?.genre || null, artist: it?.artist || t.artist || '', tags: tags.slice(0, 8), at: Date.now() };
         // sicherer Treffer: richtiger Titel/Interpret für Dateien ohne Tags ("Titel - Interpret.mp3")
         if (it && it.sc >= 0.75) e.name = it.name;
+        e.year = it && it.sc >= 0.6 ? it.year : null; // Erscheinungsjahr (Epoche) für die Reihenfolge
         if (!e.itunes && !e.tags.length) e.failed = true;
         cache[key] = e;
         save(STORE, cache);
@@ -256,7 +259,7 @@ export function createWebGenre({ onUpdate }) {
     for (const t of tracks) {
       if (!t.analysis || known.has(t.id)) continue;
       const c = cache[trackKey(t)];
-      if (c && !c.failed) continue;
+      if (c && !c.failed && 'year' in c) continue;
       queue.push(t);
     }
     run();

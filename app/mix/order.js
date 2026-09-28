@@ -74,6 +74,9 @@ export function transitionCost(a, b, w = null) {
   // Stimmung: Party-Kracher direkt vor einer Ballade (oder umgekehrt) passt nie, egal wie gut
   // Tempo und Tonart zusammenpassen
   const mood = 1.8 * Math.max(0, Math.abs(danceability(a) - danceability(b)) - 0.3);
+  // Publikum: andere Musikfamilie (Pop -> Rock-Hymne) und andere Epoche (2014 -> 1977)
+  const audience = 1.2 * familyDistance(family(a), family(b))
+    + (a.year && b.year ? Math.min(0.9, Math.max(0, Math.abs(a.year - b.year) - 10) * 0.035) : 0);
   // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
   const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);
   const introCost = intro >= 16 ? 0 : intro >= 8 ? 0.1 : 0.25;
@@ -88,7 +91,7 @@ export function transitionCost(a, b, w = null) {
   // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
   const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
     + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
-  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
+  return (w?.tempo ?? 1) * tempo + 0.8 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
@@ -147,6 +150,57 @@ export function danceability(t) {
   }
   if (t.genre === 'hardstyle' || t.genre === 'uptempo' || t.genre === 'edm') d += 0.1;
   return clamp01(d);
+}
+
+const FAMILY_RULES = [
+  [/schlager|volksmusik|german pop|deutsch ?pop|neue deutsche welle|ndw/, 'schlager'],
+  [/hip ?hop|rap|trap|drill|grime/, 'rap'],
+  [/hardstyle|hardcore|uptempo|gabber|hardtekk|tekk|krach|rawstyle|frenchcore/, 'hard'],
+  [/rock|metal|punk|grunge|indie|alternative|britpop|garage/, 'rock'],
+  [/house|techno|trance|edm|electro|dance|eurodance|club|dubstep|drum and bass/, 'dance'],
+  [/soul|r&b|rnb|funk|disco|motown|jazz|blues/, 'soul'],
+  [/pop/, 'pop'],
+];
+const FAMILY_OF_GENRE = { pop: 'pop', rap: 'rap', edm: 'dance', hardstyle: 'hard', uptempo: 'hard' };
+
+/**
+ * Musikfamilie eines Tracks ("wer hört das"): aus Online-Stil/Tags, sonst aus der Mix-Richtung.
+ * Pop, Rock, Schlager, Hip-Hop, Dance, Soul, Hart – Sprünge dazwischen merkt das Publikum sofort.
+ */
+export function family(t) {
+  const txt = [t.style, t.webInfo?.itunes, ...(t.webInfo?.tags || []).slice(0, 4).map((x) => x.name)].filter(Boolean).join(' ').toLowerCase();
+  if (txt) for (const [re, f] of FAMILY_RULES) if (re.test(txt)) return f;
+  return FAMILY_OF_GENRE[t.genre] || 'pop';
+}
+
+// Nähe der Familien: Pop passt zu vielem, Rock-Hymne nach Teenie-Pop oder Schlager nach Rap nicht
+const FAMILY_DIST = {
+  'dance|pop': 0.15, 'pop|soul': 0.2, 'pop|rap': 0.3, 'pop|rock': 0.45, 'pop|schlager': 0.35, 'dance|hard': 0.35,
+  'dance|schlager': 0.45, 'rap|soul': 0.25, 'dance|rap': 0.4, 'rock|soul': 0.4, 'dance|soul': 0.3,
+};
+export function familyDistance(x, y) {
+  if (x === y) return 0;
+  return FAMILY_DIST[[x, y].sort().join('|')] ?? 0.75;
+}
+
+/** Merkmale für gelernte Reihenfolge-Vorlieben (Familie, Epoche, Richtung, Tanzbarkeit). */
+export function orderFeatures(t) {
+  return { fam: family(t), year: t.year ?? null, genre: t.genre || null, dance: danceability(t) };
+}
+
+const eraBucket = (a, b) => (a && b ? (Math.abs(a - b) >= 25 ? 'far' : Math.abs(a - b) >= 12 ? 'mid' : 'near') : null);
+const danceBucket = (a, b) => (Math.abs(a - b) >= 0.35 ? 'far' : Math.abs(a - b) >= 0.18 ? 'mid' : 'near');
+
+/** Gelernte Zusatzkosten eines Übergangs a -> b aus deinen Reihenfolge-Bewertungen ähnlicher Paare. */
+export function learnedFeatureCost(fa, fb, feats) {
+  if (!feats) return 0;
+  let c = 0;
+  c += feats[`fam:${fa.fam}>${fb.fam}`] ?? 0;
+  if (fa.genre && fb.genre) c += feats[`gen:${fa.genre}>${fb.genre}`] ?? 0;
+  const era = eraBucket(fa.year, fb.year);
+  if (era) c += feats[`era:${era}`] ?? 0;
+  c += feats[`dance:${danceBucket(fa.dance, fb.dance)}`] ?? 0;
+  return c;
 }
 
 export function assignEnergy(tracks) {
@@ -227,6 +281,8 @@ export function buildSetOrder(tracks, fixed = [], seed = 0, learned = null) {
     if (v === undefined) {
       v = transitionCost(a, b, learned?.weights);
       v += learned?.pairs?.[`${a.id}>${b.id}`] ?? 0; // deine 👍/👎 für genau dieses Paar
+      // … und für ähnliche Paare (gleiche Familien, Epochen-Abstand, Energie-Sprung)
+      if (learned?.features) v += learnedFeatureCost(orderFeatures(a), orderFeatures(b), learned.features);
       // Variante: kleiner, pro Paar fester Zufallsanteil – verschiebt das Optimum spürbar
       if (seed) v += 0.35 * (pairHash(seed, a.id, b.id) - 0.5);
       cache.set(k, v);

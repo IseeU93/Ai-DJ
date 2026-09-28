@@ -132,18 +132,36 @@ export function learnFreestyle(entries = loadFeedback()) {
 export function learnOrder(entries = loadFeedback()) {
   const list = entries.filter((e) => e.kind === 'order' && e.a && e.b).slice(-200);
   const pairs = {};
+  const features = {};
   const count = {};
   const add = (k, v) => (pairs[k] = (pairs[k] ?? 0) + v);
+  const feat = (k, v) => (features[k] = (features[k] ?? 0) + v);
+  const eraB = (a, b) => (a && b ? (Math.abs(a - b) >= 25 ? 'far' : Math.abs(a - b) >= 12 ? 'mid' : 'near') : null);
+  const danceB = (a, b) => (Math.abs(a - b) >= 0.35 ? 'far' : Math.abs(a - b) >= 0.18 ? 'mid' : 'near');
   for (const e of list) {
-    const d = e.verdict === 'up' ? -0.5 : 1; // Kosten: negativ = gutes Paar
+    const d = e.verdict === 'up' ? -0.6 : 2; // Kosten: negativ = gutes Paar; 👎 wiegt schwer
     add(`${e.a}>${e.b}`, d);
-    add(`${e.b}>${e.a}`, 0.4 * d);
+    add(`${e.b}>${e.a}`, 0.5 * d);
+    // verallgemeinern: ähnliche Paare (Familie, Richtung, Epoche, Energie) bekommen einen Teil davon
+    const fa = e.fa;
+    const fb = e.fb;
+    if (fa && fb) {
+      const g = 0.25 * d;
+      if (fa.fam !== fb.fam) feat(`fam:${fa.fam}>${fb.fam}`, g * 1.4);
+      if (fa.genre && fb.genre && fa.genre !== fb.genre) feat(`gen:${fa.genre}>${fb.genre}`, g);
+      const era = eraB(fa.year, fb.year);
+      if (era && era !== 'near') feat(`era:${era}`, g * (e.reasons?.includes('style') ? 1.2 : 0.8));
+      const dance = danceB(fa.dance, fb.dance);
+      if (dance !== 'near') feat(`dance:${dance}`, g * (e.reasons?.includes('energy') ? 1.5 : 0.8));
+    }
     for (const r of e.reasons || []) count[r] = (count[r] ?? 0) + 1;
   }
-  for (const k of Object.keys(pairs)) pairs[k] = clamp(pairs[k], -1.5, 3);
+  for (const k of Object.keys(pairs)) pairs[k] = clamp(pairs[k], -2, 6);
+  for (const k of Object.keys(features)) features[k] = clamp(features[k], -0.6, 2);
   const c = (k) => count[k] ?? 0;
   return {
     pairs,
+    features,
     weights: {
       energy: clamp(1 + 0.12 * c('energy'), 1, 2.5),
       genre: clamp(1 + 0.12 * c('style'), 1, 2.5),

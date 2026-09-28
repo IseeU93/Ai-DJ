@@ -787,3 +787,21 @@ test('Bewertung gilt konsequent pro Song: 👎 bei genau diesem Paar schlägt al
   // "zu hart" wirkt auch für den neuen Song
   assert.ok(L.trackTune[inc.id]?.hardness > 0);
 });
+
+test('Reihenfolge: anderes Publikum (Pop 2014 -> Rock-Hymne 1977) kostet, 👎 gilt auch für ähnliche Paare', async () => {
+  const { transitionCost, orderFeatures, learnedFeatureCost } = await import('../app/mix/order.js');
+  const { learnOrder } = await import('../app/mix/feedback.js');
+  const an = { bpm: 96, key: { camelot: '8B' }, gridConfidence: 0.8, fourFloor: 0.5, pulse: 8, points: { dropBar: 16, startBar: 0, lastBar: 90, vocalFirst: 8, vocalLast: 80 } };
+  const mk = (id, style, year, itunes) => ({ id, genre: 'pop', energy: 0.5, style, year, webInfo: { itunes, tags: [] }, analysis: an });
+  const blank = mk('blank', 'Pop', 2014, 'Pop');
+  const champs = mk('champs', 'Rock', 1977, 'Rock');
+  const shake = mk('shake', 'Pop', 2014, 'Pop');
+  const bohemian = mk('bohemian', 'Rock', 1975, 'Rock');
+  assert.ok(transitionCost(blank, champs) > transitionCost(blank, shake) + 1, 'Pop -> Rock-Hymne sollte deutlich teurer sein');
+  // 👎 für Blank Space -> We Are the Champions ...
+  const L = learnOrder([{ kind: 'order', a: 'blank', b: 'champs', verdict: 'down', reasons: ['style'], fa: orderFeatures(blank), fb: orderFeatures(champs) }]);
+  assert.ok(L.pairs['blank>champs'] >= 2);
+  // ... macht auch Shake It Off -> Bohemian Rhapsody teurer (ähnliches Paar), Pop -> Pop nicht
+  assert.ok(learnedFeatureCost(orderFeatures(shake), orderFeatures(bohemian), L.features) > 0.5);
+  assert.equal(learnedFeatureCost(orderFeatures(shake), orderFeatures(blank), L.features), 0);
+});
