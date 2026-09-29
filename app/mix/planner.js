@@ -598,8 +598,9 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   }
   // Kombinationen frei – aber geschmackvoll: ein Profi stapelt bei Songs mit Gesang höchstens zwei
   // Zusatz-Effekte (Club: drei, Freestyle: vier), die stärksten bleiben
-  const maxExtras = hard ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0);
-  if (hard) for (const g of ['inMod', 'outMod', 'outGate']) picks[g] = { k: 'none', sc: 0 }; // kein Flanger/Gate über der Kick
+  const gentle = ctx.feel === 'soft' && !club; // weich: keine Spielereien über Gesang
+  const maxExtras = hard || gentle ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0);
+  if (hard || gentle) for (const g of ['inMod', 'outMod', 'outGate']) picks[g] = { k: 'none', sc: 0 }; // kein Flanger/Gate
   const extraGroups = EXTRA_GROUPS.filter((g) => picks[g].k !== 'none');
   extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(maxExtras).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
 
@@ -693,8 +694,9 @@ function applyFx(ctx, steps, L) {
     if (c > 0 && hash(`${roll}|${k}`) < want) extras.push({ k, sc: want - hash(`${roll}|${k}`) });
   }
   // nicht überladen: bei Songs mit Gesang höchstens zwei Effekte auf einmal (die "sichersten" bleiben)
-  if (ctx.profile.hard) extras = extras.filter((x) => !['flangerIn', 'flangerOut', 'gateOut'].includes(x.k));
-  extras = extras.sort((x, y) => y.sc - x.sc).slice(0, ctx.profile.hard ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0)).map((x) => x.k);
+  const gentle = ctx.profile.hard || (ctx.feel === 'soft' && !club);
+  if (gentle) extras = extras.filter((x) => !['flangerIn', 'flangerOut', 'gateOut'].includes(x.k));
+  extras = extras.sort((x, y) => y.sc - x.sc).slice(0, gentle ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0)).map((x) => x.k);
   const has = (k) => extras.includes(k);
   if (has('riser')) {
     steps.push(act(tSwap - 4, 'fx', 'riser', { bars: 4, level: 0.1 }), act(tSwap, 'fx', 'downlifter', { bars: 2, level: 0.06 }));
@@ -1246,8 +1248,29 @@ function kurzBlend(ctx, nextLine = false) {
     p(out, 'in', 'vocal', 0, 0.5),
     act(Math.max(2, out + 0.25), 'out', 'stop'),
   ];
-  if (hard) steps.push(p(0, 'in', 'fader', 1, 0.25));
-  else softVocalEntry(ctx, steps, 0.5 * f);
+  if (hard) {
+    // harte Musik: der neue läuft (wenn sein Intro reicht) schon 4 Takte ohne Kick mit, dann Kick-Tausch
+    const start = ctx.b.points.startBar ?? 0;
+    const pre = Math.min(4, Math.floor((ctx.inBar - start) / (ctx.m || 1)));
+    const lead = (ctx.b.points.dropBar ?? start) - start;
+    if (pre < 4 && lead >= 8) {
+      ctx.inBar = ctx.vb.grid(start + 4 * (ctx.m || 1), 4); // auf der Phrasengrenze des neuen Tracks
+      return kurzBlend(ctx, nextLine);
+    }
+    if (pre >= 4) {
+      // Start 4 Takte früher; Kick/Bass und Stimme bis zum Tausch weg, Lautstärke ohne Einbruch zur Eins
+      for (let i = steps.length - 1; i >= 0; i--) {
+        const s = steps[i];
+        if (s.deck === 'in' && (s.action === 'play' || (s.at === 0 && !s.dur && (s.param === 'fader' || s.param === 'low' || s.param === 'vocal')))) steps.splice(i, 1);
+      }
+      steps.push(
+        p(-4, 'in', 'fader', 0), p(-4, 'in', 'low', KILL), p(-4, 'in', 'vocal', 1),
+        act(-4, 'in', 'play', { barOffset: -4 * (ctx.m || 1) }),
+        p(-4, 'in', 'fader', 0.8, 2), p(0, 'in', 'fader', 1, 0.25),
+      );
+      ctx.notes.push('neuer Track läuft 4 Takte ohne Kick unter dem alten mit');
+    } else steps.push(p(0, 'in', 'fader', 1, 0.25));
+  } else softVocalEntry(ctx, steps, 0.5 * f);
   ctx.notes.push(hard
     ? 'kurzer Blend im Takt: Kick-Tausch genau auf der Eins, der alte blendet ohne Lücke aus'
     : 'kurzer Blend im Takt: der alte taucht im Tiefpass ab, der neue kommt synchron und weich darunter hoch');
@@ -1955,6 +1978,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     for (const k of ['cut', 'roll', 'mashin', 'build', 'pingpong']) if (k in c) c[k] -= soft + 1.5 * ctx.tune.hardness;
     // weich: lange Blends bevorzugen
     for (const k of ['blend', 'loop']) if (k in c) c[k] += FEEL[ctx.feel].blendBonus;
+    if ('chorus' in c) c.chorus -= FEEL[ctx.feel].blendBonus * 2; // Refrain-Wechsel ist ein schneller Umschnitt
     ranked = Object.entries(c)
       // Abwechslung: dieselbe Technik direkt nochmal kostet (bei Pop/Rap mehr – dort fällt es auf)
       .map(([k, score]) => [k, score - (k === last ? (ctx.profile.shortForm ? 0.5 : 0.3) : 0) - (k === prev ? (ctx.profile.shortForm ? 0.25 : 0.15) : 0)])

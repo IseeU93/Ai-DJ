@@ -703,7 +703,7 @@ export class Conductor extends EventTarget {
     const sr = this.engine.sr;
     const rate = md.status.rate || 1;
     const sec = md.realAt(now) / sr;
-    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick, this.learned.trick?.weights);
+    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick, this.learned.trick?.weights, (this.feel || 'soft') === 'soft');
     if (!trick) {
       this.nextTrickAt = now + 2;
       return;
@@ -738,8 +738,9 @@ export class Conductor extends EventTarget {
       }
     }
     this.lastTrick = trick.kind;
-    // nächster Trick frühestens 24–40 Takte später (lieber selten und passend als oft)
-    this.nextTrickAt = T(trick.bar) + (24 + Math.floor(Math.random() * 5) * 4) * barSec;
+    // nächster Trick frühestens 24–40 Takte später (weich: 32–48) – lieber selten und passend als oft
+    const gap = (this.feel || 'soft') === 'soft' ? 32 : 24;
+    this.nextTrickAt = T(trick.bar) + (gap + Math.floor(Math.random() * 5) * 4) * barSec;
     this.emit('trick', { ...trick, at: T(trick.bar) });
   }
 
@@ -762,7 +763,8 @@ export class Conductor extends EventTarget {
     this.teased = plan.inId; // nur einmal prüfen, auch wenn keine Stelle passt
     const shift = this.learned.trick?.teaserShift ?? 0;
     if (shift >= 1) return; // Teaser nach vielen 👎 aus
-    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec), 2, 0.6 + shift);
+    // weich: nur besonders gut passende Teaser (strengere Schwelle)
+    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec), 2, 0.6 + shift + ((this.feel || 'soft') === 'soft' ? 0.25 : 0));
     if (!t) return;
     const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
     const barSec = (4 * a.beatInterval) / rate;

@@ -19,7 +19,13 @@ export const TRICKS = {
 
 const p = (at, param, to, dur = 0) => ({ at, param, to, dur });
 
-function build(kind, intoMain = false) {
+function build(kind, intoMain = false, gentle = false) {
+  // weich: nichts taucht ab, nichts reißt weg – nur ein Hauch Effekt auf der Grenze
+  if (gentle) {
+    if (kind === 'echo') return [p(-0.25, 'echo', 0.4, 0.05), p(0, 'echo', 0, 0.5)];
+    if (kind === 'reverb') return [p(-0.5, 'reverb', 0.45, 0.25), p(0, 'reverb', 0, 0.5)];
+    if (kind === 'bassCut') return [p(-1, 'low', -10, 0.75), p(0, 'low', 0, 0.25)];
+  }
   switch (kind) {
     case 'echo':
       // Echo-Wurf: letzter Schlag wird ins Echo geworfen, der Track selbst taucht kurz ab – so hört
@@ -62,7 +68,7 @@ function build(kind, intoMain = false) {
  *  - Build-up-Tricks (Filter, Riser, Stutter, Flanger) nur aus einem Build-up in den Drop
  * dice: 0..1 für Abwechslung, last: zuletzt gespielter Trick (nicht direkt wiederholen).
  */
-export function planTrick(a, barNow, dice = Math.random(), last = null, weights = {}) {
+export function planTrick(a, barNow, dice = Math.random(), last = null, weights = {}, gentle = false) {
   const phrases = a.phrases || [];
   const next = phrases.find((ph) => ph.bar >= barNow + 2 && ph.bar <= barNow + 12);
   if (!next) return null;
@@ -100,6 +106,7 @@ export function planTrick(a, barNow, dice = Math.random(), last = null, weights 
   };
   // aus deinen 👍/👎: klar abgelehnte Tricks (mehrfach 👎) kommen gar nicht mehr
   for (const k of Object.keys(w)) w[k] = (weights[k] ?? 1) < 0.2 ? 0 : w[k] * (weights[k] ?? 1);
+  if (gentle) w.stutter = 0; // weich: kein Zerhacken
   if (last && w[last]) w[last] *= 0.2;
   const total = Object.values(w).reduce((s, v) => s + v, 0);
   if (total <= 0) return null;
@@ -111,5 +118,5 @@ export function planTrick(a, barNow, dice = Math.random(), last = null, weights 
       break;
     }
   }
-  return { bar: next.bar, kind, name: TRICKS[kind], steps: build(kind, intoMain) };
+  return { bar: next.bar, kind, name: TRICKS[kind], steps: build(kind, intoMain, gentle) };
 }
