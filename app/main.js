@@ -1390,6 +1390,13 @@ async function boot() {
     if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
   };
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
+  const feelSel = $('#tr-feel');
+  feelSel.value = loadSettings().feel || 'soft';
+  conductor.setFeel(feelSel.value);
+  feelSel.onchange = () => {
+    conductor.setFeel(feelSel.value);
+    saveSettings({ feel: feelSel.value });
+  };
   $('#freestyle').onchange = (e) => {
     conductor.setFreestyle(e.target.checked);
     saveSettings({ freestyle: e.target.checked });

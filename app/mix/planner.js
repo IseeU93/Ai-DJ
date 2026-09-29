@@ -27,6 +27,12 @@ export const TRANSITIONS = {
 
 export const KILL = -26; // dB, EQ-"Kill"
 const VOCAL_ON = 0.5;
+/** Übergangs-Gefühl: weich (Standard) – lange Blends; knackig – mehr Cuts, Drops, Build-ups. */
+const FEEL = {
+  soft: { hardPenalty: 0.7, blendBonus: 0.3, lengthBonus: 0.02, popSec: 30, fade: 1.6 },
+  normal: { hardPenalty: 0.2, blendBonus: 0, lengthBonus: 0, popSec: 20, fade: 1 },
+  crisp: { hardPenalty: -0.3, blendBonus: -0.2, lengthBonus: -0.01, popSec: 16, fade: 0.7 },
+};
 const FORCED_LIMIT = 0.16; // max. Tempoangleichung, wenn der Nutzer eine Technik erzwingt
 
 // ------------------------------------------------------------------ Takt-Umrechnung
@@ -509,7 +515,7 @@ function choosePoints(ctx, lengths, allowFull = false) {
         const eIn = vb.mean(vb.energy, arrival, arrival + 4);
         sc -= Math.abs(eIn - eOut - (ctx.energyUp > 0.1 ? 3 : 0)) * 0.02;
         // längeres Verweben ist schöner – solange die Tonarten passen
-        sc += (ctx.keyDist <= 0.15 ? 0.012 : ctx.keyDist <= 0.35 ? 0.004 : -0.01) * L;
+        sc += (ctx.keyDist <= 0.15 ? 0.012 : ctx.keyDist <= 0.35 ? 0.004 : -0.01) * L + (FEEL[ctx.feel]?.lengthBonus ?? 0) * L;
         if (!best || sc > best.score) best = { score: sc, outBar, inBar, L, arrival, why };
       }
     }
@@ -1228,7 +1234,8 @@ function kurzBlend(ctx, nextLine = false) {
   ctx.forceBeatmatch = true;
   ctx.label = 'Kurz-Blend';
   const hard = ctx.profile.hard;
-  const out = nextLine ? 0.75 : hard ? 1 : 1.5;
+  const f = FEEL[ctx.feel]?.fade ?? 1;
+  const out = (nextLine ? 0.75 : hard ? 1.25 : 1.75) * f;
   const swap = hard ? 0.25 : 0.5;
   const steps = [
     p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
@@ -1237,14 +1244,14 @@ function kurzBlend(ctx, nextLine = false) {
     p(0, 'out', 'fader', 0, out),
     // Stimme des neuen erst, wenn der alte weg ist
     p(out, 'in', 'vocal', 0, 0.5),
-    act(2, 'out', 'stop'),
+    act(Math.max(2, out + 0.25), 'out', 'stop'),
   ];
   if (hard) steps.push(p(0, 'in', 'fader', 1, 0.25));
-  else softVocalEntry(ctx, steps, 0.5);
+  else softVocalEntry(ctx, steps, 0.5 * f);
   ctx.notes.push(hard
     ? 'kurzer Blend im Takt: Kick-Tausch genau auf der Eins, der alte blendet ohne Lücke aus'
     : 'kurzer Blend im Takt: der alte taucht im Tiefpass ab, der neue kommt synchron und weich darunter hoch');
-  return { L: 2, steps };
+  return { L: Math.max(2, out + 0.25), steps };
 }
 
 function composeSongCut(ctx) {
@@ -1443,18 +1450,19 @@ function chorusSteps(ctx, exit, pre, entryNote) {
   steps.push(p(pre - 0.25, 'out', 'echo', 0.35, 0.25));
   // ohne Vorlauf kommt der neue über zwei Takte hoch: der alte bleibt so lange gedämpft im Tiefpass
   // darunter (kein Loch), seine nächste Zeile hört man darin nicht
-  if (pre > 0) steps.push(p(pre, 'out', 'fader', 0, 1), p(pre, 'out', 'low', KILL, 0.5));
+  const cf = FEEL[ctx.feel]?.fade ?? 1;
+  if (pre > 0) steps.push(p(pre, 'out', 'filter', -0.45, cf), p(pre, 'out', 'fader', 0, cf), p(pre, 'out', 'low', KILL, 0.5));
   else steps.push(p(0, 'out', 'filter', -0.55, 0.75), p(0, 'out', 'fader', 0, 1.75), p(0, 'out', 'low', KILL, 0.5));
   steps.push(p(pre, 'in', 'low', 0, 0.5), p(pre, 'in', 'vocal', 0, 0.5));
   if (pre > 0) steps.push(p(pre, 'in', 'fader', 1, 0.5)); // ohne Vorlauf blendet softVocalEntry selbst ein
   // Echo fängt nur den letzten Schlag des Refrains ein (danach Send zu, die Fahne klingt aus)
-  steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + (pre > 0 ? 1.5 : 2), 'out', 'stop'));
+  steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + Math.max(pre > 0 ? 1.5 : 2, cf + 0.25), 'out', 'stop'));
   ctx.notes.unshift(
     `Ausstieg nach dem Refrain (Takt ${exit.bar} von ${va.end}), nicht erst am Songende`,
     entryNote,
     'auf der Eins: Bass-Wechsel + kurzer Echo-Schweif, der neue Track übernimmt',
   );
-  return { L: pre + (pre > 0 ? 1.5 : 2), steps };
+  return { L: pre + Math.max(pre > 0 ? 1.5 : 2, cf + 0.25), steps };
 }
 
 /** Instrumentaler Abschnitt mit Beat (Intro/Break) im Track: Start-Takt oder null. */
@@ -1890,7 +1898,7 @@ export function planTransition(opts) {
   return best;
 }
 
-function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, entryBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null }, pick = null) {
+function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, entryBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null, feel = 'soft' }, pick = null) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -1915,6 +1923,8 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     genreOut: out.genre || detectGenre(a), genreIn: inc.genre || detectGenre(b),
     outId: out.id ?? a.duration, inId: inc.id ?? b.duration, flavorHistory, freestyle,
     tune: mergeTune(mergeTune(tune, trackTune?.[out.id]), trackTune?.[inc.id]),
+    // Übergangs-Gefühl (Einstellung): weich = lange Blends, harte Techniken nur im Notfall
+    feel: FEEL[feel] ? feel : 'soft',
   };
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.minExit = minExitBar(ctx, entryBar);
@@ -1941,8 +1951,10 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     }
     // harte Techniken: grundsätzlich zurückhaltend (bei Pop/Rap noch mehr), plus was du als "zu hart" bewertet hast
     // (harte Tanzmusik: Drop-Cut, Build-up und Roll sind dort normales Handwerk)
-  const soft = ctx.profile.hard ? 0.1 : 0.5 + (ctx.profile.shortForm ? 0.4 : 0);
+    const soft = (ctx.profile.hard ? 0.3 : 0.5 + (ctx.profile.shortForm ? 0.4 : 0)) + FEEL[ctx.feel].hardPenalty;
     for (const k of ['cut', 'roll', 'mashin', 'build', 'pingpong']) if (k in c) c[k] -= soft + 1.5 * ctx.tune.hardness;
+    // weich: lange Blends bevorzugen
+    for (const k of ['blend', 'loop']) if (k in c) c[k] += FEEL[ctx.feel].blendBonus;
     ranked = Object.entries(c)
       // Abwechslung: dieselbe Technik direkt nochmal kostet (bei Pop/Rap mehr – dort fällt es auf)
       .map(([k, score]) => [k, score - (k === last ? (ctx.profile.shortForm ? 0.5 : 0.3) : 0) - (k === prev ? (ctx.profile.shortForm ? 0.25 : 0.15) : 0)])
@@ -1955,15 +1967,16 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   // Unsicheres Beatgrid (z. B. Live-Drums, schwankendes Tempo): lange Beatmatches würden
   // auseinanderlaufen -> kurz halten oder ohne Beatmatch per Echo wechseln.
   const conf = Math.min(a.gridConfidence ?? 1, b.gridConfidence ?? 1);
-  ctx.maxL = Math.min(ctx.maxL, conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32);
+  // (harte Tanzmusik ist quantisiert – verzerrte Kicks machen die Messung nur scheinbar unsicher)
+  ctx.maxL = Math.min(ctx.maxL, ctx.profile.hard ? (conf < 0.3 ? 8 : 32) : conf < 0.3 ? 4 : conf < 0.5 ? 8 : 32);
   // Starke Tempo-Anpassung: Keylock arbeitet hörbarer -> Überlappung kürzer halten
   const stretch = Math.abs((ctx.m * masterBpm) / b.bpm - 1);
   if (stretch > 0.06) ctx.maxL = Math.min(ctx.maxL, 8);
   else if (stretch > 0.04) ctx.maxL = Math.min(ctx.maxL, 16);
-  if (conf < 0.5) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
+  if (conf < (ctx.profile.hard ? 0.3 : 0.5)) ctx.notes.push('Beatgrid nicht ganz sicher – Überlappung kurz gehalten');
   // Überlappung nach Zeit begrenzen: 16 Takte bei 96 BPM wären 40 s zwei Songs übereinander
   const barSec = (4 * 60) / masterBpm;
-  const maxSec = (ctx.profile.shortForm ? 20 : 65) * ctx.tune.lengthScale; // House/Techno dürfen lang verweben, Pop nicht
+  const maxSec = (ctx.profile.shortForm ? FEEL[ctx.feel].popSec : 65) * ctx.tune.lengthScale; // House/Techno dürfen lang verweben, Pop nicht
   const byTime = Math.max(Math.min(...ctx.profile.lengths), [32, 16, 8, 4].find((L) => L * barSec <= maxSec) ?? 4);
   ctx.maxL = Math.min(ctx.maxL, byTime);
   if (forced && !['echo', 'cut', 'breakdown'].includes(chosen) && rel.diff > FORCED_LIMIT) {

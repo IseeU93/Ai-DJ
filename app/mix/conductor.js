@@ -389,6 +389,14 @@ export class Conductor extends EventTarget {
   }
 
   /** Freestyle: wildere Übergänge + kleine Tricks im laufenden Track. */
+  /** Übergangs-Gefühl: 'soft' (lange, weiche Blends), 'normal', 'crisp' (mehr Cuts/Drops). */
+  setFeel(feel) {
+    this.feel = feel;
+    this.previewCache = null;
+    this.invalidatePlan();
+    this.emit('plan');
+  }
+
   setFreestyle(on) {
     this.freestyle = on;
     this.nextTrickAt = this.engine.now + 8;
@@ -451,8 +459,8 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const o = { out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
-      const key = [a.id, b.id, o.type, a.genre, b.genre, o.freestyle, history.slice(-2).join(','), JSON.stringify(cues[a.id] || ''), JSON.stringify(cues[b.id] || '')].join('|');
+      const o = { out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, feel: this.feel || 'soft', bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
+      const key = [a.id, b.id, o.type, a.genre, b.genre, o.freestyle, o.feel, history.slice(-2).join(','), JSON.stringify(cues[a.id] || ''), JSON.stringify(cues[b.id] || '')].join('|');
       const hit = cache.get(key);
       let p;
       if (hit && hit.aa === a.analysis && hit.ba === b.analysis && hit.learned === this.learned) p = hit.p;
@@ -809,6 +817,7 @@ export class Conductor extends EventTarget {
       entryBar: this.entry?.id === out.id ? this.entry.bar : null,
       instant,
       freestyle: this.freestyle,
+      feel: this.feel || 'soft',
       keylock: od.keylock,
       bias: this.learned.bias,
       tune: this.learned.tune,

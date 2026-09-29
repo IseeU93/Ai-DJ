@@ -309,14 +309,15 @@ test('Leises Ausklingen am Ende: kein Loop, der laut/leise springt, Übergang en
   }
 });
 
-test('Musikrichtung steuert den Übergang: Hardstyle/Rap kurz, House lang', () => {
+test('Musikrichtung steuert den Übergang: Rap kurz, Hardstyle mittel, House lang', () => {
   const out = track('a', 128);
   const inc = track('b', 128, 64);
   const house = planTransition({ out, inc, type: 'blend' });
   const hard = planTransition({ out: { ...out, genre: 'hardstyle' }, inc: { ...inc, genre: 'hardstyle' }, type: 'blend' });
   const rap = planTransition({ out: { ...out, genre: 'rap' }, inc: { ...inc, genre: 'rap' } });
   assert.ok(house.bars >= 16, `house ${house.bars}`);
-  assert.ok(hard.bars <= 8, `hardstyle ${hard.bars}`);
+  // Hardstyle: bis 16 Takte über Intro/Outro (die Kick läuft durch), nicht die 32 Takte von House
+  assert.ok(hard.bars <= 16, `hardstyle ${hard.bars}`);
   assert.ok(rap.bars <= 8, `rap ${rap.bars}`);
   assert.ok(rap.notes.some((n) => n.includes('Rap')));
 });
