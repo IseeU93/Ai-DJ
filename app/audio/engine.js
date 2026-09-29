@@ -63,7 +63,21 @@ export class Engine {
     this.master.gain.value = 1;
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 1024;
-    this.bus.connect(this.limiter).connect(this.master).connect(this.analyser).connect(ctx.destination);
+    this.bus.connect(this.limiter).connect(this.master).connect(this.analyser);
+    this.analyser.connect(ctx.destination);
+
+    // Kopfhörer-Cue (PFL): jedes Deck kann vor dem Fader auf den Cue-Bus geschickt werden. Im Kopfhörer
+    // liegt Cue gemischt mit dem Master (headMix: 0 = nur Cue, 1 = nur Master).
+    this.cueBus = ctx.createGain();
+    this.headCue = ctx.createGain();
+    this.headMaster = ctx.createGain();
+    this.headVol = ctx.createGain();
+    this.cueBus.connect(this.headCue).connect(this.headVol);
+    this.master.connect(this.headMaster).connect(this.headVol);
+    this.headMix = 0.5;
+    this.headVolume = 0.8;
+    this.cueMode = 'off';
+    this._applyHeadMix();
 
     this.impulse = makeImpulse(ctx);
     // Rauschen für Riser/Downlifter (4 s, wird geloopt)
@@ -148,6 +162,99 @@ export class Engine {
     await this.ctx.setSinkId(id || '');
     this.outputDevice = id || '';
     return true;
+  }
+
+  _applyHeadMix() {
+    const t = this.now;
+    // gleichmäßig überblenden (Cue links = laut, Master rechts = laut)
+    this.headCue.gain.setTargetAtTime(Math.cos(this.headMix * Math.PI / 2), t, 0.01);
+    this.headMaster.gain.setTargetAtTime(Math.sin(this.headMix * Math.PI / 2), t, 0.01);
+    this.headVol.gain.setTargetAtTime(this.headVolume, t, 0.01);
+  }
+
+  setHeadMix(x) {
+    this.headMix = Math.max(0, Math.min(1, x));
+    this._applyHeadMix();
+  }
+
+  setHeadVolume(v) {
+    this.headVolume = Math.max(0, Math.min(1.5, v));
+    this._applyHeadMix();
+  }
+
+  /**
+   * Wohin der Kopfhörer-Ausgang geht:
+   *  'off'    – nirgends (PFL stumm)
+   *  'device' – auf ein zweites Ausgabegerät (z. B. der Kopfhörer-Ausgang der Soundkarte)
+   *  'multi'  – Kanäle 3/4 des gewählten Geräts (Controller mit 4-Kanal-Soundkarte, Master = 1/2)
+   * Liefert true, wenn es geklappt hat.
+   */
+  async setCueOutput(mode, deviceId = '') {
+    this._teardownCue();
+    this.cueMode = 'off';
+    if (mode === 'device') {
+      const dest = this.ctx.createMediaStreamDestination();
+      this.headVol.connect(dest);
+      const el = new Audio();
+      el.srcObject = dest.stream;
+      if (typeof el.setSinkId !== 'function') return false;
+      try {
+        await el.setSinkId(deviceId || '');
+        await el.play();
+      } catch {
+        return false;
+      }
+      this._cueParts = { dest, el };
+      this.cueMode = 'device';
+      return true;
+    }
+    if (mode === 'multi') {
+      const max = this.ctx.destination.maxChannelCount || 2;
+      if (max < 4) return false;
+      const ctx = this.ctx;
+      ctx.destination.channelCount = 4;
+      ctx.destination.channelCountMode = 'explicit';
+      ctx.destination.channelInterpretation = 'discrete';
+      const merger = ctx.createChannelMerger(4);
+      const msplit = ctx.createChannelSplitter(2);
+      const hsplit = ctx.createChannelSplitter(2);
+      this.analyser.disconnect();
+      this.analyser.connect(msplit);
+      this.headVol.connect(hsplit);
+      msplit.connect(merger, 0, 0);
+      msplit.connect(merger, 1, 1);
+      hsplit.connect(merger, 0, 2);
+      hsplit.connect(merger, 1, 3);
+      merger.connect(ctx.destination);
+      this._cueParts = { merger, msplit, hsplit };
+      this.cueMode = 'multi';
+      return true;
+    }
+    return true;
+  }
+
+  _teardownCue() {
+    const c = this._cueParts;
+    if (!c) return;
+    try {
+      if (c.dest) {
+        this.headVol.disconnect(c.dest);
+        c.el.pause();
+        c.el.srcObject = null;
+      }
+      if (c.merger) {
+        this.analyser.disconnect();
+        this.headVol.disconnect(c.hsplit);
+        c.merger.disconnect();
+        this.ctx.destination.channelCount = 2;
+        this.ctx.destination.channelCountMode = 'max';
+        this.ctx.destination.channelInterpretation = 'speakers';
+        this.analyser.connect(this.ctx.destination);
+      }
+    } catch {
+      /* schon getrennt */
+    }
+    this._cueParts = null;
   }
 
   setMasterVolume(v) {
@@ -302,6 +409,13 @@ export class Deck {
     rHp.frequency.value = 220;
     this.lp.connect(this.reverbSend).connect(rHp).connect(conv).connect(g(0.8)).connect(engine.bus);
 
+    // Kopfhörer-Cue: vor dem Fader abgreifen (man hört den Track auch bei geschlossenem Fader)
+    this.cueSend = g(0);
+    this.lp.connect(this.cueSend).connect(engine.cueBus);
+    this.cueOn = false;
+    this.trimOffsetDb = 0;
+    this.bend = 0;
+
     this.params = {
       fader: [[this.fader.gain, (v) => v]],
       low: [[this.low.gain, (v) => v]],
@@ -344,8 +458,43 @@ export class Deck {
     this.status = { ...this.status, v: 0, real: 0, playing: false, loopLen: 0, rate: 1 };
     this.resetParams();
     this.setKeyShift(0);
-    const gainDb = track.analysis?.loudness?.gainDb ?? 0;
-    this.trim.gain.setValueAtTime(10 ** (gainDb / 20), this.engine.now);
+    this.applyTrim();
+  }
+
+  /** Lautheits-Angleichung des Tracks plus der Trim-Regler (Offset in dB, ±12). */
+  applyTrim() {
+    const gainDb = this.track?.analysis?.loudness?.gainDb ?? 0;
+    this.trim.gain.setTargetAtTime(10 ** ((gainDb + this.trimOffsetDb) / 20), this.engine.now, 0.01);
+  }
+
+  setTrimOffset(db) {
+    this.trimOffsetDb = Math.max(-18, Math.min(12, db));
+    this.applyTrim();
+  }
+
+  setCue(on) {
+    this.cueOn = !!on;
+    this.cueSend.gain.setTargetAtTime(on ? 1 : 0, this.engine.now, 0.01);
+  }
+
+  // Jog-Wheel: Tempo-Nudge, Scratch (Hand auf dem Plattenteller) und Suchlauf
+  setBend(x) {
+    if (Math.abs(x - this.bend) < 1e-4) return;
+    this.bend = x;
+    this.post({ type: 'bend', value: x });
+  }
+
+  scratch(on) {
+    this.post({ type: 'scratch', on: !!on });
+  }
+
+  /** Hand bewegt sich um `seconds` Musikzeit (negativ = rückwärts). */
+  scratchBy(seconds) {
+    this.post({ type: 'jog', frames: seconds * this.engine.sr });
+  }
+
+  searchBy(seconds) {
+    this.post({ type: 'search', frames: seconds * this.engine.sr });
   }
 
   playAt(t, real = null) {

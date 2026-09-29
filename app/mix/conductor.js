@@ -229,6 +229,7 @@ export class Conductor extends EventTarget {
 
   setAutomix(on) {
     this.automix = on;
+    this.emit('automix', on);
     if (!on) this.invalidatePlan();
     this.emit('plan');
   }
@@ -1192,6 +1193,106 @@ export class Conductor extends EventTarget {
 
   setParam(i, name, value) {
     this.decks[i].setNow(name, value);
+  }
+
+  // ------------------------------------------------------------------ Controller / manuelles Mixen
+
+  /** Track auf ein bestimmtes Deck laden (nur, wenn dort nichts läuft). Liefert false, wenn nicht möglich. */
+  async manualLoad(i, id) {
+    const d = this.decks[i];
+    if (d.status.playing || this.loading[i] || !this.track(id)) return false;
+    if (this.plan?.committed) return false;
+    this.removed = this.removed.filter((x) => x !== id);
+    if (!this.queue.includes(id)) this.queue.splice(Math.min(this.queue.length, Math.max(this.pos + 1, this.editableFrom)), 0, id);
+    await this.loadDeck(i, id);
+    // der geladene Track wird zum Ziel des nächsten Rollentauschs; ohne laufenden Master gleich zum Master
+    if (!this.masterDeck.track || !this.masterDeck.status.playing) {
+      this.master = i;
+      const idx = this.queue.indexOf(id);
+      if (idx >= 0) this.pos = idx;
+    }
+    this.invalidatePlan();
+    this.emit('queue');
+    this.emit('decks');
+    return true;
+  }
+
+  /** Tempo-Fader: rate = Faktor auf das Originaltempo (1 = Original). */
+  setTempo(i, rate) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    d.rateAt(this.engine.now, Math.max(0.5, Math.min(2, rate)), 0.02);
+    if (i === this.master) this.invalidatePlan();
+  }
+
+  /** Springt um n Schläge (negativ = zurück), auf dem nächsten Beat, damit der Takt bleibt. */
+  jumpBeats(i, beats) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    const a = d.track.analysis;
+    const sr = this.engine.sr;
+    if (!d.status.playing) {
+      const secNow = d.realAt(this.engine.now) / sr;
+      d.seek(Math.max(0, beatToSeconds(a, secondsToBeat(a, secNow) + beats)) * sr);
+      return;
+    }
+    const t = this.engine.now + 0.06;
+    const realNow = d.realAt(t);
+    const beatB = Math.ceil(secondsToBeat(a, realNow / sr) - 1e-6);
+    const realB = beatToSeconds(a, beatB) * sr;
+    const target = Math.max(0, beatToSeconds(a, beatB + beats)) * sr;
+    d.segment(d.virtualAt(t) + (realB - realNow), target, 0);
+    if (i === this.master) this.invalidatePlan();
+  }
+
+  /** Loop-In: aktuelle Stelle (auf den nächsten Beat gerundet) als Loop-Anfang merken. */
+  loopIn(i) {
+    const d = this.decks[i];
+    if (!d.track) return;
+    const a = d.track.analysis;
+    const secNow = d.realAt(this.engine.now + 0.03) / this.engine.sr;
+    this.manualLoops ||= [null, null];
+    this.manualLoops[i] = { inSec: Math.max(0, beatToSeconds(a, Math.round(secondsToBeat(a, secNow)))), len: 0 };
+  }
+
+  /** Loop-Out: Loop vom gemerkten Anfang bis hierher (in ganzen Schlägen) einschalten. */
+  loopOut(i) {
+    const d = this.decks[i];
+    const ml = this.manualLoops?.[i];
+    if (!d.track || !ml || !d.status.playing) return;
+    const a = d.track.analysis;
+    const sr = this.engine.sr;
+    const t = this.engine.now + 0.06;
+    const realNow = d.realAt(t);
+    const b0 = secondsToBeat(a, ml.inSec);
+    const b1 = Math.max(b0 + 1, Math.round(secondsToBeat(a, realNow / sr)));
+    ml.len = (beatToSeconds(a, b1) - ml.inSec) * sr;
+    d.segment(d.virtualAt(t), ml.inSec * sr, ml.len);
+    if (i === this.master) this.invalidatePlan();
+  }
+
+  /** Reloop: läuft ein Loop, raus; sonst zurück in den zuletzt gesetzten Loop. */
+  reloop(i) {
+    const d = this.decks[i];
+    const ml = this.manualLoops?.[i];
+    if (d.status.loopLen > 0) return this.exitLoop(i);
+    if (!d.track || !ml?.len || !d.status.playing) return;
+    const t = this.engine.now + 0.06;
+    d.segment(d.virtualAt(t), ml.inSec * this.engine.sr, ml.len);
+    if (i === this.master) this.invalidatePlan();
+  }
+
+  /** Loop halbieren (k = 0.5) oder verdoppeln (k = 2), am Ende des laufenden Durchlaufs. */
+  loopScale(i, k) {
+    const d = this.decks[i];
+    const st = d.status;
+    if (!st.loopLen || !st.playing) return;
+    const t = this.engine.now + 0.06;
+    const realNow = d.realAt(t);
+    const phase = (((realNow - st.loopStart) % st.loopLen) + st.loopLen) % st.loopLen;
+    const len = Math.max(this.engine.sr * 0.05, st.loopLen * k);
+    d.segment(d.virtualAt(t) + (st.loopLen - phase), st.loopStart, len);
+    if (this.manualLoops?.[i]) this.manualLoops[i].len = len;
   }
 
   setKeylock(i, on) {

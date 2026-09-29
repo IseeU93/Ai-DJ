@@ -36,6 +36,12 @@ export class DeckCore {
     this.keylock = true;
     this.vinylPos = 0;
 
+    // Jog-Wheel: Tempo-Nudge (Anteil am Tempo, z. B. 0.05 = 5 % schneller) und Scratch. Beim Scratch
+    // folgt die Wiedergabe der Hand: der Ziel-Lesekopf wird per Jog bewegt, der echte Lesekopf
+    // gleitet mit ~12 ms Trägheit hinterher (Vinyl-Gefühl, auch rückwärts und im Stillstand).
+    this.bend = 0;
+    this.scratch = { on: false, pos: 0, target: 0, gain: 0 };
+
     // Time-Stretch nach dem SoundTouch-Prinzip: lange Abschnitte (SEQ) werden 1:1 übernommen,
     // nur an den Nahtstellen wird kurz (OV) überblendet – an der Stelle mit der besten
     // Übereinstimmung (Suche ±SEEK). Klingt deutlich sauberer als dauerhaft überlappende Grains.
@@ -252,6 +258,7 @@ export class DeckCore {
   }
 
   currentVirtual() {
+    if (this.scratch.on) return this.scratch.pos; // (Anzeige folgt der Hand)
     if (this.keylock && this.fifoCount > 0) return this.fifoV[this.fifoHead];
     return this.keylock ? this.nominal : this.vinylPos;
   }
@@ -278,7 +285,7 @@ export class DeckCore {
 
   _generateGrain(emitFrame) {
     const { N, OV } = this;
-    const rate = this.rateAt(emitFrame);
+    const rate = this.rateAt(emitFrame) * (1 + this.bend);
     const p = this.pitch;
     const nom = Math.round(this.nominal);
     let actual = nom;
@@ -376,6 +383,59 @@ export class DeckCore {
     this.pitch = p > 0 ? p : 1;
   }
 
+  // ---------- Jog: Nudge & Scratch ----------
+
+  setBend(x) {
+    this.bend = Math.max(-0.5, Math.min(0.5, Number(x) || 0));
+  }
+
+  scratchStart() {
+    const s = this.scratch;
+    if (s.on) return;
+    const v = this.currentVirtual(); // (vor dem Einschalten lesen: währenddessen zeigt sie die Hand)
+    s.on = true;
+    s.pos = s.target = v;
+    s.gain = 1;
+  }
+
+  /** Lesekopf der Hand um `frames` Samples verschieben (negativ = rückwärts). */
+  scratchMove(frames) {
+    const s = this.scratch;
+    if (!s.on) return;
+    s.target = Math.max(0, Math.min(this.length, s.target + frames));
+  }
+
+  scratchEnd() {
+    const s = this.scratch;
+    if (!s.on) return;
+    s.on = false;
+    // an der losgelassenen Stelle weiterspielen (oder stehen bleiben)
+    this._resetStretch(Math.round(s.pos));
+    if (this.playing) this.gain = 0; // kurz einblenden, kein Klick
+  }
+
+  /** Suchlauf (Shift + Jog): Position um `frames` verschieben, ohne Klang zu scratchen. */
+  searchBy(frames) {
+    const v = this.currentVirtual() + frames;
+    if (this.scratch.on) return this.scratchMove(frames);
+    this._resetStretch(Math.round(Math.max(0, Math.min(this.length, v))));
+    if (this.playing) this.gain = 0;
+  }
+
+  _scratchSample(i, outL, outR) {
+    const s = this.scratch;
+    const prev = s.pos;
+    s.pos += (s.target - s.pos) * (1 / (0.012 * this.sr));
+    const step = s.pos - prev;
+    const vi = Math.floor(s.pos);
+    const fr = s.pos - vi;
+    this.readBlock(vi, 2, this.tmpL, this.tmpR);
+    // stehende Hand = kein Klang (sonst bliebe ein Gleichspannungs-Knacken), langsam = leise
+    const g = Math.min(1, Math.abs(step) * 4);
+    outL[i] = (this.tmpL[0] + (this.tmpL[1] - this.tmpL[0]) * fr) * g;
+    outR[i] = (this.tmpR[0] + (this.tmpR[1] - this.tmpR[0]) * fr) * g;
+  }
+
   // ---------- Render ----------
 
   /** Rendert n Samples beginnend bei globalem Frame `frame0`. */
@@ -394,6 +454,11 @@ export class DeckCore {
       if (this.pendingStop && f >= this.pendingStop.frame) {
         this.pendingStop = null;
         this.stopRequested = true;
+      }
+
+      if (this.scratch.on) {
+        this._scratchSample(i, outL, outR);
+        continue;
       }
 
       if (!this.playing) {
@@ -418,7 +483,7 @@ export class DeckCore {
         this.readBlock(vi, 2, this.tmpL, this.tmpR);
         l = this.tmpL[0] + (this.tmpL[1] - this.tmpL[0]) * fr;
         r = this.tmpR[0] + (this.tmpR[1] - this.tmpR[0]) * fr;
-        this.vinylPos = v + this.rateAt(f);
+        this.vinylPos = v + this.rateAt(f) * (1 + this.bend);
       }
 
       const target = this.stopRequested ? 0 : 1;

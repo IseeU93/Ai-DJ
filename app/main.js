@@ -1639,6 +1639,25 @@ async function boot() {
 
   renderQueue();
   requestAnimationFrame(frame);
+  // DJ-Controller (USB/MIDI) getrennt laden: auch das darf den Mixer nie mitreißen
+  import('./ui/controllerpane.js')
+    .then(({ initControllerPane }) => {
+      window.__automixController = initControllerPane({
+        engine,
+        conductor,
+        toast,
+        onLearned: () => applyLearned(),
+        // Drehregler am Controller blättert durch die Bibliothek (aktuell angezeigte Ordner), dann die Queue
+        getBrowse: () => {
+          const sources = [];
+          if (lib.tracks?.length) sources.push({ label: 'Bibliothek', tracks: lib.tracks });
+          sources.push({ label: 'Queue', tracks: conductor.queue.map((id) => conductor.track(id)).filter(Boolean) });
+          sources.push({ label: 'Alle Titel', tracks: [...conductor.tracks.values()].filter((t) => t.analysis).sort((x, y) => x.title.localeCompare(y.title, 'de')) });
+          return sources.filter((s) => s.tracks.length);
+        },
+      });
+    })
+    .catch((err) => console.error('Controller', err));
   // Lasershow getrennt laden: ein Fehler dort darf den Mixer nie mitreißen
   import('./ui/laserpane.js')
     .then(({ initLaserPane }) => initLaserPane({ engine, conductor }))

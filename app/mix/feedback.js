@@ -104,7 +104,40 @@ export function learn(entries = loadFeedback()) {
   const tune = tuneOf(count);
   const trackTune = {};
   for (const [id, cnt] of Object.entries(trackCount)) trackTune[id] = tuneOf(Object.fromEntries(Object.entries(cnt).map(([k, v]) => [k, 2 * v])));
-  return { bias, tune, trackTune, n: entries.length, trick: learnFreestyle(all), laser: learnLaser(all), order: learnOrder(all) };
+  const manual = learnManual(all, bias, tune);
+  return { bias, tune, trackTune, n: entries.length, manual, trick: learnFreestyle(all), laser: learnLaser(all), order: learnOrder(all) };
+}
+
+/**
+ * Deine eigenen, von Hand gemixten Übergänge (Controller): jeder zählt wie ein 👍 für genau diese
+ * Technik (auch pro Genre-Paar) – und zeigt, wie lang du überblendest und ob du Cuts magst.
+ * Ändert bias und tune direkt; liefert eine Zusammenfassung für die Anzeige.
+ */
+export function learnManual(all, bias, tune) {
+  const list = all.filter((e) => e.kind === 'manual' && e.type).slice(-60);
+  if (!list.length) return { n: 0 };
+  const add = (k, v) => (bias[k] = clamp((bias[k] ?? 0) + v, k.includes('#') ? -5 : -1.5, k.includes('#') ? 1.5 : 0.8));
+  const types = {};
+  list.forEach((e, i) => {
+    const w = 0.5 + (0.5 * (i + 1)) / list.length;
+    types[e.type] = (types[e.type] ?? 0) + 1;
+    add(e.type, 0.22 * w);
+    if (e.genres?.[0] || e.genres?.[1]) add(`${e.type}@${e.genres[0]}>${e.genres[1]}`, 0.4 * w);
+    if (e.outId && e.inId) add(`${e.type}#pair:${e.outId}>${e.inId}`, 1.2 * w);
+  });
+  const blends = list.filter((e) => e.overlapBars >= 2).map((e) => e.overlapBars).sort((a, b) => a - b);
+  const medianBars = blends.length ? blends[Math.floor(blends.length / 2)] : null;
+  if (list.length >= 3 && medianBars !== null) {
+    const mult = clamp((medianBars / 12) ** 0.6, 0.6, 1.4);
+    tune.lengthScale = clamp(tune.lengthScale * (1 + (mult - 1) * 0.7), 0.55, 1.5);
+  }
+  const cutShare = ((types.cut ?? 0) + (types.echo ?? 0)) / list.length;
+  if (list.length >= 4) {
+    if (cutShare < 0.1) tune.hardness = clamp(tune.hardness + 0.35, 0, 2);
+    else if (cutShare > 0.35) tune.hardness = clamp(tune.hardness - 0.3, 0, 2);
+  }
+  const share = (f) => list.filter(f).length / list.length;
+  return { n: list.length, types, medianBars, cutShare, bassSwapShare: share((e) => e.bassSwap), alignedShare: share((e) => e.swapAligned) };
 }
 
 /**
@@ -200,9 +233,10 @@ export function learnLaser(entries = loadFeedback()) {
 }
 
 /** Kurzfassung für die Anzeige: was hat die App aus deinen Bewertungen gelernt? */
-export function describeLearned({ bias, tune, n }, names) {
-  if (!n) return 'noch keine Bewertungen';
+export function describeLearned({ bias, tune, n, manual }, names) {
+  if (!n && !manual?.n) return 'noch keine Bewertungen';
   const parts = [];
+  if (manual?.n) parts.push(`${manual.n} eigene Mixe beobachtet${manual.medianBars ? ` (Ø ${Math.round(manual.medianBars)} Takte Überblendung)` : ''}`);
   const styles = Object.entries(bias).filter(([k]) => !k.includes('@')).sort((x, y) => y[1] - x[1]);
   const liked = styles.filter(([, v]) => v > 0.1).slice(0, 2).map(([k]) => names[k] || k);
   const disliked = styles.filter(([, v]) => v < -0.1).slice(-2).map(([k]) => names[k] || k);

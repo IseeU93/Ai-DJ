@@ -34,6 +34,7 @@
       <div class="spacer"></div>
       <button class="btn" id="btn-vscan" title="Gesang-Scan">Gesang-Scan</button>
       <button class="btn" id="btn-phone" title="Handy-App (AI-DJ Companion) verbinden: Adresse und PIN">Handy</button>
+      <button class="btn" id="btn-controller" title="DJ-Controller (USB): mit Pioneer DDJ-FLX4 & Co. selbst mixen – Automix lernt aus deinen Übergängen">Controller</button>
       <button class="btn" id="btn-laser" title="Lasershow einblenden – synchron zur Musik, gesteuert aus der Track-Analyse (Taste L)">Lasershow</button>
       <span class="lz-top" id="lz-top" hidden>
         <span class="lz-top-fx" id="lz-top-fx" title="Laser-Effekt, der gerade läuft"></span>
@@ -127,6 +128,12 @@
         im privaten Netzwerk erreichbar sein darf – bitte zulassen.</p>
       </div>
     </div>
+
+    <div class="ctlwin" id="ctlwin" hidden>
+      <div class="libwin-head"><b>DJ-Controller</b><div class="spacer"></div><button class="btn small" id="ctl-close">×</button></div>
+      <div class="ctl-body" id="ctl-body"></div>
+    </div>
+    <div class="ctl-browse" id="ctl-browse" hidden></div>
 
     <div class="libwin" id="libwin" hidden>
       <div class="libwin-head">

@@ -468,3 +468,43 @@ select.sel:disabled { opacity: 0.5; }
 .wish-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .qrow.wished .idx { color: var(--a); font-weight: 600; }
 #out-dev { max-width: 170px; }
+
+/* ------------------------------------------------------------ DJ-Controller */
+#btn-controller.on { border-color: var(--ok); color: var(--ok); }
+.ctlwin {
+  position: fixed; top: 52px; right: 14px; z-index: 31; width: 440px; max-height: calc(100vh - 70px);
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 4px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.ctl-body { padding: 10px 14px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
+.ctl-status { display: flex; align-items: center; gap: 8px; }
+.ctl-status i { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+.ctl-status.ok i { background: var(--ok); }
+.ctl-status.bad i { background: var(--warn); }
+.ctl-status span { flex: 1; }
+.ctl-devs { margin: 0; padding-left: 18px; color: var(--muted); }
+.ctl-devs li.off { opacity: 0.5; }
+.ctl-devs em { color: var(--faint); font-style: normal; }
+.ctl-sec { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.ctl-sec.col { flex-direction: column; flex-wrap: nowrap; gap: 6px; }
+.ctl-row { display: flex; align-items: center; gap: 8px; }
+.ctl-row input[type=range] { flex: 1; accent-color: var(--a); }
+.ctl-hint { margin: 0; color: var(--faint); font-size: 11px; line-height: 1.45; }
+.ctl-mon { font: 11px var(--mono); color: var(--muted); min-height: 3.2em; }
+.ctl-mix { font-size: 11px; color: var(--muted); }
+.ctl-learning { padding: 6px 8px; border: 1px solid var(--a-dim); color: var(--a); border-radius: 3px; }
+.ctl-body details { border-top: 1px solid var(--line); padding: 4px 0; }
+.ctl-body summary { cursor: pointer; color: var(--muted); }
+.ctl-act { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 12px; }
+.ctl-act span { flex: 1; }
+.ctl-act .btn.small { height: 22px; padding: 0 8px; }
+.ctl-browse {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 40; width: min(640px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 4px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+.ctl-bhead { display: flex; align-items: baseline; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.ctl-bhead .ctl-hint { margin-left: auto; }
+.ctl-brow { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 46px 40px; gap: 10px; padding: 4px 12px; color: var(--muted); }
+.ctl-brow.sel { background: var(--a-dim); color: var(--text); }
+.ctl-brow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-brow .n { font-family: var(--mono); text-align: right; }

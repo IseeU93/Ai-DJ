@@ -38,6 +38,19 @@ class DeckProcessor extends AudioWorkletProcessor {
       case 'keylock':
         c.setKeylock(!!msg.on);
         break;
+      case 'bend':
+        c.setBend(msg.value);
+        break;
+      case 'scratch':
+        if (msg.on) c.scratchStart();
+        else c.scratchEnd();
+        break;
+      case 'jog':
+        c.scratchMove(msg.frames);
+        break;
+      case 'search':
+        c.searchBy(msg.frames);
+        break;
       case 'cancel':
         // geplante Aktionen eines abgebrochenen Übergangs verwerfen
         if (msg.transport) c.cancelTransport();

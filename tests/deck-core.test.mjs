@@ -173,3 +173,75 @@ test('keylock: nach Tempo-Rampe zurück auf 1 wieder 1:1 transparent (kein "Gefl
   for (let i = from; i < SR * 4; i++) maxErr = Math.max(maxErr, Math.abs(L[i] - src[i + best.d]));
   assert.ok(maxErr < 1e-4, `nach der Rampe nicht transparent: maxErr ${maxErr.toFixed(4)} (Versatz ${best.d})`);
 });
+
+test('Jog-Nudge: +10 % Tempo läuft hörbar schneller, danach wieder normal', () => {
+  const src = sine(440, 4);
+  const core = new DeckCore(SR);
+  core.setKeylock(false);
+  core.load(src, src);
+  core.schedulePlay(0, 0);
+  render(core, 2000);
+  const before = core.currentVirtual();
+  core.setBend(0.1);
+  render(core, SR, 2000);
+  const advanced = core.currentVirtual() - before;
+  assert.ok(Math.abs(advanced / SR - 1.1) < 0.02, `Vorlauf ${advanced / SR}`);
+  core.setBend(0);
+  const p0 = core.currentVirtual();
+  render(core, SR, 2000 + SR);
+  assert.ok(Math.abs((core.currentVirtual() - p0) / SR - 1) < 0.02);
+});
+
+test('Scratch: Position folgt der Hand (auch rückwärts und im Stillstand), Loslassen behält die Stelle', () => {
+  const src = sine(440, 4);
+  const core = new DeckCore(SR);
+  core.setKeylock(false);
+  core.load(src, src);
+  core.seek(SR); // gestoppt bei 1 s
+  assert.equal(core.playing, false);
+  core.scratchStart();
+  let f = 0;
+  let maxAbs = 0;
+  // 0,5 s vorwärts scratchen (in 1-ms-Schritten je +24 Samples = normales Tempo)
+  for (let k = 0; k < 500; k++) {
+    core.scratchMove(48);
+    const { L } = render(core, 48, f);
+    f += 48;
+    for (const x of L) maxAbs = Math.max(maxAbs, Math.abs(x));
+  }
+  assert.ok(maxAbs > 0.2, 'beim Scratchen muss Klang kommen, auch wenn das Deck steht');
+  const forward = core.scratch.pos;
+  assert.ok(forward > SR * 1.4 && forward < SR * 1.6, `Position ${forward / SR}`);
+  for (let k = 0; k < 500; k++) {
+    core.scratchMove(-48);
+    render(core, 48, f);
+    f += 48;
+  }
+  assert.ok(core.scratch.pos < forward - SR * 0.4, 'rückwärts scratchen');
+  core.scratchEnd();
+  assert.equal(core.scratch.on, false);
+  assert.equal(core.playing, false, 'Deck bleibt nach dem Loslassen gestoppt');
+  const at = core.currentVirtual();
+  assert.ok(Math.abs(at - core.scratch.pos) < 4);
+});
+
+test('Scratch beim laufenden Deck: nach dem Loslassen geht es an der Stelle weiter (ohne Klick)', () => {
+  const src = sine(440, 4);
+  const core = new DeckCore(SR);
+  core.setKeylock(false);
+  core.load(src, src);
+  core.schedulePlay(0, 0);
+  render(core, SR);
+  core.scratchStart();
+  let f = SR;
+  for (let k = 0; k < 100; k++) {
+    core.scratchMove(0);
+    render(core, 48, f);
+    f += 48;
+  }
+  core.scratchEnd();
+  const { L } = render(core, SR / 2, f);
+  const tail = L.slice(2000);
+  assert.ok(Math.max(...tail.map(Math.abs)) > 0.3, 'Wiedergabe läuft weiter');
+  assert.ok(core.playing);
+});
