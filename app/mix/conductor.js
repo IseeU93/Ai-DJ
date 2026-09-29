@@ -391,6 +391,24 @@ export class Conductor extends EventTarget {
 
   /** Freestyle: wildere Übergänge + kleine Tricks im laufenden Track. */
   /** Übergangs-Gefühl: 'soft' (lange, weiche Blends), 'normal', 'crisp' (mehr Cuts/Drops). */
+  /**
+   * Übergangs-Gefühl für genau dieses Paar – automatisch aus Richtung, Stimmung und Set-Verlauf:
+   * Anfang und ruhige Phasen weich; nur im Höhepunkt (schon einige Übergänge gefahren, beide Songs
+   * energiegeladen, es geht weiter aufwärts) und bei Tanzmusik darf es knackiger werden.
+   */
+  feelFor(out, inc) {
+    if (this.feel && this.feel !== 'auto') return this.feel; // (nur noch für Tests/alte Einstellung)
+    const done = this.history.length;
+    if (done < 3 || !out || !inc) return 'soft';
+    const dance = (g) => g === 'edm' || g === 'hardstyle' || g === 'uptempo';
+    const eo = out.energy ?? 0.5;
+    const ei = inc.energy ?? 0.5;
+    const peak = eo >= 0.65 && ei >= 0.65;
+    if (peak && dance(out.genre) && dance(inc.genre) && ei - eo >= 0.12 && done >= 5) return 'crisp';
+    if (peak && (dance(out.genre) || dance(inc.genre)) && ei >= eo) return 'normal';
+    return 'soft';
+  }
+
   setFeel(feel) {
     this.feel = feel;
     this.previewCache = null;
@@ -460,7 +478,7 @@ export class Conductor extends EventTarget {
         history.push(this.plan.type);
         continue;
       }
-      const o = { out: a, inc: b, type: this.overrides.get(b.id) || 'auto', history, freestyle: this.freestyle, feel: this.feel || 'soft', bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
+      const o = { out: a, inc: b, type: 'auto', history, freestyle: this.freestyle, feel: this.feelFor(a, b), bias: this.learned.bias, tune: this.learned.tune, trackTune: this.learned.trackTune };
       const key = [a.id, b.id, o.type, a.genre, b.genre, o.freestyle, o.feel, history.slice(-2).join(','), JSON.stringify(cues[a.id] || ''), JSON.stringify(cues[b.id] || '')].join('|');
       const hit = cache.get(key);
       let p;
@@ -704,7 +722,7 @@ export class Conductor extends EventTarget {
     const sr = this.engine.sr;
     const rate = md.status.rate || 1;
     const sec = md.realAt(now) / sr;
-    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick, this.learned.trick?.weights, (this.feel || 'soft') === 'soft');
+    const trick = planTrick(a, secondsToBar(a, sec), Math.random(), this.lastTrick, this.learned.trick?.weights, (this.currentFeel || 'soft') === 'soft');
     if (!trick) {
       this.nextTrickAt = now + 2;
       return;
@@ -740,7 +758,7 @@ export class Conductor extends EventTarget {
     }
     this.lastTrick = trick.kind;
     // nächster Trick frühestens 24–40 Takte später (weich: 32–48) – lieber selten und passend als oft
-    const gap = (this.feel || 'soft') === 'soft' ? 32 : 24;
+    const gap = (this.currentFeel || 'soft') === 'soft' ? 32 : 24;
     this.nextTrickAt = T(trick.bar) + (gap + Math.floor(Math.random() * 5) * 4) * barSec;
     this.emit('trick', { ...trick, at: T(trick.bar) });
   }
@@ -765,7 +783,7 @@ export class Conductor extends EventTarget {
     const shift = this.learned.trick?.teaserShift ?? 0;
     if (shift >= 1) return; // Teaser nach vielen 👎 aus
     // weich: nur besonders gut passende Teaser (strengere Schwelle)
-    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec), 2, 0.6 + shift + ((this.feel || 'soft') === 'soft' ? 0.25 : 0));
+    const t = planTeaser(a, b, plan.outBar, secondsToBar(a, sec), 2, 0.6 + shift + ((this.currentFeel || 'soft') === 'soft' ? 0.25 : 0));
     if (!t) return;
     const T = (bar) => now + (barToSeconds(a, bar) - sec) / rate;
     const barSec = (4 * a.beatInterval) / rate;
@@ -806,11 +824,12 @@ export class Conductor extends EventTarget {
 
     const instant = this.forceSoon;
     const soon = !instant && this.soonWindow;
+    this.currentFeel = this.feelFor(out, inc);
     const opts = {
       out,
       inc,
       outRate: rate,
-      type: this.overrides.get(inc.id) || 'auto',
+      type: 'auto',
       history: this.history,
       flavorHistory: this.flavorHistory || [],
       outKeyShift: md.keyShift || 0,
@@ -820,7 +839,7 @@ export class Conductor extends EventTarget {
       entryBar: this.entry?.id === out.id ? this.entry.bar : null,
       instant,
       freestyle: this.freestyle,
-      feel: this.feel || 'soft',
+      feel: this.feelFor(out, inc),
       keylock: od.keylock,
       bias: this.learned.bias,
       tune: this.learned.tune,

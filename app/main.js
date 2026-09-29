@@ -389,8 +389,6 @@ function updateTransition(now) {
   const count = $('#tr-count');
   const mixNow = $('#btn-mixnow');
   const nextId = nextQueueId();
-  const typeSel = $('#tr-type');
-  typeSel.disabled = !nextId || !!p?.committed;
   mixNow.disabled = !nextId || !!p?.committed || !engine.decks[conductor.master].status.playing;
   $('#btn-jump').disabled = !p || !!p.committed;
   const waitingLoad = conductor.forceSoon && !p && conductor.loading.some(Boolean);
@@ -449,8 +447,6 @@ function renderPlanInfo() {
   $('#tr-notes').textContent = notes.join(' · ');
   $('#tr-notes').title = notes.join('\n');
   $('#tr-reason').textContent = shown ? shown.reason : next ? '' : 'Keine weiteren Tracks in der Queue';
-  const sel = $('#tr-type');
-  sel.value = (nextId && conductor.overrides.get(nextId)) || 'auto';
 }
 
 // ------------------------------------------------------------------ Queue
@@ -596,16 +592,12 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
       trans.innerHTML = '<span class="trans-fixed"></span>';
       trans.firstChild.textContent = conductor.plan?.label ?? preview?.label ?? '';
     } else {
-      const sel = document.createElement('select');
-      sel.className = 'sel';
-      const override = conductor.overrides.get(id);
-      sel.innerHTML =
-        `<option value="auto">Auto${preview && !override ? ` · ${preview.label}` : ''}</option>` +
-        Object.entries(TRANSITIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-      sel.value = override || 'auto';
-      sel.title = preview?.reason || '';
-      sel.onchange = () => conductor.setOverride(id, sel.value);
-      trans.appendChild(sel);
+      // Der Übergang wird immer automatisch gewählt (Richtung, Stimmung, Set-Verlauf) – hier nur die Anzeige
+      const label = document.createElement('span');
+      label.className = 'trans-fixed';
+      label.textContent = preview?.label ?? '';
+      label.title = preview?.reason || '';
+      trans.appendChild(label);
     }
 
     if (!locked) {
@@ -1390,13 +1382,6 @@ async function boot() {
     if (!conductor.jumpToTransition()) toast('Noch kein Übergang geplant (der nächste Track wird gerade vorbereitet).');
   };
   $('#automix').onchange = (e) => conductor.setAutomix(e.target.checked);
-  const feelSel = $('#tr-feel');
-  feelSel.value = loadSettings().feel || 'soft';
-  conductor.setFeel(feelSel.value);
-  feelSel.onchange = () => {
-    conductor.setFeel(feelSel.value);
-    saveSettings({ feel: feelSel.value });
-  };
   $('#freestyle').onchange = (e) => {
     conductor.setFreestyle(e.target.checked);
     saveSettings({ freestyle: e.target.checked });
@@ -1604,14 +1589,6 @@ async function boot() {
     $('#automix').checked = conductor.automix;
     $('#automix').disabled = e.target.checked;
     saveSettings({ autopilot: e.target.checked });
-  };
-
-  const typeSel = $('#tr-type');
-  typeSel.innerHTML = '<option value="auto">Auto</option>' +
-    Object.entries(TRANSITIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-  typeSel.onchange = () => {
-    const nextId = nextQueueId();
-    if (nextId) conductor.setOverride(nextId, typeSel.value);
   };
 
   conductor.addEventListener('queue', renderQueue);
