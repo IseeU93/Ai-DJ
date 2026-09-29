@@ -91,7 +91,8 @@ export function combineGenre(a, web) {
   const hardAudio = (ff >= 0.6 && a.bpm >= 142) || (a.bpm >= 150 && drums >= 0.85 && ff >= 0.35);
   const add = (g, w) => {
     if (!g) return;
-    if (hardAudio && (g === 'rap' || g === 'pop')) w *= 0.25;
+    // (nur "Rap" – Hardstyle-Remixe von Rap-Songs; ein Pop/Rock-Etikett stimmt bei schnellem Rock/Pop)
+    if (hardAudio && g === 'rap') w *= 0.25;
     // Four-on-the-floor zwischen 115 und 140 BPM: kein Rap, sondern Dance-Pop/Club
     if (g === 'rap' && ff >= 0.6 && a.bpm >= 112 && a.bpm < 142) g = 'pop';
     // harte Familie: Tempo entscheidet
@@ -100,6 +101,10 @@ export function combineGenre(a, web) {
   };
   if (web.itunes) add(ITUNES_MAP[web.itunes.toLowerCase()] ?? bucketOf(web.itunes), 0.9);
   const tags = (web.tags || []).filter((t) => bucketOf(t.name)); // "2010s", "french" usw. zählen nicht
+  // Schneller Rock/Pop klingt fürs Audio wie Hardstyle – sagt das Netz Pop/Rock/Schlager und nichts
+  // Hartes, zählt die Audio-Einschätzung "hart" nur halb
+  const webBuckets = [web.itunes ? ITUNES_MAP[web.itunes.toLowerCase()] ?? bucketOf(web.itunes) : null, ...tags.map((t) => bucketOf(t.name))].filter(Boolean);
+  if ((audio === 'hardstyle' || audio === 'uptempo') && webBuckets.length && !webBuckets.some((g) => g === 'hardstyle' || g === 'uptempo')) score[audio] -= 0.6;
   const total = tags.reduce((s, t) => s + t.count, 0) || 1;
   const trust = Math.min(1, total / 4); // ein einzelner Tag mit 1 Stimme ist kaum belastbar
   for (const t of tags) add(bucketOf(t.name), (1.4 * trust * t.count) / total);

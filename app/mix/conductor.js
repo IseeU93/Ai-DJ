@@ -4,7 +4,7 @@ import { planTransition, barToSeconds, secondsToBar, beatToSeconds, secondsToBea
 import { assignEnergy, buildSetOrder, tempoRelation } from './order.js';
 import { NEUTRAL, PARAMS } from '../audio/engine.js';
 import { readFile } from '../lib/tauri.js';
-import { detectGenre } from './genre.js';
+import { detectGenre, applyPlaylistContext } from './genre.js';
 import { planTrick } from './freestyle.js';
 import { planTeaser } from './teaser.js';
 import { pairEasterEggs, planEasterEgg, versionPriority } from './eastereggs.js';
@@ -84,6 +84,7 @@ export class Conductor extends EventTarget {
       t.genreManual = resolve?.(t) || null;
       t.genre = t.genreManual || t.genreWeb || t.genreAuto;
     }
+    applyPlaylistContext([...this.tracks.values()]);
     this.invalidatePlan();
     this.emit('queue');
   }
@@ -96,6 +97,7 @@ export class Conductor extends EventTarget {
       t.genreManual = this.resolveGenre?.(t) || null;
       t.genre = t.genreManual || t.genreWeb || t.genreAuto;
     }
+    applyPlaylistContext(list);
     assignEnergy(list);
     const playing = this.queue.slice(0, this.pos + 1).filter((id) => this.tracks.has(id));
     const fixed = playing.map((id) => this.tracks.get(id));
@@ -266,6 +268,7 @@ export class Conductor extends EventTarget {
       known.genreManual = this.resolveGenre?.(known) || null;
       known.genre = known.genreManual || known.genreWeb || known.genreAuto;
     }
+    applyPlaylistContext([...this.tracks.values()]);
     if (added) assignEnergy([...this.tracks.values()]);
     return list.map((t) => this.tracks.get(t.id));
   }

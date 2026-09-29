@@ -71,3 +71,40 @@ export function combineProfiles(gOut, gIn) {
     styles,
   };
 }
+
+const HARD_WEB = /hardstyle|rawstyle|hardcore|uptempo|frenchcore|gabber|hard ?dance|jumpstyle|hardtek|tekk|terror|krach|hardbass/;
+const isHard = (g) => g === 'hardstyle' || g === 'uptempo';
+
+/**
+ * Mehrheitsregel pro Playlist (Ordner): Die Audio-Analyse kann schnellen Rock/Pop nicht sicher von
+ * Hardstyle unterscheiden – der Ordner verrät es. In einer fast "weichen" Playlist wird ein einzelner
+ * Hardstyle-Treffer ohne harte Online-Hinweise zum normalen Song; in einer fast harten Playlist wird
+ * ein schneller (oder halb so schnell erkannter) Track mit Pop/Rap-Etikett zur harten Tanzmusik.
+ * Eigene Einstellungen (Track/Playlist) bleiben unangetastet.
+ */
+export function applyPlaylistContext(tracks) {
+  const groups = new Map();
+  for (const t of tracks) {
+    if (!t?.analysis || !t.path) continue;
+    const dir = String(t.path).split(/[\\/]/).slice(0, -1).join('/');
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(t);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 8) continue;
+    const share = list.filter((t) => isHard(t.genre)).length / list.length;
+    for (const t of list) {
+      if (t.genreManual) continue;
+      const web = [t.webInfo?.itunes, ...(t.webInfo?.tags || []).map((x) => x.name)].filter(Boolean).join(' ').toLowerCase();
+      const bpm = t.analysis.bpm;
+      if (share < 0.25 && isHard(t.genre) && !HARD_WEB.test(web)) {
+        const soft = t.genreWeb && !isHard(t.genreWeb) ? t.genreWeb : null;
+        t.genre = soft || ((t.analysis.fourFloor ?? 0.5) >= 0.6 && bpm < 142 ? 'edm' : 'pop');
+      } else if (share >= 0.6 && !isHard(t.genre)) {
+        // halb so schnell erkannt (z. B. 100 statt 200 BPM) zählt mit dem doppelten Tempo
+        const real = bpm >= 135 ? bpm : bpm * 2 >= 135 && bpm * 2 <= 260 ? bpm * 2 : null;
+        if (real) t.genre = real >= 168 ? 'uptempo' : 'hardstyle';
+      }
+    }
+  }
+}
