@@ -44,6 +44,8 @@ export const PROFILES = {
   rap: { lengths: [8, 4], swap: 0.75, vocal: 2, shortForm: true, styles: { mashup: 0.2, mashin: 0.15, roll: -0.1, chorus: 0.6, blend: -0.1, filter: 0.1, handoff: 0.4, loop: -0.5, vocal: -0.4, cut: 0.3, echo: -0.2, build: -0.5 } },
 };
 
+const HARD = new Set(['hardstyle', 'uptempo']);
+
 /** Profil für einen Übergang zwischen zwei Richtungen (das vorsichtigere gewinnt). */
 export function combineProfiles(gOut, gIn) {
   const a = PROFILES[gOut] || PROFILES.pop;
@@ -63,6 +65,9 @@ export function combineProfiles(gOut, gIn) {
     swap: Math.max(a.swap, b.swap),
     vocal: Math.max(a.vocal, b.vocal),
     shortForm: !!a.shortForm, // wie der alte Track gebaut ist, bestimmt, wo man aussteigt
+    // harte Tanzmusik auf beiden Seiten: die Kick trägt alles – sie läuft immer durch (kein Filter,
+    // der sie dämpft), getauscht wird sie auf der Eins
+    hard: HARD.has(gOut) && HARD.has(gIn),
     styles,
   };
 }

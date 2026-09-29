@@ -556,8 +556,9 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   const tailLoop = bestLoop(va, Math.max(0, ctx.outBar + Math.floor(fadeFrom) - 4), ctx.outBar + Math.floor(fadeFrom), 1);
   const canLoopOut = !ctx.loopExt && tailLoop && loopable(va, { bar: tailLoop.bar, len: 1 }, tailLoop.bar) && L - fadeFrom >= 1;
 
+  const hard = ctx.profile.hard; // Kick muss durchlaufen: keine Filter-Fahrten, kaum Spielereien
   const groups = {
-    inFilter: {
+    inFilter: hard ? { eq: 1 } : {
       eq: 1,
       lpOpen: 0.8 + (inDark ? 0.4 : 0) + (ctx.keyDist >= 0.3 ? 0.3 : 0),
       hpIn: 0.7 + ((b.brightness ?? -10) > -8 ? 0.2 : 0) + (ctx.energyUp > 0.1 ? 0.2 : 0),
@@ -566,7 +567,7 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
     inMod: { none: 0.6, ...(sw >= 2 ? { flangerIn: 0.45 + extra + (club ? 0.15 : -0.25) + (inDark ? 0.15 : 0) } : {}) },
     // Noise-Riser nur, wenn es danach wirklich losgeht und genug Anlauf da ist
     inTension: { none: 0.6, ...(sw >= 4 && ctx.energyUp > -0.05 ? { riser: 0.45 + extra + (ctx.energyUp > 0.1 ? 0.3 : 0) + (club ? 0.15 : -0.35) } : {}) },
-    outFilter: {
+    outFilter: hard ? { fade: 1 } : {
       fade: 0.9,
       lpOut: 0.8 + (ctx.energyUp < -0.05 ? 0.5 : 0),
       hpOut: 0.8 + (ctx.energyUp > 0.05 ? 0.4 : 0),
@@ -591,7 +592,8 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   }
   // Kombinationen frei – aber geschmackvoll: ein Profi stapelt bei Songs mit Gesang höchstens zwei
   // Zusatz-Effekte (Club: drei, Freestyle: vier), die stärksten bleiben
-  const maxExtras = (club ? 3 : 2) + (ctx.freestyle ? 1 : 0);
+  const maxExtras = hard ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0);
+  if (hard) for (const g of ['inMod', 'outMod', 'outGate']) picks[g] = { k: 'none', sc: 0 }; // kein Flanger/Gate über der Kick
   const extraGroups = EXTRA_GROUPS.filter((g) => picks[g].k !== 'none');
   extraGroups.sort((x, y) => picks[y].sc - picks[x].sc).slice(maxExtras).forEach((g) => (picks[g] = { k: 'none', sc: 0 }));
 
@@ -685,7 +687,8 @@ function applyFx(ctx, steps, L) {
     if (c > 0 && hash(`${roll}|${k}`) < want) extras.push({ k, sc: want - hash(`${roll}|${k}`) });
   }
   // nicht überladen: bei Songs mit Gesang höchstens zwei Effekte auf einmal (die "sichersten" bleiben)
-  extras = extras.sort((x, y) => y.sc - x.sc).slice(0, (club ? 3 : 2) + (ctx.freestyle ? 1 : 0)).map((x) => x.k);
+  if (ctx.profile.hard) extras = extras.filter((x) => !['flangerIn', 'flangerOut', 'gateOut'].includes(x.k));
+  extras = extras.sort((x, y) => y.sc - x.sc).slice(0, ctx.profile.hard ? 1 : (club ? 3 : 2) + (ctx.freestyle ? 1 : 0)).map((x) => x.k);
   const has = (k) => extras.includes(k);
   if (has('riser')) {
     steps.push(act(tSwap - 4, 'fx', 'riser', { bars: 4, level: 0.1 }), act(tSwap, 'fx', 'downlifter', { bars: 2, level: 0.06 }));
@@ -878,6 +881,8 @@ function composeBlend(ctx) {
   const entryT = entry === null ? null : (entry - ctx.inBar) / m;
   let sw = L / 2;
   if (entryT !== null && entryT >= L * 0.25 && entryT <= L * 0.75) sw = L >= 8 ? r4(entryT) : entryT;
+  // kurzer Blend (4 Takte): Tausch auf der nächsten Phrasengrenze, nicht mitten drin auf Takt 2
+  if (L < 8) sw = L;
   sw = Math.min(L, sw);
   const inDrums = vb.mean(vb.drums, ctx.inBar, ctx.inBar + L * m);
   const outHasBass = va.mean(va.bass, outBarAt(ctx, sw), outBarAt(ctx, sw) + 4) > -14
@@ -906,7 +911,9 @@ function composeBlend(ctx) {
   const swapDur = inDrums > 0.4 ? ctx.profile.swap : Math.max(0.5, ctx.profile.swap);
   if (outHasBass) steps.push(p(sw, 'out', 'low', KILL, swapDur));
   steps.push(p(sw, 'in', 'low', 0, swapDur));
-  steps.push(p(sw, 'in', 'fader', 1, Math.max(0.5, Math.min(2, q / 2))));
+  // Tausch am Ende (kurzer Blend): der neue ist zur Eins schon voll da, sonst fehlt kurz die Kick
+  if (sw >= L) steps.push(p(L - 0.5, 'in', 'fader', 1, 0.5));
+  else steps.push(p(sw, 'in', 'fader', 1, Math.max(0.5, Math.min(2, q / 2))));
   steps.push(p(sw + 0.5, 'in', 'high', 0, Math.max(0.5, q / 2)));
   // Singt der alte Track noch, bleiben Mitten/Lautstärke bis zum Ende seiner Zeile stehen
   let vEnd = -1;
@@ -916,9 +923,11 @@ function composeBlend(ctx) {
   steps.push(p(holdUntil, 'out', 'mid', clash ? -14 : -9, Math.max(0.5, (L - holdUntil) * 0.6)));
   steps.push(p(sw + Math.max(1, q / 2), 'in', 'mid', 0, Math.max(0.5, q / 2)));
   steps.push(p(Math.max(holdUntil, L - q * 1.5), 'out', 'high', -14, Math.max(0.5, Math.min(q, L - Math.max(holdUntil, L - q * 1.5)))));
-  const fadeFrom = Math.max(holdUntil, sw + 1, L - q * 1.25);
+  const fadeFrom = Math.min(L - (sw >= L ? 0.25 : 0.5), Math.max(holdUntil, sw + 1, L - q * 1.25));
   applyFlavors(ctx, steps, { L, sw, q, fadeFrom });
-  steps.push(p(fadeFrom, 'out', 'fader', 0, Math.max(0.25, L - fadeFrom)));
+  // (Tausch am Ende: der alte bleibt bis zur Eins voll und ist dann sofort weg – Kick-Tausch)
+  if (sw >= L) steps.push(p(L - 0.1, 'out', 'fader', 0, 0.1));
+  else steps.push(p(fadeFrom, 'out', 'fader', 0, Math.max(0.25, L - fadeFrom)));
   steps.push(act(L, 'out', 'stop'));
   vocalGuard(ctx, steps, L, sw);
 
@@ -1210,6 +1219,34 @@ function softVocalEntry(ctx, steps, dur) {
   ctx.notes.push('neuer Song singt sofort – er kommt über zwei Takte weich aus dem Tiefpass hoch, statt hart auf die Eins zu knallen');
 }
 
+/**
+ * Kurz-Blend bei gleichem Tempo (statt Echo-Schlag): der neue läuft synchron an und bekommt auf der
+ * Eins Bass bzw. Kick, der alte taucht ab. Harte Musik: Kick-Tausch knapp auf der Eins, der alte
+ * blendet ohne Filter aus (die Kick läuft ohne Lücke durch).
+ */
+function kurzBlend(ctx, nextLine = false) {
+  ctx.forceBeatmatch = true;
+  ctx.label = 'Kurz-Blend';
+  const hard = ctx.profile.hard;
+  const out = nextLine ? 0.75 : hard ? 1 : 1.5;
+  const swap = hard ? 0.25 : 0.5;
+  const steps = [
+    p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
+    p(0, 'out', 'low', KILL, swap), p(0, 'in', 'low', 0, swap),
+    ...(hard ? [p(0, 'out', 'high', -8, out)] : [p(0, 'out', 'filter', -0.55, out), p(0, 'out', 'reverb', 0.3, 0.5)]),
+    p(0, 'out', 'fader', 0, out),
+    // Stimme des neuen erst, wenn der alte weg ist
+    p(out, 'in', 'vocal', 0, 0.5),
+    act(2, 'out', 'stop'),
+  ];
+  if (hard) steps.push(p(0, 'in', 'fader', 1, 0.25));
+  else softVocalEntry(ctx, steps, 0.5);
+  ctx.notes.push(hard
+    ? 'kurzer Blend im Takt: Kick-Tausch genau auf der Eins, der alte blendet ohne Lücke aus'
+    : 'kurzer Blend im Takt: der alte taucht im Tiefpass ab, der neue kommt synchron und weich darunter hoch');
+  return { L: 2, steps };
+}
+
 function composeSongCut(ctx) {
   const { vb, b } = ctx;
   const exit = chorusExit(ctx);
@@ -1228,20 +1265,8 @@ function composeSongCut(ctx) {
   // Gleiches Tempo: kein Echo-Schlag, sondern ein kurzer Blend im Takt – der alte taucht im Tiefpass
   // ab, der neue läuft synchron darunter an und bekommt seinen Bass auf der Eins
   if (ctx.rel.diff <= BEATMATCH_LIMIT && ctx.rel.m === 1) {
-    ctx.forceBeatmatch = true;
-    ctx.label = 'Kurz-Blend';
-    const out = nextLine ? 0.75 : 1.5;
-    const steps = [
-      p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
-      p(0, 'out', 'low', KILL, 0.5), p(0, 'in', 'low', 0, 0.5),
-      p(0, 'out', 'filter', -0.55, out), p(0, 'out', 'reverb', 0.3, 0.5), p(0, 'out', 'fader', 0, out),
-      // Stimme des neuen erst, wenn der alte weg ist
-      p(out, 'in', 'vocal', 0, 0.5),
-      act(2, 'out', 'stop'),
-    ];
-    softVocalEntry(ctx, steps, 0.5);
-    ctx.notes.unshift(exitNote, 'kurzer Blend im Takt: der alte taucht im Tiefpass ab, der neue kommt synchron und weich darunter hoch');
-    return { L: 2, steps };
+    ctx.notes.unshift(exitNote);
+    return kurzBlend(ctx, nextLine);
   }
   // Tempo zu verschieden: weicher Echo-Out – der alte versinkt über zwei Takte in Tiefpass, Echo
   // und Hall, statt abrupt abzubrechen
@@ -1270,6 +1295,8 @@ function composeEcho(ctx) {
   else ctx.outBar = outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
   ctx.outBar = Math.min(ctx.outBar, lastExit(va));
   ctx.inBar = b.points.startBar;
+  // gleiches Tempo: statt Echo mit Loch ein kurzer Blend im Takt
+  if (!ctx.instant && ctx.rel.diff <= BEATMATCH_LIMIT && ctx.rel.m === 1) return kurzBlend(ctx);
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 4) < 0.3;
   const start = beatless ? 0.5 : 1;
   const steps = [];
@@ -1696,7 +1723,8 @@ function scoreStyles(ctx) {
       + (keyDist <= 0.15 ? 0.3 : -0.9 * keyDist) - (vocalClash ? 0.5 : 0);
     if (loop && loopable(va, loop)) c.loop = 0.6 + (outClean < 8 ? 0.4 : 0) + (energyUp > 0.2 ? 0.2 : 0);
     if (outVocal && inVocal) c.vocal = 1.5 + (keyDist <= 0.15 ? 0.35 : keyDist <= 0.35 ? 0 : -0.8);
-    c.filter = 0.8 + (keyDist >= 0.3 ? 0.35 : 0) + (energyUp < -0.1 ? 0.2 : 0);
+    // (nicht bei harter Musik: Hochpass auf dem alten + abgedrehter Bass beim neuen = Takte ohne Kick)
+    if (!ctx.profile.hard) c.filter = 0.8 + (keyDist >= 0.3 ? 0.35 : 0) + (energyUp < -0.1 ? 0.2 : 0);
     const dropOk = realDrop(vb, b) !== null;
     if (dropOk) c.cut = 0.1 + (inLead < 4 ? 0.4 : 0) + (keyDist >= 0.6 ? 0.3 : 0);
     c.echo = 0.05;
@@ -1723,6 +1751,10 @@ function scoreStyles(ctx) {
     if (ctx.profile.shortForm) c.echo = 1.5; // weich verhallen – aber Rampe und Break-Übergang klingen natürlicher
   }
   for (const k of Object.keys(c)) c[k] += ctx.profile.styles[k] ?? 0;
+  // Harte Tanzmusik (Hardstyle, Rawstyle, Uptempo): gemischt wird über Kick und Phrase – Blend mit
+  // Kick-Tausch, Loop, Drop-Cut, Build-up, Roll. Gesangs-Techniken passen hier nicht (verzerrte Leads
+  // und Screams sehen für die Gesangserkennung wie Stimmen aus).
+  if (ctx.profile.hard) for (const k of ['chorus', 'mashup', 'mashin', 'vocal', 'handoff', 'pingpong']) delete c[k];
   // freier: auch ohne Freestyle pro Songpaar etwas Zufall, damit nicht immer dieselbe Technik gewinnt
   if (!ctx.freestyle) for (const k of Object.keys(c)) c[k] += 0.35 * hash(`${ctx.outId}|${ctx.inId}|${k}|var`);
   if (ctx.freestyle && tempoOk) {
@@ -1730,7 +1762,7 @@ function scoreStyles(ctx) {
     // (der brave Standard-Blend tritt zurück, damit die freien Techniken wirklich zum Zug kommen)
     const boost = { blend: -0.8, filter: -0.2, mashup: 0.7, mashin: 0.7, roll: 0.4, loop: 0.5, handoff: 0.35, vocal: 0.3, chorus: -0.1, build: 0.3 };
     for (const [k, v] of Object.entries(boost)) if (k in c) c[k] += v;
-    if (keyDist <= 0.35) c.pingpong = 1.9;
+    if (keyDist <= 0.35 && !ctx.profile.hard) c.pingpong = 1.9;
     for (const k of Object.keys(c)) c[k] += 1.0 * hash(`${ctx.outId}|${ctx.inId}|${k}|free`);
   }
   return c;
@@ -1908,7 +1940,8 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
         + (bias?.[`${k}#pair:${ctx.outId}>${ctx.inId}`] ?? 0);
     }
     // harte Techniken: grundsätzlich zurückhaltend (bei Pop/Rap noch mehr), plus was du als "zu hart" bewertet hast
-    const soft = 0.5 + (ctx.profile.shortForm ? 0.4 : 0);
+    // (harte Tanzmusik: Drop-Cut, Build-up und Roll sind dort normales Handwerk)
+  const soft = ctx.profile.hard ? 0.1 : 0.5 + (ctx.profile.shortForm ? 0.4 : 0);
     for (const k of ['cut', 'roll', 'mashin', 'build', 'pingpong']) if (k in c) c[k] -= soft + 1.5 * ctx.tune.hardness;
     ranked = Object.entries(c)
       // Abwechslung: dieselbe Technik direkt nochmal kostet (bei Pop/Rap mehr – dort fällt es auf)
