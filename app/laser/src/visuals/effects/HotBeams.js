@@ -21,7 +21,7 @@
 //     die an Tempo und Energie hängen.
 // ============================================================
 
-import { getPaletteColors, drawLaserLine, colorWithAlpha, effectOrigin, projectDirection } from '../../shared/Config.js';
+import { getPaletteColors, drawLaserLine, colorWithAlpha, effectOrigin, projectDirection, frameDt, decayFor, approachFor } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
@@ -100,7 +100,7 @@ export class HotBeams {
       palette, customColor, show = {},
     } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
     this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);
@@ -146,7 +146,7 @@ export class HotBeams {
 
     // Hüllkurve abklingen lassen (schnell genug für "Strobe"-Gefühl,
     // aber ohne die harte Schwarzblende von vorher).
-    this._flash *= 0.82;
+    this._flash *= decayFor(0.82, dt);
 
     // ── Intensität je Strobe-Modus ──────────────────────────
     //
@@ -215,7 +215,7 @@ export class HotBeams {
     }
 
     // Kleiner Bass-Impuls auf allen Strahlen.
-    this._beatAngle += (0 - this._beatAngle) * 0.08;
+    this._beatAngle += (0 - this._beatAngle) * approachFor(0.08, dt);
     if (isBeat) this._beatAngle = bass * sensitivity * 0.08;
 
     const baseThick = (Number(hb.thickness) || 2) * (config.thicknessMul || 1.0);

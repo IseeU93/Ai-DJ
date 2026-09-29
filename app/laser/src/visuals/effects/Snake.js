@@ -10,7 +10,7 @@
 // bewegt sich immer, auch ganz ohne Musik.
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, frameDt, decayFor, approachFor } from '../../shared/Config.js';
 
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
 const clamp01 = (v) => clamp(v, 0, 1);
@@ -33,7 +33,8 @@ export class Snake {
       speed = 1, brightness = 1, sensitivity = 1, palette, customColor, show = {},
     } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
+    const f = dt * 60;
     this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);
@@ -46,11 +47,11 @@ export class Snake {
       this._speedPump = clamp(sn.pushStrength ?? 0.6, 0, 1.5);
       if (show.colorMode === 'beat') this._colorIdx = (this._colorIdx + 1) % colors.length;
     }
-    this._speedPump *= 0.9; // klingt in ~20 Frames ab, kein harter Sprung
+    this._speedPump *= decayFor(0.9, dt); // klingt in ~20 Frames ab, kein harter Sprung
 
     // Sanftes Zufalls-Schlängeln: der Winkel driftet, statt zu springen -
     // das ergibt eine weiche Kurve statt eines Zickzacks.
-    this._angle += (Math.random() - 0.5) * clamp(sn.wiggle ?? 0.5, 0, 1) * 0.5;
+    this._angle += (Math.random() - 0.5) * clamp(sn.wiggle ?? 0.5, 0, 1) * 0.5 * Math.sqrt(f);
 
     // Sanftes Gegenlenken statt hartem Abprall: je näher der Kopf an
     // den Rand kommt, desto stärker biegt sich der Winkel zur Mitte -
@@ -62,7 +63,7 @@ export class Snake {
       const towardCentre = Math.atan2(0.5 - this._y, 0.5 - this._x);
       let diff = towardCentre - this._angle;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // auf -π..π normieren
-      this._angle += diff * pull * 0.15;
+      this._angle += diff * pull * approachFor(0.15, dt);
     }
 
     const baseSpeed = clamp(sn.speed ?? 1, 0.2, 3) * 0.12;
@@ -72,7 +73,15 @@ export class Snake {
     // Tempo/Wiggle doch mal nicht schnell genug greift.
     this._x = clamp(this._x + Math.cos(this._angle) * travel, 0.01, 0.99);
     this._y = clamp(this._y + Math.sin(this._angle) * travel, 0.01, 0.99);
-    this._trail.push({ x: this._x, y: this._y });
+    // Bei hoher Bildrate mehrere Bilder pro Trail-Punkt, damit die Schlange
+    // auf jedem Monitor gleich lang (in Sekunden) bleibt.
+    this._trailAcc = (this._trailAcc || 0) + f;
+    if (this._trailAcc >= 1 || this._trail.length < 2) {
+      this._trailAcc = Math.max(0, this._trailAcc - 1);
+      this._trail.push({ x: this._x, y: this._y });
+    } else {
+      this._trail[this._trail.length - 1] = { x: this._x, y: this._y };
+    }
 
     // Deutlich länger als vorher (46) - eine Spur, die man wirklich
     // als durchgehende Linie über einen großen Teil der Fläche liest.

@@ -29,7 +29,7 @@
 // Löcher.
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, frameDt } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
@@ -55,7 +55,7 @@ export class LsdTunnel {
       speed = 1, brightness = 1, sensitivity = 1, palette, customColor,
     } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
     this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);

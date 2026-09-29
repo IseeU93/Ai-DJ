@@ -443,6 +443,10 @@ export class LaserStage extends EventTarget {
       effect = this.heldEffect || d.primaryEffect;
       overlays = [];
     }
+    // Überblenden ist der Normalfall; nur der Drop-Einschlag schneidet hart auf den neuen Effekt
+    const segPhase = seg?.phase ?? null;
+    cfg._sceneCut = segPhase === 'drop' && this.lastSegPhase !== 'drop' && effect !== cfg.effect;
+    this.lastSegPhase = segPhase;
     cfg.effect = effect;
     cfg._overlayEffects = overlays;
     cfg._overlayEffect = overlays[0] || null;

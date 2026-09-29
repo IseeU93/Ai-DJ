@@ -12,7 +12,7 @@
 // fertig, sobald er komplett über den Bildrand hinausgelaufen ist.
 // ============================================================
 
-import { getPaletteColors, drawLaserLine } from '../../shared/Config.js';
+import { getPaletteColors, drawLaserLine, frameDt } from '../../shared/Config.js';
 
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
 const clamp01 = (v) => clamp(v, 0, 1);
@@ -50,7 +50,7 @@ export class BeamSweep {
       speed = 1, brightness = 1, sensitivity = 1, palette, customColor,
     } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
     this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);

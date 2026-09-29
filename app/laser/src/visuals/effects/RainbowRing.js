@@ -15,7 +15,7 @@
 // steht also nicht fest in der Mitte, sondern bewegt sich mit.
 // ============================================================
 
-import { strokeLaserPath, effectOrigin } from '../../shared/Config.js';
+import { strokeLaserPath, effectOrigin, frameDt } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
@@ -58,6 +58,7 @@ export class RainbowRing {
     this._pulseVel = 0;
     this._breath = 0;
     this._level = 0;
+    this._inner = 0;
   }
 
   render(ctx, W, H, audioData, config) {
@@ -65,7 +66,7 @@ export class RainbowRing {
     const rr = config.rainbowRing || {};
     const { speed = 1, brightness = 1, sensitivity = 1 } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
     this._time += dt * speed;
 
     // ── Drehung ──────────────────────────────────────────────
@@ -119,10 +120,26 @@ export class RainbowRing {
     );
     if (intensity <= 0.02 || radius <= 1) return;
 
+    this._drawRing(ctx, cx, cy, radius, this._rotation, this._huePhase, thickness, intensity);
+
+    // Zweiter, gegenläufiger Ring, sobald es spannend wird (Build/Drop):
+    // ein einzelner drehender Kreis wirkte über eine ganze Phrase
+    // langweilig. Er blendet weich ein und aus, statt aufzupoppen.
+    const phase = audioData?.energy?.phase;
+    const want = phase === 'drop' ? 1 : phase === 'build' ? 0.7 : 0;
+    this._inner += (want - this._inner) * Math.min(1, dt * 1.2);
+    if (this._inner > 0.05) {
+      this._drawRing(ctx, cx, cy, radius * 0.58, -this._rotation * 1.4 + 1, this._huePhase + 180,
+        thickness * 0.8, intensity * this._inner);
+    }
+  }
+
+  _drawRing(ctx, cx, cy, radius, rotation, huePhase, thickness, intensity) {
+    if (intensity <= 0.02 || radius <= 1) return;
     for (let s = 0; s < SEGMENTS; s++) {
-      const a0 = (s / SEGMENTS) * TAU + this._rotation;
-      const a1 = ((s + 1) / SEGMENTS) * TAU + this._rotation;
-      const hue = this._huePhase + (s / SEGMENTS) * 360;
+      const a0 = (s / SEGMENTS) * TAU + rotation;
+      const a1 = ((s + 1) / SEGMENTS) * TAU + rotation;
+      const hue = huePhase + (s / SEGMENTS) * 360;
       const color = hueToHex(hue);
 
       strokeLaserPath(ctx, () => {

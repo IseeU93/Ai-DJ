@@ -53,17 +53,34 @@ export class SceneManager {
 
   /**
    * Request a transition to a new primary effect.
+   *
+   * Früher wurde hart umgeschaltet ("Überblenden sieht matschig aus").
+   * Ein Schnitt mitten in der Bewegung wirkt auf dem Schirm aber wie ein
+   * Bildfehler - jetzt blendet der alte Effekt kurz aus (0,5 s), während
+   * der neue schneller einblendet (0,3 s). Nur mit `instant` (Drop-
+   * Einschlag, Start) wird geschnitten - dort soll es knallen.
+   *
    * @param {string} effectKey – e.g. 'scanner', 'tunnel'
-   * @param {boolean} instant – ignored (always instant now for sharpness)
+   * @param {boolean} instant – harter Schnitt statt Überblendung
    */
-  setPrimaryEffect(effectKey, instant = true) {
+  setPrimaryEffect(effectKey, instant = false) {
     if (effectKey === this.primaryEffect) return;
 
-    // Snap instantly (crossfading laser geometries looks muddy)
+    const previous = this.primaryEffect;
+    this.primaryEffect   = effectKey;
     this._transitioning  = false;
     this._transProgress  = 1;
-    this.primaryEffect   = effectKey;
     this._pushHistory(effectKey);
+
+    if (!previous || instant) {
+      this._outgoing = null;
+      this._primaryAlpha = 1;
+      return;
+    }
+    // Der gerade sichtbare Stand blendet aus - auch wenn er selbst noch
+    // am Einblenden war (kein Aufblitzen bei schnellen Wechseln).
+    this._outgoing = { effectKey: previous, alpha: this._primaryAlpha ?? 1 };
+    this._primaryAlpha = 0;
   }
 
   /**
@@ -99,14 +116,25 @@ export class SceneManager {
 
   /**
    * Call once per frame to advance transitions.
+   * @param {number} dt – Sekunden seit dem letzten Bild (Standard 1/60)
    */
-  update() {
-    // Primary transition logic removed; primary effects snap instantly.
+  update(dt = 1 / 60) {
+    const step = Number.isFinite(dt) && dt > 0 ? Math.min(0.1, dt) : 1 / 60;
+
+    // ── Überblendung des Haupteffekts ─────────────────────
+    if ((this._primaryAlpha ?? 1) < 1) {
+      this._primaryAlpha = Math.min(1, (this._primaryAlpha ?? 0) + step / 0.3);
+    }
+    if (this._outgoing) {
+      this._outgoing.alpha -= step / 0.5;
+      if (this._outgoing.alpha <= 0.01 || this._outgoing.effectKey === this.primaryEffect) this._outgoing = null;
+    }
 
     // ── Overlay opacity interpolation (per layer) ─────────
+    const rate = 1 - Math.pow(1 - this._overlayFadeRate, step * 60);
     for (const layer of this.overlayLayers) {
       const diff = layer.target - layer.opacity;
-      layer.opacity += diff * this._overlayFadeRate;
+      layer.opacity += diff * rate;
     }
 
     // Clean up fully-faded overlays
@@ -125,10 +153,18 @@ export class SceneManager {
    * @param {object} effects – map of effect name → effect instance
    */
   render(ctx, W, H, audioData, config, effects) {
-    // ── Primary effect (snapped, no crossfade) ────────────
+    // ── Auslaufender Effekt (Überblendung) ─────────────────
+    const out = this._outgoing;
+    if (out && effects[out.effectKey]) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, out.alpha * out.alpha));
+      this._renderEffect(out.effectKey, effects[out.effectKey], ctx, W, H, audioData, config);
+    }
+
+    // ── Primary effect ─────────────────────────────────────
     const effect = effects[this.primaryEffect];
     if (effect) {
-      ctx.globalAlpha = 1;
+      const a = this._primaryAlpha ?? 1;
+      ctx.globalAlpha = a * (2 - a); // schnell sichtbar, weich angesetzt
       this._renderEffect(this.primaryEffect, effect, ctx, W, H, audioData, config);
     }
 
@@ -137,10 +173,12 @@ export class SceneManager {
       if (!layer.effectKey || layer.opacity <= 0.01) continue;
       const overlay = effects[layer.effectKey];
       if (!overlay) continue;
-      // Voll deckend zeichnen: ein Laser ist an oder aus.
-      ctx.globalAlpha = 1;
+      // Voll deckend zeichnen: ein Laser ist an oder aus - nur beim
+      // Ein-/Ausblenden der Ebene kurz weicher.
+      ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity));
       this._renderEffect(layer.effectKey, overlay, ctx, W, H, audioData, config);
     }
+    ctx.globalAlpha = 1;
   }
 
   /**
@@ -152,10 +190,10 @@ export class SceneManager {
       overlayEffect:  this.overlayEffect,
       overlayOpacity: this.overlayOpacity,
       overlayEffects: this.overlayLayers.map((l) => l.effectKey),
-      transitioning:  this._transitioning,
-      transProgress:  this._transProgress,
-      transitionFrom: this._transitionFrom,
-      transitionTo:   this._transitionTo,
+      transitioning:  Boolean(this._outgoing),
+      transProgress:  this._primaryAlpha ?? 1,
+      transitionFrom: this._outgoing?.effectKey ?? null,
+      transitionTo:   this._outgoing ? this.primaryEffect : null,
     };
   }
 

@@ -2,7 +2,7 @@
 // Lissajous.js – Verbessert: Beat-Snap zu musikalischen Frequenzverhältnissen
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath, effectOrigin } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, effectOrigin, frameDt, approachFor, decayFor, beatClock } from '../../shared/Config.js';
 
 // Musikalisch sinnvolle Frequenz-Paare für Lissajous-Figuren
 const FREQ_PAIRS = [
@@ -25,20 +25,31 @@ export class Lissajous {
     const { bass, mid, amplitude, isBeat } = audioData;
     const { lissajous, speed, brightness, sensitivity, palette, customColor, show } = config;
 
-    this._time += 0.01 * speed;
+    const dt = frameDt(config);
+    const f = dt * 60;
+    this._time += 0.01 * speed * f;
 
     const colors = getPaletteColors(palette, customColor);
 
     // ── Beat-Snap: zu nächstem Frequenz-Paar springen ─────
     if (isBeat) {
       this._barCounter++;
-      if (lissajous.beatSnap) {
-        this._pairIdx = (this._pairIdx + 1) % FREQ_PAIRS.length;
-      }
       if (show.colorMode === 'beat') {
         this._colorIdx = (this._colorIdx + 1) % colors.length;
       } else if (show.colorMode === 'bar' && this._barCounter % 4 === 0) {
         this._colorIdx = (this._colorIdx + 1) % colors.length;
+      }
+    }
+
+    // Beat-Snap: die Figur wechselt einmal pro Takt (nicht auf jedem
+    // Schlag - das war hektisch und ließ sie nie ausschwingen) und
+    // morpht dabei weich in das nächste Frequenzpaar.
+    if (lissajous.beatSnap) {
+      const bar = Math.floor(beatClock(config, this._time * 0.5) / 4);
+      if (this._lastBar === undefined) this._lastBar = bar;
+      if (bar !== this._lastBar) {
+        this._lastBar = bar;
+        this._pairIdx = (this._pairIdx + 1) % FREQ_PAIRS.length;
       }
     }
 
@@ -50,12 +61,14 @@ export class Lissajous {
     // Audio-Modulation: Bass/Mid verschiebt Frequenzen minimal
     const targetFX = tX + bass * sensitivity * 0.4;
     const targetFY = tY + mid  * sensitivity * 0.3;
-    this._freqXFine += (targetFX - this._freqXFine) * 0.06;
-    this._freqYFine += (targetFY - this._freqYFine) * 0.06;
+    // langsam ausschwingen (~1 s): das Morphen ist der Effekt
+    const k = approachFor(0.035, dt);
+    this._freqXFine += (targetFX - this._freqXFine) * k;
+    this._freqYFine += (targetFY - this._freqYFine) * k;
 
     // Phase dreht sich → morpht die Figur
     if (lissajous.autoPhase) {
-      this._phase += 0.004 * speed * (1 + bass * 0.5);
+      this._phase += 0.004 * speed * (1 + bass * 0.5) * f;
     }
 
     const { cx, cy } = effectOrigin(config, W, H);
@@ -77,8 +90,11 @@ export class Lissajous {
       }
     }, color, brightness, thickness);
 
-    // Auf Beat: kurze 2. Kurve mit phasenverschobenem Frequenzpaar
-    if (isBeat && colors.length > 1) {
+    // Auf dem Beat: zweite, kleinere Kurve, die weich ausklingt (vorher
+    // ein einzelnes Bild - je nach Bildrate kaum zu sehen oder ein Flackern).
+    if (isBeat) this._ghost = 1;
+    this._ghost = (this._ghost || 0) * decayFor(0.9, dt);
+    if (this._ghost > 0.05 && colors.length > 1) {
       const [nX, nY] = FREQ_PAIRS[(this._pairIdx + 1) % FREQ_PAIRS.length];
       strokeLaserPath(ctx, () => {
         for (let i = 0; i <= 1000; i++) {
@@ -87,7 +103,7 @@ export class Lissajous {
           const y = cy + Math.sin(nY * t + Math.PI * 0.25) * radius * 0.7;
           i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
-      }, color2, brightness * 0.5, thickness * 0.7);
+      }, color2, brightness * 0.5 * this._ghost, thickness * 0.7);
     }
   }
 }

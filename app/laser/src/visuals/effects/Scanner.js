@@ -9,7 +9,7 @@
 //   cross  – Zwei Strahlen kreuzen sich gegenläufig
 // ============================================================
 
-import { getPaletteColors, drawLaserLine, effectOrigin, perimeterPoint } from '../../shared/Config.js';
+import { getPaletteColors, drawLaserLine, effectOrigin, perimeterPoint, frameDt, approachFor, beatClock } from '../../shared/Config.js';
 
 // Preset-Winkel für Snap-Modus (typische Scanner-Positionen)
 const SNAP_PRESETS = [-70, -45, -20, 0, 20, 45, 70].map(d => (d / 180) * Math.PI);
@@ -59,10 +59,9 @@ export class Scanner {
    * und springt auf Beats gelegentlich an eine ganz andere
    * Randposition, damit es nicht nur gleichmäßig kriecht.
    */
-  _edgePlacement(W, H, audioData, speed) {
+  _edgePlacement(W, H, audioData, speed, dt = 1 / 60) {
     const bpm = Number(audioData?.bpm) > 0 ? Number(audioData.bpm) : 120;
     const beatsPerSecond = bpm / 60;
-    const dt = 0.016;
 
     // Ein voller Umlauf über ~16 Takte, mit dem Songtempo skaliert.
     this._edgePhase += dt * (beatsPerSecond / 64) * Math.max(0.2, speed);
@@ -82,13 +81,14 @@ export class Scanner {
     const { bass, mid, amplitude, isBeat } = audioData;
     const { scanner, speed, brightness, sensitivity, palette, customColor, show } = config;
 
-    this._time += 0.016 * speed;
+    const dt = frameDt(config);
+    this._time += dt * speed;
 
     // Im Rand-Modus bestimmt der Scanner Ursprung UND Blickrichtung
     // selbst; sonst gilt der globale, wandernde Effekt-Ursprung.
     const edgeMode = scanner.orientation === 'edge';
     const placement = edgeMode
-      ? this._edgePlacement(W, H, audioData, speed)
+      ? this._edgePlacement(W, H, audioData, speed, dt)
       : effectOrigin(config, W, H);
     const { cx, cy } = placement;
     const aim = placement.aim || 0;
@@ -115,22 +115,29 @@ export class Scanner {
     const mode  = scanner.mode;
     const count = Math.max(1, Math.min(8, scanner.count));
     
-    // Fallback auf time falls measurePhase noch nicht da ist
-    const mPhase = audioData.measurePhase !== undefined ? audioData.measurePhase : (this._time % 1);
     const bIndex = audioData.beatIndex !== undefined ? audioData.beatIndex : 0;
 
     // ── SWEEP-Modus: Pendelbewegung ─────────────────────────
+    // Taktsynchron an der Beat-Uhr: je nach Tempo-Stufe ein Hin und Her
+    // über 4, 2 oder 1 Takt (bzw. zweimal pro Takt). Die Phase wird
+    // aufsummiert statt aus der Takt-Phase gerechnet - vorher sprang der
+    // Strahl bei langsamer Stufe auf jeder Eins zurück an den Anfang und
+    // beim Wechsel der Stufe mitten im Schwung an eine andere Stelle.
     if (mode === 'sweep' || mode === 'cross') {
-      // Taktsynchron: Ein voller Sweep-Zyklus (Hin + Zurück) entspricht genau einem Takt (4 Beats).
-      // Speed-Regler fungiert hier als Multiplikator für schnelle oder langsame Takte.
-      const freq = Math.max(0.25, Math.round(speed)); 
-      
-      this._angle = Math.sin(mPhase * Math.PI * 2 * freq) * (sweepRad / 2);
+      const beat = beatClock(config, this._time);
+      const dBeat = this._lastBeat === undefined ? 0 : Math.max(0, Math.min(1, beat - this._lastBeat));
+      this._lastBeat = beat;
+      const freq = speed < 0.45 ? 0.25 : speed < 0.9 ? 0.5 : speed < 1.5 ? 1 : 2;
+      this._sweepPhase = ((this._sweepPhase || 0) + (dBeat / 4) * freq) % 1;
+      const p = this._sweepPhase * Math.PI * 2;
+      this._angle = Math.sin(p) * (sweepRad / 2);
 
       if (mode === 'cross') {
         // Gegenläufiger zweiter Strahl (Phasenverschoben)
-        this._crossAngle = Math.cos(mPhase * Math.PI * 2 * freq) * (sweepRad / 2);
+        this._crossAngle = Math.cos(p) * (sweepRad / 2);
       }
+    } else {
+      this._lastBeat = beatClock(config, this._time);
     }
 
     // ── SNAP-Modus: springt auf Beat ───────────────────────
@@ -140,15 +147,21 @@ export class Scanner {
       // Sequenz: Mitte, Rechts, Mitte, Links
       const SNAP_SEQ = [3, 5, 3, 1];
       
-      this._snapTarget = SNAP_PRESETS[SNAP_SEQ[bIndex % SNAP_SEQ.length]];
-      
-      // Bei sehr hoher Eskalation zufällige Pattern einwerfen
-      if (speed > 1.5 && bIndex % 2 !== 0) {
-        this._snapTarget = SNAP_PRESETS[Math.floor(Math.random() * SNAP_PRESETS.length)];
+      // Bei sehr hoher Eskalation auf jedem zweiten Schlag eine zufällige
+      // Position - aber einmal pro Schlag gewürfelt. Vorher wurde in jedem
+      // Bild neu gewürfelt: der Strahl zitterte den ganzen Schlag lang
+      // zwischen allen Positionen hin und her.
+      const beatKey = Math.floor(beatClock(config, this._time));
+      if (beatKey !== this._snapBeatKey) {
+        this._snapBeatKey = beatKey;
+        this._snapRandom = SNAP_PRESETS[Math.floor(Math.random() * SNAP_PRESETS.length)];
       }
+      this._snapTarget = speed > 1.5 && bIndex % 2 !== 0
+        ? this._snapRandom
+        : SNAP_PRESETS[SNAP_SEQ[bIndex % SNAP_SEQ.length]];
 
       // Sehr schnelle Interpolation → wirkt fast wie Snap
-      this._angle += (this._snapTarget - this._angle) * 0.45;
+      this._angle += (this._snapTarget - this._angle) * approachFor(0.45, dt);
     }
 
     // ── FAN-Modus: mehrere statische Strahlen ──────────────

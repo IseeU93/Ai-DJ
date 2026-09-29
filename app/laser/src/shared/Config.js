@@ -490,3 +490,36 @@ export function effectOrigin(config, W, H) {
 export function getPaletteColor(palette, index, customColor) {
   return getPaletteColors(palette, customColor)[index % getPaletteColors(palette, customColor).length];
 }
+
+// ── Echte Zeit statt Bildrate ──────────────────────────────
+// Die Effekte waren auf 60 Bilder/s abgestimmt und rechneten pro Bild:
+// auf einem 144/160-Hz-Monitor lief die Show dadurch zwei- bis dreimal
+// so schnell (hektisch, kurze Spuren), auf einem ausgelasteten Laptop
+// mit 30 Bildern/s halb so schnell. Der Renderer gibt deshalb die
+// echte Bildzeit mit (config.dt), und alle Pro-Bild-Konstanten werden
+// darüber auf Sekunden umgerechnet - bei 60 fps ändert sich nichts.
+
+/** Sekunden seit dem letzten Bild (vom Renderer), sonst 1/60. */
+export function frameDt(config) {
+  const dt = Number(config?.dt);
+  return dt > 0 && dt <= 0.25 ? dt : 1 / 60;
+}
+
+/** Abklingfaktor, der bei 60 fps `k` pro Bild wäre, für ein Bild der Länge dt. */
+export function decayFor(k, dt) {
+  return Math.pow(k, dt * 60);
+}
+
+/** Annäherungsanteil, der bei 60 fps `r` pro Bild wäre (x += (ziel - x) * approachFor(r, dt)). */
+export function approachFor(r, dt) {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, r)), dt * 60);
+}
+
+/**
+ * Musikalische Zeit in Schlägen (fortlaufend, vom Renderer geglättet).
+ * Ohne Beat-Uhr läuft eine freie Zeit mit angenommenen 120 BPM.
+ */
+export function beatClock(config, fallbackSeconds = 0) {
+  const b = Number(config?.beatClock);
+  return Number.isFinite(b) ? b : fallbackSeconds * 2;
+}

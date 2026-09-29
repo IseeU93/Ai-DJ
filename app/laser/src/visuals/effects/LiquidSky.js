@@ -18,7 +18,7 @@
 // Standard, der Sprung ein bewusst zugeschalteter Extra-Kick.
 // ============================================================
 
-import { getPaletteColors, drawLaserLine } from '../../shared/Config.js';
+import { getPaletteColors, drawLaserLine, frameDt, decayFor } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -72,7 +72,8 @@ export class LiquidSky {
     const { bass, mid, amplitude, isBeat } = audioData;
     const { liquidSky, speed, brightness, sensitivity, palette, customColor, show } = config;
 
-    this._time += 0.016 * speed;
+    const dt = frameDt(config);
+    this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);
     // "Anzahl" ist die Zahl der SICHTBAREN Balken, nicht der
@@ -115,11 +116,11 @@ export class LiquidSky {
       }
     }
     for (const b of this._beams) {
-      b.jumpY *= 0.88;
+      b.jumpY *= decayFor(0.88, dt);
       // Tempo-Schub klingt über gut 20 Frames ab (~1/3s bei 60fps) -
       // spürbar schneller, aber kein harter Sprung in der Geschwindigkeit.
-      b.speedBoost *= 0.9;
-      b.yPhaseAcc += 0.016 * speed * b.yFreq * TAU * (1 + b.speedBoost);
+      b.speedBoost *= decayFor(0.9, dt);
+      b.yPhaseAcc += dt * speed * b.yFreq * TAU * (1 + b.speedBoost);
     }
 
     const spreadDeg = Math.min(60, Math.max(0, liquidSky.spread));

@@ -9,7 +9,7 @@
 // Spirale in Segmenten abfährt statt einer makellosen Kurve.
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath, effectOrigin } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, effectOrigin, frameDt, decayFor, approachFor } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
@@ -32,7 +32,9 @@ export class Spiral {
       speed = 1, brightness = 1, sensitivity = 1, palette, customColor, show = {},
     } = config;
 
-    this._time += 0.016 * speed;
+    const dt = frameDt(config);
+    const f = dt * 60;
+    this._time += dt * speed;
 
     // Beat treibt die Drehung an - klingt danach wieder ab, statt
     // konstant zu rotieren wie ein Bildschirmschoner.
@@ -45,11 +47,11 @@ export class Spiral {
         this._colorIdx = (this._colorIdx + 1) % 8;
       }
     }
-    this._rotVelocity *= 0.96;
-    this._rotation += (0.05 + this._rotVelocity) * speed * 0.35;
+    this._rotVelocity *= decayFor(0.96, dt);
+    this._rotation += (0.05 + this._rotVelocity) * speed * 0.35 * f;
 
     const targetZoom = clamp(sp.zoom ?? 1, 0.3, 2) * (1 + bass * sensitivity * 0.2);
-    this._zoom += (targetZoom - this._zoom) * 0.08;
+    this._zoom += (targetZoom - this._zoom) * approachFor(0.08, dt);
 
     const { cx, cy } = effectOrigin(config, W, H);
     const maxR   = Math.min(W, H) * 0.46 * this._zoom;

@@ -15,7 +15,7 @@
 // laufen.
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, frameDt } from '../../shared/Config.js';
 
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, Number(v) || 0));
 const clamp01 = (v) => clamp(v, 0, 1);
@@ -53,7 +53,8 @@ export class Tunnel {
     const { bass = 0, amplitude = 0, isBeat = false, bpm } = audioData;
     const { tunnel, speed, brightness, sensitivity, palette, customColor, show } = config;
 
-    this._time += 0.016 * speed;
+    const dt = frameDt(config);
+    this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);
     // Bewusst NICHT der wandernde Effekt-Ursprung wie bei
@@ -97,7 +98,7 @@ export class Tunnel {
       if (this._beatCount % every === 0) spawnFrame();
       this._spawnAcc = 0;
     } else {
-      this._spawnAcc += (0.016 * speed * beatsPerSecond * 0.5) / (every / 2);
+      this._spawnAcc += (dt * speed * beatsPerSecond * 0.5) / (every / 2);
       if (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
         spawnFrame();

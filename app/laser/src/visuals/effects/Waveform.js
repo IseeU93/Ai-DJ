@@ -15,7 +15,7 @@
 // ============================================================
 
 import {
-  getPaletteColors, colorWithAlpha, strokeLaserPath, drawLaserDot, effectOrigin,
+  getPaletteColors, colorWithAlpha, strokeLaserPath, drawLaserDot, effectOrigin, frameDt, decayFor, approachFor,
 } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
@@ -36,7 +36,8 @@ export class Waveform {
     const wf = config.waveform || {};
     const { speed = 1, palette, customColor, show = {} } = config;
 
-    const dt = 1 / 60;
+    const dt = frameDt(config);
+    this._dt = dt;
     this._time += dt * speed;
 
     const colors = getPaletteColors(palette, customColor);
@@ -47,7 +48,7 @@ export class Waveform {
         this._colorIdx = (this._colorIdx + 1) % colors.length;
       }
     }
-    this._beatPulse *= 0.87;
+    this._beatPulse *= decayFor(0.87, dt);
 
     // Rotation im Takt – ein stehendes Bild wirkt nie nach Lasershow.
     if (wf.rotate !== false) {
@@ -161,7 +162,7 @@ export class Waveform {
         value = 0.25 + 0.2 * Math.sin(this._time * 2 + i * 0.4);
       }
       // Glätten, sonst zappelt der Stern unruhig.
-      this._bars[i] += (value - this._bars[i]) * 0.35;
+      this._bars[i] += (value - this._bars[i]) * approachFor(0.35, this._dt || 1 / 60);
     }
 
     const sectorCount = bars * symmetry;
@@ -214,7 +215,7 @@ export class Waveform {
     const thickness = (Number(wf.thickness) || 1.5) * (config.thicknessMul || 1);
     const symmetry = clamp(Math.round(Number(wf.symmetry) || 2), 1, 6);
 
-    this._circleRadius += (baseR - this._circleRadius) * 0.08;
+    this._circleRadius += (baseR - this._circleRadius) * approachFor(0.08, this._dt || 1 / 60);
 
     const points = 240;
     const segments = 6;            // Blanking-Segmente

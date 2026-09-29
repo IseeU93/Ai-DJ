@@ -128,8 +128,43 @@ export class LaserRenderer {
   }
 
   updateAudio(audioData) {
+    // Ein Beat, der noch nie gezeichnet wurde (Bildrate unter der
+    // Analyserate, z. B. ausgelasteter Laptop), geht nicht verloren: er
+    // wandert in den nächsten Analyse-Frame mit.
+    const pending = this._audioData;
+    if (audioData && pending && pending !== this._lastRenderedAudio && pending.isBeat && !audioData.isBeat) {
+      audioData = { ...audioData, isBeat: true, transients: pending.transients || audioData.transients };
+    }
     this._audioData = audioData;
     this._useDemoData = false;
+  }
+
+  /**
+   * Derselbe Analyse-Frame wird auf schnellen Monitoren mehrfach
+   * gezeichnet (60 Analysen/s, 144-160 Bilder/s). Ereignisse wie Beat
+   * oder Kick dürfen aber nur EINMAL auslösen - sonst zählt der Tunnel
+   * doppelt, Blitze und Farbwechsel kommen zwei-, dreifach pro Schlag.
+   */
+  _eventsOnce(audioData) {
+    if (audioData === this._lastRenderedAudio) return this._staleAudio || audioData;
+    this._lastRenderedAudio = audioData;
+    const t = audioData.transients;
+    let transients = t;
+    if (t && typeof t === 'object') {
+      transients = {};
+      for (const [k, v] of Object.entries(t)) transients[k] = v && typeof v === 'object' ? { ...v, hit: false } : v;
+    }
+    this._staleAudio = {
+      ...audioData,
+      isBeat: false,
+      downbeat: false,
+      gridBeat: false,
+      barBoundary: false,
+      phraseBoundary: false,
+      sectionBoundary: false,
+      transients,
+    };
+    return audioData;
   }
 
   updateScannerAudioSnapshot(snapshot) {
@@ -145,7 +180,9 @@ export class LaserRenderer {
 
     if (previousEffect !== activeEffect) {
       this._initEffect({ ...config, effect: activeEffect });
-      const isClimax = config.show?.intensity === 'drop';
+      // Überblenden ist Standard; hart geschnitten wird nur, wenn der
+      // Wechsel selbst der Akzent ist (Drop-Einschlag).
+      const isClimax = config.show?.intensity === 'drop' || config._sceneCut === true;
       this._sceneManager.setPrimaryEffect(activeEffect, isClimax);
     }
 
@@ -412,6 +449,10 @@ export class LaserRenderer {
     const cfg = { ...baseConfig, effect: runtimeState.activeEffect };
     const W = canvas.width;
     const H = canvas.height;
+    // Echte Bildzeit (für alle Effekte): nach einem verdeckten Fenster
+    // nicht in einem Riesenschritt nachholen.
+    const dt = Number.isFinite(deltaTime) ? Math.max(0.001, Math.min(0.1, deltaTime)) : 1 / 60;
+    const beat = this._updateBeatClock(this._useDemoData ? null : this._audioData, dt);
 
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
@@ -435,6 +476,8 @@ export class LaserRenderer {
     let snapshotMs = 0;
     if (!audioData || this._useDemoData) {
       audioData = this._buildDemoData(scannerTime);
+    } else {
+      audioData = this._eventsOnce(audioData);
     }
     if (prototypeActive) {
       const snapshotStartedAt = performance.now();
@@ -457,14 +500,23 @@ export class LaserRenderer {
       return;
     }
 
-    const trailAlpha = 1 - Math.max(0, Math.min(0.98, cfg.trailLength));
+    // Nachleuchten: trailLength ist der Rest, der bei 60 fps pro Bild
+    // stehen bleibt - auf die echte Bildzeit umgerechnet, damit die Spur
+    // auf jedem Monitor gleich lang (in Sekunden) nachzieht.
+    const keep = Math.max(0, Math.min(0.98, Number(cfg.trailLength) || 0));
+    const trailAlpha = 1 - Math.pow(keep, dt * 60);
     ctx.fillStyle = `rgba(0, 0, 0, ${trailAlpha})`;
     ctx.fillRect(0, 0, W, H);
 
     const origin = this._updateOrigin(cfg, audioData, deltaTime);
     const pump = this._updateBeatPump(cfg, audioData, deltaTime);
 
-    const dynThick = audioData.isBeat ? 1.5 : 1.0;
+    // Beat-Puls der Linienstärke: weich abklingend statt eines einzelnen
+    // dickeren Bildes (das auf schnellen Monitoren nur noch zuckte).
+    if (audioData.isBeat && !this._thickLastBeat) this._thickEnv = 1;
+    this._thickLastBeat = Boolean(audioData.isBeat);
+    this._thickEnv = (this._thickEnv || 0) * Math.pow(0.001, dt / 0.18);
+    const dynThick = 1 + this._thickEnv * 0.4;
     // Der Haupteffekt wird immer voll gezeichnet. Die Phase (Intro,
     // Break, Drop) steuert nur noch die Reaktivität, nicht mehr die
     // Helligkeit - ein halb durchsichtiger Laser ist kein Laser.
@@ -474,6 +526,9 @@ export class LaserRenderer {
       sensitivity: cfg.sensitivity * intensityMul,
       thicknessMul: dynThick,
       origin,
+      dt,
+      beatClock: beat.beat,
+      beatsPerSecond: beat.bps,
     };
 
     if (prototypeActive !== this._prototypeActive) {
@@ -516,13 +571,37 @@ export class LaserRenderer {
     // ── Beat-Pumpe als Kameratransformation ─────────────────
     // Skaliert um den Ursprung: die Figur wird auf dem Kick größer und
     // fällt zurück, statt dass jeder Effekt das einzeln nachbauen muss.
-    this._sceneManager.update();
+    this._sceneManager.update(dt);
     ctx.save();
     ctx.translate(originPx.x, originPx.y);
     ctx.scale(pump.scale, pump.scale * pump.squash);
     ctx.translate(-originPx.x, -originPx.y);
     this._sceneManager.render(ctx, W, H, audioData, scaledCfg, this._effects);
     ctx.restore();
+  }
+
+  /**
+   * Beat-Uhr: fortlaufende musikalische Zeit in Schlägen. Läuft mit dem
+   * Tempo weiter und wird weich auf das Beat-Grid (beatCount +
+   * beatPhase) gezogen - Effekte können ihre Bewegung damit exakt an
+   * Takt und Phrase hängen, ohne bei jedem Grid-Ruck zu springen. Bei
+   * einem großen Versatz (neuer Track, Neustart der Zählung) springt sie.
+   */
+  _updateBeatClock(audioData, dt) {
+    const bpm = Number(audioData?.bpm);
+    const bps = bpm > 30 && bpm < 400 ? bpm / 60 : 2;
+    if (!Number.isFinite(this._beatClock)) this._beatClock = 0;
+    const count = Number(audioData?.beatCount);
+    const phase = Number(audioData?.beatPhase);
+    if (bpm > 30 && Number.isFinite(count) && Number.isFinite(phase)) {
+      const target = count + Math.max(0, Math.min(1, phase));
+      const err = target - (this._beatClock + dt * bps);
+      if (Math.abs(err) > 3) this._beatClock = target;
+      else this._beatClock += Math.max(0, dt * bps + err * Math.min(1, dt * 6));
+    } else {
+      this._beatClock += dt * bps;
+    }
+    return { beat: this._beatClock, bps };
   }
 
   /**
@@ -717,7 +796,13 @@ export class LaserRenderer {
     const gate = cfg._strobeGate;
     if (!gate || !gate.active) { this._strobeGateOn = true; return true; }
 
-    const div = Math.max(1, Math.min(32, Number(gate.div) || 4));
+    let div = Math.max(1, Math.min(32, Number(gate.div) || 4));
+    // Nie mehr als ~10 Blitze pro Sekunde: darüber sieht ein Monitor
+    // oder Beamer (60 Bilder/s) nur noch zufälliges Zucken statt eines
+    // Rhythmus - 1/16 bei 128 BPM wären 34 Blitze/s. Die Unterteilung
+    // wird halbiert, bis sie wieder im Takt lesbar ist.
+    const gateBpm = Number(audioData?.bpm) > 0 ? Number(audioData.bpm) : 120;
+    while (div > 1 && (div * gateBpm) / 60 > 10.5) div = Math.max(1, Math.floor(div / 2));
     const duty = Math.max(0.05, Math.min(1, Number(gate.duty) || 0.35));
 
     const hasGrid = Number(audioData?.bpm) > 0 && Number.isFinite(Number(audioData?.beatPhase));

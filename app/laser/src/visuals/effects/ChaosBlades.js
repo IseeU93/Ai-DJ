@@ -16,7 +16,7 @@
 // `fullFrame` steuert die Länge (quer durchs Bild vs. kurzer Jab).
 // ============================================================
 
-import { getPaletteColors, strokeLaserPath, effectOrigin } from '../../shared/Config.js';
+import { getPaletteColors, strokeLaserPath, effectOrigin, frameDt, decayFor } from '../../shared/Config.js';
 
 const TAU = Math.PI * 2;
 
@@ -33,6 +33,8 @@ export class ChaosBlades {
     const { bass, amplitude, isBeat, transients } = audioData;
     const { chaosBlades, brightness, sensitivity, palette, customColor } = config;
 
+    const dt = frameDt(config);
+    const f = dt * 60;
     const colors = getPaletteColors(palette, customColor);
     const { cx, cy } = effectOrigin(config, W, H);
     const punch = Math.min(1.4, ((bass || 0) + (amplitude || 0)) * sensitivity);
@@ -42,7 +44,7 @@ export class ChaosBlades {
     // Zielrichtung driftet langsam weiter - der Fächer "schwenkt" über
     // mehrere Kicks hinweg, statt bei jedem Treffer komplett neu zu
     // würfeln.
-    this._aimAngle += 0.008 + punch * 0.01;
+    this._aimAngle += (0.008 + punch * 0.01) * f;
 
     // ── Neue Blitze bei einem harten Kick spawnen ───────────
     // Bei schnellen Tracks (Uptempo, Hardstyle) fällt jeder einzelne
@@ -68,7 +70,7 @@ export class ChaosBlades {
     }
 
     // ── Leiser Idle-Puls, damit der Effekt nie komplett tot wirkt ──
-    this._idlePulse += 0.05;
+    this._idlePulse += 0.05 * f;
     if (this._bolts.length === 0 && Math.sin(this._idlePulse) > 0.985) {
       this._spawnBolt(cx, cy, W, H, colors, chaosBlades, 0.25);
     }
@@ -86,7 +88,7 @@ export class ChaosBlades {
     if (this._bolts.length > maxBolts) this._bolts.splice(0, this._bolts.length - maxBolts);
     for (const bolt of this._bolts) {
       this._drawBolt(ctx, bolt, brightness);
-      bolt.life *= decay;
+      bolt.life *= decayFor(decay, dt);
     }
   }
 
