@@ -40,6 +40,22 @@ test('Musikwunsch: passende Songs, gut mixbar sortiert', () => {
   assert.deepEqual(pickWish(tracks, parseWish('Reggae'), cur), []);
 });
 
+test('Musikwunsch: Titel oder Party holt keine Uptempo-Tracks in ein Pop-Set', () => {
+  const cur = mk('jetzt', 'pop', { energy: 0.6 });
+  const tracks = [
+    mk('bh', 'pop', { energy: 0.6 }, { artist: 'Taio Cruz' }),
+    mk('breakrules', 'uptempo', { bpm: 200, energy: 0.9 }),
+    mk('party-uptempo', 'uptempo', { bpm: 190, energy: 0.8, pulse: 12 }),
+    mk('party-pop', 'pop', { energy: 0.8, pulse: 12 }),
+  ];
+  tracks[0].title = 'Break Your Heart';
+  tracks[1].title = 'BREAK THE RULES';
+  assert.deepEqual(pickWish(tracks, parseWish('Break your heart'), cur).map((t) => t.id), ['bh']);
+  assert.ok(!pickWish(tracks, parseWish('Party'), cur).some((t) => ['breakrules', 'party-uptempo'].includes(t.id)));
+  // läuft schon harte Musik oder wird danach gefragt, dürfen sie kommen
+  assert.ok(pickWish(tracks, parseWish('Uptempo'), cur).some((t) => t.id === 'party-uptempo'));
+});
+
 test('Musikwunsch "ruhig": nie Hardstyle/Uptempo, auch wenn der Beat wenig tanzbar wirkt', () => {
   const cur = mk('jetzt', 'pop', { energy: 0.5 });
   // Uptempo-/Hardstyle-Songs mit gebrochenem Beat (niedrige Tanzbarkeit) und ein rasender Pop-Remix

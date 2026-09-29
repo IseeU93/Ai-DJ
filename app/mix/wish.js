@@ -73,8 +73,14 @@ const nameText = (t) => `${t.artist || ''} ${t.title || ''}`.toLowerCase();
  * Harte Kriterien (Richtung, Stil, Interpret) müssen passen, weiche (Stimmung, Energie, Tempo)
  * sortieren innerhalb.
  */
+const HARD = ['hardstyle', 'uptempo'];
+
 export function wishScore(t, w, cur) {
   let s = 0;
+  // harte Musik nur, wenn danach gefragt wird ("Hardstyle", "Uptempo", "härter") oder sie gerade läuft –
+  // ein Party- oder Titel-Wunsch holt sonst keine Uptempo-Tracks mitten in ein Pop-Set
+  const hardAsked = w.genres.has('hardstyle') || w.genres.has('uptempo') || w.energy > 0;
+  if (HARD.includes(t.genre) && !hardAsked && !HARD.includes(cur?.genre)) return null;
   if (w.genres.size) {
     if (!w.genres.has(t.genre)) return null;
     s += 2;
@@ -88,6 +94,9 @@ export function wishScore(t, w, cur) {
   if (w.terms.length) {
     const n = nameText(t);
     const hit = w.terms.filter((x) => n.includes(x)).length;
+    // mehrere Wörter ("break your heart"): der Großteil muss im Namen stehen, der ganze Titel zählt am meisten
+    if (w.terms.length >= 2 && hit > 0 && hit < Math.ceil(w.terms.length * 0.66)) return null;
+    if (w.terms.length >= 2 && n.includes(w.terms.join(' '))) s += 4;
     if (!hit) {
       // unbekannte Wörter sind vielleicht ein Stil ("reggae"), kein Name
       const st = styleText(t);
