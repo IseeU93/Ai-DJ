@@ -630,10 +630,10 @@ function applyFlavors(ctx, steps, { L, sw, q, fadeFrom }) {
   // --- Ausstieg
   const fl = Math.max(0.5, L - fadeFrom + 0.5);
   if (ex === 'lpOut') {
-    steps.push(p(fadeFrom - 0.5, 'out', 'filter', -0.6, fl));
+    steps.push(p(fadeFrom - 0.5, 'out', 'filter', -0.45, fl));
     ctx.notes.push('alter Track verschwindet im Tiefpass');
   } else if (ex === 'hpOut') {
-    steps.push(p(fadeFrom - 0.5, 'out', 'filter', 0.6, fl));
+    steps.push(p(fadeFrom - 0.5, 'out', 'filter', 0.35, fl));
     ctx.notes.push('alter Track wird per Hochpass ausgedünnt');
   }
   if (has('flangerOut')) {
@@ -1091,20 +1091,23 @@ function composeFilter(ctx) {
   if (ctx.inBar !== vb.grid(ctx.inBar, 4, 'round')) ctx.inBar = vb.grid(ctx.inBar, 4, 'ceil');
   L = extendWithLoop(ctx, steps, L);
   const down = ctx.energyUp < -0.05;
-  const depth = down ? -0.6 : 0.45 + Math.min(0.2, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 48);
+  // (nicht zu tief filtern: ein stark ausgedünnter alter Track plus ein noch dumpfer neuer ergibt
+  // mitten im Übergang eine Pause – beide müssen zusammen immer den Raum füllen)
+  const depth = down ? -0.45 : 0.3 + Math.min(0.1, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 96);
   // Bass-Wechsel auf einer 4-Takt-Grenze (vorher landete er bei 8 Takten auf Takt 7 – mitten in der Phrase)
   const sw = L >= 16 ? L - 4 : L >= 8 ? 4 : L;
 
-  steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.85), p(0, 'in', 'low', KILL));
+  // Neuer Track: leise und im Tiefpass rein, Filter ist vor dem Bass-Tausch offen und er hat Lautstärke
+  steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.8), p(0, 'in', 'low', KILL));
   steps.push(act(0, 'in', 'play'));
   steps.push(p(0, 'in', 'fader', 1, L * 0.3));
-  steps.push(p(0, 'out', 'filter', depth, L * 0.85));
-  steps.push(p(L * 0.1, 'in', 'filter', 0, L * 0.65));
-  // weich raus: Bass über einen Takt tauschen, Lautstärke über die ganze zweite Hälfte, Höhen sanft
+  steps.push(p(0, 'out', 'filter', depth, L * 0.8));
+  steps.push(p(L * 0.05, 'in', 'filter', 0, Math.max(1, Math.min(L * 0.5, sw - 0.5))));
+  // Bass tauschen: der neue Bass kommt zuerst, der alte geht einen Takt später – so ist immer Bass da
   const swapDur = Math.min(1, Math.max(0.5, L / 4));
-  steps.push(p(sw, 'out', 'low', KILL, swapDur), p(sw, 'in', 'low', 0, swapDur));
-  const fadeFrom = Math.min(Math.max(sw, L * 0.5), L - 1);
-  steps.push(p(fadeFrom, 'out', 'high', -8, L - fadeFrom));
+  steps.push(p(sw, 'in', 'low', 0, swapDur), p(sw + swapDur * 0.5, 'out', 'low', KILL, swapDur));
+  // alter Track bleibt voll, bis der neue Bass steht, und geht dann über die Restzeit
+  const fadeFrom = Math.min(sw + swapDur, L - 1);
   steps.push(p(fadeFrom, 'out', 'fader', 0, L - fadeFrom));
   steps.push(act(L, 'out', 'stop'));
   vocalGuard(ctx, steps, L, sw);
@@ -1333,11 +1336,18 @@ function composeEcho(ctx) {
   if (ctx.instant) {
     steps.push(p(0, 'out', 'echo', 0.5), p(0.25, 'out', 'fader', 0, 0.25));
   } else {
-    steps.push(p(-1, 'out', 'filter', 0.45, 1), p(-0.5, 'out', 'echo', 0.5, 0.5), p(-0.5, 'out', 'reverb', 0.45, 0.5), p(0, 'out', 'fader', 0, 0.5));
+    // (nie Stille dazwischen: der alte taucht über anderthalb Takte im Echo ab, der neue läuft
+    // schon darunter an)
+    steps.push(p(-1, 'out', 'filter', 0.35, 1), p(-0.5, 'out', 'echo', 0.5, 0.5), p(-0.5, 'out', 'reverb', 0.45, 0.5), p(0, 'out', 'fader', 0, 1.5));
   }
-  // Neuer Track blendet kurz ein statt hart einzusetzen
-  steps.push(p(0, 'in', 'fader', 0), p(start, 'in', 'fader', 1, 0.25));
-  steps.push(p(0.5, 'out', 'echo', 0), act(start, 'in', 'play'), act(1, 'out', 'stop'));
+  // Neuer Track kommt weich darunter hoch statt hart einzusetzen
+  if (ctx.instant) {
+    steps.push(p(0, 'in', 'fader', 0), p(start, 'in', 'fader', 1, 0.25));
+    steps.push(p(0.5, 'out', 'echo', 0), act(start, 'in', 'play'), act(1, 'out', 'stop'));
+  } else {
+    steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.6), p(0.25, 'in', 'filter', 0, 1.75), p(0, 'in', 'fader', 1, beatless ? 1 : 1.5));
+    steps.push(p(1.5, 'out', 'echo', 0, 0.25), act(0, 'in', 'play'), act(2, 'out', 'stop'));
+  }
   ctx.notes.unshift(
     'alter Track verhallt im Echo',
     beatless ? 'neuer Track startet mit seinem ruhigen Intro schon unter der Echo-Fahne' : 'neuer Track startet einen Takt später in seinem eigenen Tempo',
@@ -1474,18 +1484,19 @@ function chorusSteps(ctx, exit, pre, entryNote) {
   // ohne Vorlauf kommt der neue über zwei Takte hoch: der alte bleibt so lange gedämpft im Tiefpass
   // darunter (kein Loch), seine nächste Zeile hört man darin nicht
   const cf = FEEL[ctx.feel]?.fade ?? 1;
-  if (pre > 0) steps.push(p(pre, 'out', 'filter', -0.45, cf), p(pre, 'out', 'fader', 0, cf), p(pre, 'out', 'low', KILL, 0.5));
-  else steps.push(p(0, 'out', 'filter', -0.55, 0.75), p(0, 'out', 'fader', 0, 1.75), p(0, 'out', 'low', KILL, 0.5));
-  steps.push(p(pre, 'in', 'low', 0, 0.5), p(pre, 'in', 'vocal', 0, 0.5));
+  // (der alte Bass geht erst, wenn der neue steht – sonst ist zwischen beiden ein Loch)
+  if (pre > 0) steps.push(p(pre, 'out', 'filter', -0.45, cf), p(pre + 0.25, 'out', 'fader', 0, cf), p(pre + 0.25, 'out', 'low', KILL, 0.5));
+  else steps.push(p(0, 'out', 'filter', -0.55, 0.75), p(0.25, 'out', 'fader', 0, 1.75), p(0.5, 'out', 'low', KILL, 0.75));
+  steps.push(p(pre, 'in', 'low', 0, 0.5), p(pre + 0.25, 'in', 'vocal', 0, 0.5));
   if (pre > 0) steps.push(p(pre, 'in', 'fader', 1, 0.5)); // ohne Vorlauf blendet softVocalEntry selbst ein
   // Echo fängt nur den letzten Schlag des Refrains ein (danach Send zu, die Fahne klingt aus)
-  steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + Math.max(pre > 0 ? 1.5 : 2, cf + 0.25), 'out', 'stop'));
+  steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + Math.max(pre > 0 ? 1.75 : 2.25, cf + 0.5), 'out', 'stop'));
   ctx.notes.unshift(
     `Ausstieg nach dem Refrain (Takt ${exit.bar} von ${va.end}), nicht erst am Songende`,
     entryNote,
     'auf der Eins: Bass-Wechsel + kurzer Echo-Schweif, der neue Track übernimmt',
   );
-  return { L: pre + Math.max(pre > 0 ? 1.5 : 2, cf + 0.25), steps };
+  return { L: pre + Math.max(pre > 0 ? 1.75 : 2.25, cf + 0.5), steps };
 }
 
 /** Instrumentaler Abschnitt mit Beat (Intro/Break) im Track: Start-Takt oder null. */

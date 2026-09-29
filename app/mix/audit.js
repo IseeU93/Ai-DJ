@@ -18,6 +18,16 @@ function valueAt(list, t, start) {
   return v;
 }
 
+/** Wie viel "Körper" ein Deck durch EQ und Filter noch hat (1 = voll, 0 = nichts mehr hörbar). */
+function bodyOf(val, deck, t) {
+  const low = val(deck, 'low', t); // dB, KILL = -26
+  const lowKeep = low >= -3 ? 1 : low <= -20 ? 0.4 : 0.4 + 0.6 * ((low + 20) / 17);
+  const f = val(deck, 'filter', t);
+  const filterKeep = f > 0 ? 1 - 0.55 * Math.min(1, f) : 1 - 0.4 * Math.min(1, -f);
+  const highKeep = val(deck, 'high', t) <= -6 ? 0.85 : 1;
+  return lowKeep * filterKeep * highKeep;
+}
+
 /**
  * @param plan  Ergebnis des Planers (steps, outBar, inBar, m, type)
  * @param va,vb TrackViews (vocalSmooth, energy, drums, isPhraseStart, end)
@@ -66,8 +76,10 @@ export function auditPlan(plan, va, vb) {
     const bi = fi > 0.45 && val('in', 'low', t) > -12 && vb.drums(Math.floor(ib)) > 0.35;
     if (bo && bi) bassBoth += STEP;
     // Lautstärke: Summe der Leistung beider Decks (relativ zur jeweiligen Takt-Lautheit)
-    const lo = outOn ? 10 ** (va.energy(Math.floor(ob)) / 20) : 0;
-    const li = inOn ? 10 ** (vb.energy(Math.floor(ib)) / 20) : 0;
+    // (Filter und Bass-Kill nehmen dem Deck Wucht: ein Track im Hochpass oder ohne Tiefen füllt den
+    // Raum nicht mehr – genau da entstehen die "Pausen" beim Filter-Übergang)
+    const lo = outOn ? 10 ** (va.energy(Math.floor(ob)) / 20) * bodyOf(val, 'out', t) : 0;
+    const li = inOn ? 10 ** (vb.energy(Math.floor(ib)) / 20) * bodyOf(val, 'in', t) : 0;
     // Echo-/Hallfahne des alten Tracks klingt nach dem Ausblenden weiter und füllt die Lücke
     let tail = 0;
     if (tOutGone !== null && t > tOutGone) {
