@@ -9,13 +9,6 @@
 //!
 //! Den Status liefert das Mixer-Fenster (`companion_push`), Ereignisse wie die Playlist-Warnung
 //! kommen über `companion_event` – die App zeigt sie als Benachrichtigung.
-//!
-//! Abgleich mit dem Handy (Selbst-Modus), ebenfalls nur mit PIN:
-//!   - `GET  /api/sync/feedback`      – Bewertungen (Track-Bezüge relativ zum Musik-Ordner)
-//!   - `GET  /api/sync/library`       – alle Audiodateien im Musik-Ordner (relativer Pfad, Größe)
-//!   - `GET  /api/sync/file?p=…`      – eine Datei herunterladen
-//!   - `POST /api/sync/upload?p=…`    – eine Datei vom Handy ablegen (nur neu, nie überschreiben)
-//! Alles bleibt im Musik-Ordner, nur Audiodateien, keine `..`-Pfade.
 
 use serde::Serialize;
 use std::io::Read;
@@ -40,69 +33,6 @@ pub struct Companion {
     changed: Condvar,
     pin: String,
     last_seen: Mutex<Option<Instant>>,
-    /// Musik-Ordner und Bewertungen (JSON), gemeldet vom Mixer-Fenster (`sync_set`)
-    sync: Mutex<(String, String)>,
-}
-
-const AUDIO: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus"];
-const MAX_UPLOAD: u64 = 600 * 1024 * 1024;
-
-/// Prozent-Kodierung aus der URL entfernen (UTF-8, '+' als Leerzeichen).
-fn decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(if b[i] == b'+' { b' ' } else { b[i] });
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn is_audio(p: &std::path::Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).map(|e| AUDIO.contains(&e.to_lowercase().as_str())).unwrap_or(false)
-}
-
-/// Relativer Pfad vom Handy -> Datei im Musik-Ordner (nur ohne "..", nur Audio).
-fn resolve(root: &str, rel: &str) -> Option<std::path::PathBuf> {
-    if root.is_empty() || rel.is_empty() {
-        return None;
-    }
-    let mut path = std::path::PathBuf::from(root);
-    for part in rel.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.contains('\\') || part.contains(':') {
-            return None;
-        }
-        path.push(part);
-    }
-    is_audio(&path).then_some(path)
-}
-
-fn walk(dir: &std::path::Path, base: &std::path::Path, depth: usize, out: &mut Vec<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            if depth < 4 {
-                walk(&p, base, depth + 1, out);
-            }
-            continue;
-        }
-        if !is_audio(&p) {
-            continue;
-        }
-        let Ok(meta) = e.metadata() else { continue };
-        let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-        let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-        out.push(format!(r#"{{"p":{},"size":{},"mtime":{}}}"#, serde_json::to_string(&rel).unwrap(), meta.len(), mtime));
-    }
 }
 
 #[derive(Serialize)]
@@ -178,10 +108,6 @@ impl Companion {
         self.changed.notify_all();
     }
 
-    pub fn set_sync(&self, root: String, feedback: String) {
-        *self.sync.lock().unwrap() = (root, feedback);
-    }
-
     pub fn info(&self) -> CompanionInfo {
         let connected = self.last_seen.lock().unwrap().map(|t| t.elapsed() < Duration::from_secs(40)).unwrap_or(false);
         CompanionInfo { ip: local_ip(), port: PORT, pin: self.pin.clone(), connected }
@@ -230,62 +156,6 @@ impl Companion {
                 let _ = app.emit_to("main", "companion-cmd", body);
                 respond(req, 200, r#"{"ok":true}"#.into());
             }
-            (tiny_http::Method::Get, "/api/sync/feedback") => {
-                let (root, fb) = self.sync.lock().unwrap().clone();
-                let fb = if fb.trim_start().starts_with('[') { fb } else { "[]".into() };
-                respond(req, 200, format!(r#"{{"root":{},"feedback":{}}}"#, serde_json::to_string(&root).unwrap(), fb));
-            }
-            (tiny_http::Method::Get, "/api/sync/library") => {
-                let root = self.sync.lock().unwrap().0.clone();
-                if root.is_empty() {
-                    return respond(req, 409, r#"{"error":"am PC ist noch kein Musik-Ordner geladen"}"#.into());
-                }
-                let mut files = Vec::new();
-                let base = std::path::PathBuf::from(&root);
-                walk(&base, &base, 0, &mut files);
-                respond(req, 200, format!("[{}]", files.join(",")));
-            }
-            (tiny_http::Method::Get, "/api/sync/file") => {
-                let root = self.sync.lock().unwrap().0.clone();
-                let rel = query(&url, "p").map(|p| decode(&p)).unwrap_or_default();
-                match resolve(&root, &rel).and_then(|p| std::fs::File::open(p).ok()) {
-                    Some(f) => {
-                        let ct = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap();
-                        let _ = req.respond(tiny_http::Response::from_file(f).with_header(ct));
-                    }
-                    None => respond(req, 404, r#"{"error":"Datei nicht gefunden"}"#.into()),
-                }
-            }
-            (tiny_http::Method::Post, "/api/sync/upload") => {
-                let root = self.sync.lock().unwrap().0.clone();
-                let rel = query(&url, "p").map(|p| decode(&p)).unwrap_or_default();
-                let Some(target) = resolve(&root, &rel) else {
-                    return respond(req, 400, r#"{"error":"Pfad nicht erlaubt"}"#.into());
-                };
-                if target.exists() {
-                    return respond(req, 200, r#"{"ok":true,"skipped":true}"#.into());
-                }
-                if let Some(dir) = target.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                let tmp = target.with_extension("part");
-                let result = (|| -> std::io::Result<u64> {
-                    let mut f = std::fs::File::create(&tmp)?;
-                    let n = std::io::copy(&mut req.as_reader().take(MAX_UPLOAD), &mut f)?;
-                    f.sync_all()?;
-                    Ok(n)
-                })();
-                match result {
-                    Ok(n) if n > 0 && std::fs::rename(&tmp, &target).is_ok() => {
-                        let _ = app.emit_to("main", "companion-cmd", r#"{"cmd":"reloadLibrary"}"#);
-                        respond(req, 200, format!(r#"{{"ok":true,"bytes":{n}}}"#));
-                    }
-                    _ => {
-                        let _ = std::fs::remove_file(&tmp);
-                        respond(req, 500, r#"{"error":"Speichern fehlgeschlagen"}"#.into());
-                    }
-                }
-            }
             _ => respond(req, 404, r#"{"error":"unbekannt"}"#.into()),
         }
     }
@@ -297,7 +167,6 @@ pub fn start(app: &AppHandle) -> Arc<Companion> {
         changed: Condvar::new(),
         pin: load_or_create_pin(app),
         last_seen: Mutex::new(None),
-        sync: Mutex::new((String::new(), String::from("[]"))),
     });
 
     // HTTP
