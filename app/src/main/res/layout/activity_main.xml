@@ -1,60 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg"
     android:fitsSystemWindows="true">
 
-    <!-- Selbst-Modus: hier läuft der Mixer (WebView), hinter der Oberfläche -->
-    <FrameLayout
-        android:id="@+id/engineHost"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
     <!-- ============================================================ Verbinden -->
     <ScrollView
         android:id="@+id/connectView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/bg">
+        android:layout_height="match_parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="20dp">
-
-            <!-- Modus: PC steuern oder Mixer auf dem Handy -->
-            <com.google.android.material.button.MaterialButtonToggleGroup
-                android:id="@+id/modeGroupA"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"
-                app:selectionRequired="true"
-                app:singleSelection="true">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/modeCompanionA"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:text="Companion (PC)"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/modeSelfA"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:text="Selbst (Handy)"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text" />
-            </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <TextView
                 android:layout_width="wrap_content"
@@ -132,7 +94,6 @@
         android:id="@+id/controlView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/bg"
         android:visibility="gone">
 
         <LinearLayout
@@ -140,36 +101,6 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="14dp">
-
-            <!-- Modus: PC steuern oder Mixer auf dem Handy -->
-            <com.google.android.material.button.MaterialButtonToggleGroup
-                android:id="@+id/modeGroupB"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"
-                app:selectionRequired="true"
-                app:singleSelection="true">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/modeCompanionB"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:text="Companion (PC)"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/modeSelfB"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:text="Selbst (Handy)"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text" />
-            </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -532,36 +463,6 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Abgleich mit dem PC -->
-            <LinearLayout
-                android:id="@+id/syncCard"
-                style="@style/Card"
-                android:layout_marginTop="10dp"
-                android:visibility="gone">
-
-                <TextView
-                    style="@style/Label"
-                    android:text="ABGLEICH MIT DEM PC" />
-
-                <TextView
-                    android:id="@+id/syncStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/muted"
-                    android:textSize="13sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSync"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="46dp"
-                    android:layout_marginTop="6dp"
-                    android:text="Jetzt abgleichen (Bewertungen + Tracks)"
-                    android:textAllCaps="false"
-                    android:textColor="@color/accent" />
-            </LinearLayout>
-
             <!-- Musikwunsch -->
             <LinearLayout
                 android:id="@+id/wishCard"
@@ -866,16 +767,4 @@
                 android:orientation="vertical" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
-    <!-- Selbst-Modus: aus der vollen Mixer-Ansicht zurück -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnMixerBack"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|end"
-        android:layout_margin="8dp"
-        android:backgroundTint="@color/accent"
-        android:text="✕ Zurück zur App"
-        android:textAllCaps="false"
-        android:textColor="@color/black"
-        android:visibility="gone" />
 </FrameLayout>

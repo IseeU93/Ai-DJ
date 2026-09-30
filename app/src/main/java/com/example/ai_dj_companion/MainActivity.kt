@@ -1,13 +1,6 @@
 package com.example.ai_dj_companion
 
 import android.Manifest
-import android.content.Intent
-import android.net.Uri
-import android.os.Environment
-import android.provider.Settings
-import android.view.WindowManager
-import androidx.activity.addCallback
-import com.google.android.material.button.MaterialButtonToggleGroup
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
@@ -31,11 +24,6 @@ class MainActivity : AppCompatActivity() {
     private val listener: () -> Unit = { render() }
     private var userDragsVolume = false
     private var wishSentAt = 0L
-    private var mixerVisible = false
-    private var syncedThisStart = false
-    private var engineTest = false
-    private var engineHadStorage = false
-    private var askedStorage = false
     private var suppressSwitch = false
 
     private val v by lazy { Views(this) }
@@ -56,33 +44,8 @@ class MainActivity : AppCompatActivity() {
         v.btnConnect.setOnClickListener { connectFromFields() }
         v.btnSearch.setOnClickListener { search() }
         v.btnDisconnect.setOnClickListener {
-            if (DjRepo.selfMode) {
-                showMixer(true)
-            } else {
-                DjService.stop(this)
-                showConnect(true)
-            }
-        }
-        v.btnMixerBack.setOnClickListener { showMixer(false) }
-        onBackPressedDispatcher.addCallback(this) {
-            if (mixerVisible) showMixer(false) else {
-                isEnabled = false
-                onBackPressedDispatcher.onBackPressed()
-                isEnabled = true
-            }
-        }
-        v.btnSync.setOnClickListener { SyncManager.start(this, "Knopf") }
-        // Modus-Umschalter (oben im Verbinden- und im Steuer-Bildschirm)
-        for ((group, self) in listOf(v.modeGroupA to R.id.modeSelfA, v.modeGroupB to R.id.modeSelfB)) {
-            group.addOnButtonCheckedListener { _: MaterialButtonToggleGroup, id: Int, checked: Boolean ->
-                if (!checked) return@addOnButtonCheckedListener
-                val m = if (id == self) "self" else "companion"
-                if (m != DjRepo.mode) {
-                    DjRepo.mode = m
-                    DjRepo.save(this)
-                    applyMode()
-                }
-            }
+            DjService.stop(this)
+            showConnect(true)
         }
 
         v.btnPlay.setOnClickListener { DjRepo.send("togglePlay") }
@@ -164,108 +127,12 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(s: SeekBar?) { userDragsVolume = false }
         })
 
-        // Test per adb: am start … --es mode self [--ez engineTest true]
-        intent?.getStringExtra("mode")?.let { if (it == "self" || it == "companion") DjRepo.mode = it }
-        engineTest = intent?.getBooleanExtra("engineTest", false) == true
-        applyMode()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // aus den Einstellungen zurück (Speicher-Zugriff erteilt?) -> Mixer starten
-        if (DjRepo.selfMode) {
-            val ok = hasStorage()
-            if (ok && (!SelfEngine.running || !engineHadStorage)) {
-                // Zugriff gerade erteilt: Mixer neu laden, damit er den Musik-Ordner lesen kann
-                SelfEngine.stop()
-                startEngine()
-            } else if (!ok && !askedStorage) {
-                askedStorage = true
-                askStorage()
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        if (isFinishing) SelfEngine.stop()
-        super.onDestroy()
-    }
-
-    // ------------------------------------------------------------ Modus
-
-    private fun syncToggles() {
-        val self = DjRepo.selfMode
-        v.modeGroupA.check(if (self) R.id.modeSelfA else R.id.modeCompanionA)
-        v.modeGroupB.check(if (self) R.id.modeSelfB else R.id.modeCompanionB)
-    }
-
-    /** Companion: PC steuern. Selbst: Mixer läuft auf dem Handy mit den Tracks in Musik/Automix. */
-    private fun applyMode() {
-        syncToggles()
-        if (DjRepo.selfMode) {
-            DjService.stop(this)
-            DjRepo.resetSession()
+        if (DjRepo.configured) {
+            DjService.start(this)
             showConnect(false)
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            if (hasStorage() || engineTest) startEngine() else askStorage()
         } else {
-            showMixer(false)
-            SelfEngine.stop()
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            DjRepo.resetSession()
-            if (DjRepo.configured) {
-                DjService.start(this)
-                showConnect(false)
-            } else {
-                showConnect(true)
-            }
+            showConnect(true)
         }
-        render()
-    }
-
-    private fun startEngine() {
-        engineHadStorage = hasStorage()
-        SelfEngine.start(this, v.engineHost)
-        // mit dem PC abgleichen, wenn er erreichbar ist (einmal pro Start)
-        if (!syncedThisStart && DjRepo.configured) {
-            syncedThisStart = true
-            SyncManager.start(this, "Selbst-Modus")
-        }
-    }
-
-    private fun hasStorage(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager()
-        else ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-
-    private fun askStorage() {
-        AlertDialog.Builder(this)
-            .setTitle("Zugriff auf deine Musik")
-            .setMessage("Im Selbst-Modus spielt der Mixer die Tracks aus „Musik/Automix“ auf diesem Handy. Dafür braucht die App Zugriff auf Dateien (auch zum Abgleich mit dem PC). Bitte im nächsten Bildschirm erlauben.")
-            .setPositiveButton("Erlauben") { _, _ ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    try {
-                        startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
-                    } catch (_: Exception) {
-                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                    }
-                } else {
-                    requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
-                }
-            }
-            .setNegativeButton("Zurück zum PC") { _, _ ->
-                DjRepo.mode = "companion"
-                DjRepo.save(this)
-                applyMode()
-            }
-            .show()
-    }
-
-    /** Volle Mixer-Oberfläche (wie am PC) anzeigen – z. B. für die Bibliothek. */
-    private fun showMixer(on: Boolean) {
-        mixerVisible = on && SelfEngine.running
-        v.controlView.visibility = if (mixerVisible || v.connectView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        v.btnMixerBack.visibility = if (mixerVisible) View.VISIBLE else View.GONE
-        if (!mixerVisible && v.connectView.visibility != View.VISIBLE) v.controlView.visibility = View.VISIBLE
     }
 
     override fun onStart() {
@@ -372,21 +239,8 @@ class MainActivity : AppCompatActivity() {
             status("PIN falsch – bitte im Mixer unter „Handy“ nachsehen")
             return
         }
-        v.connDot.text = when {
-            DjRepo.selfMode && DjRepo.connected -> "● Selbst-Modus · Musik aus „Musik/Automix“"
-            DjRepo.selfMode -> "○ ${DjRepo.error ?: "Mixer startet …"}"
-            DjRepo.connected -> "● verbunden mit ${DjRepo.host}"
-            else -> "○ ${DjRepo.error ?: "verbinde …"}"
-        }
+        v.connDot.text = if (DjRepo.connected) "● verbunden mit ${DjRepo.host}" else "○ ${DjRepo.error ?: "verbinde …"}"
         v.connDot.setTextColor(getColor(if (DjRepo.connected) R.color.ok else R.color.warn))
-        v.btnDisconnect.text = if (DjRepo.selfMode) "Mixer-Ansicht" else "Trennen"
-        v.syncCard.visibility = if (DjRepo.configured) View.VISIBLE else View.GONE
-        v.syncStatus.text = SyncManager.status.ifBlank {
-            if (DjRepo.selfMode) "Bewertungen und Tracks werden mit dem PC (${DjRepo.host}) abgeglichen, sobald er erreichbar ist."
-            else "Beim Verbinden werden Bewertungen und Tracks automatisch abgeglichen."
-        }
-        v.btnSync.isEnabled = !SyncManager.running
-        v.btnSync.text = if (SyncManager.running) "Gleiche ab …" else "Jetzt abgleichen (Bewertungen + Tracks)"
         val s = DjRepo.state ?: return
 
         val now = s.optJSONObject("now")
@@ -668,13 +522,6 @@ class MainActivity : AppCompatActivity() {
         val btnReorder: TextView = a.findViewById(R.id.btnReorder)
         val btnReshuffle: TextView = a.findViewById(R.id.btnReshuffle)
         val queueList: LinearLayout = a.findViewById(R.id.queueList)
-        val engineHost: android.widget.FrameLayout = a.findViewById(R.id.engineHost)
-        val modeGroupA: MaterialButtonToggleGroup = a.findViewById(R.id.modeGroupA)
-        val modeGroupB: MaterialButtonToggleGroup = a.findViewById(R.id.modeGroupB)
-        val syncCard: View = a.findViewById(R.id.syncCard)
-        val syncStatus: TextView = a.findViewById(R.id.syncStatus)
-        val btnSync: MaterialButton = a.findViewById(R.id.btnSync)
-        val btnMixerBack: MaterialButton = a.findViewById(R.id.btnMixerBack)
         val wishCard: View = a.findViewById(R.id.wishCard)
         val wishInput: EditText = a.findViewById(R.id.wishInput)
         val wishSend: MaterialButton = a.findViewById(R.id.wishSend)

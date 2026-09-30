@@ -45,11 +45,8 @@ class DjService : Service() {
         var backoff = 1000L
         while (running) {
             try {
-                val wasConnected = DjRepo.connected
                 val events = DjRepo.pollOnce(25)
                 backoff = 1000L
-                // frisch verbunden: Bewertungen und Tracks mit dem Handy abgleichen
-                if (!wasConnected && DjRepo.connected) SyncManager.start(this, "verbunden")
                 for (e in events) handleEvent(e)
                 updateOngoing()
             } catch (e: Exception) {
@@ -66,7 +63,23 @@ class DjService : Service() {
         }
     }
 
-    private fun handleEvent(e: org.json.JSONObject) = notifyEvent(this, e)
+    private fun handleEvent(e: org.json.JSONObject) {
+        when (e.optString("type")) {
+            "playlistLow" -> {
+                val text = e.optString("text", "Playlist fast vorbei")
+                val n = NotificationCompat.Builder(this, CH_ALERT)
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setContentTitle("AI-DJ: Playlist fast vorbei")
+                    .setContentText(text)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setAutoCancel(true)
+                    .setContentIntent(openApp())
+                    .build()
+                notifySafe(ALERT_ID + e.optInt("remaining", 0), n)
+            }
+        }
+    }
 
     private fun updateOngoing() {
         val s = DjRepo.state
@@ -125,7 +138,7 @@ class DjService : Service() {
 
     companion object {
         const val ACTION_STOP = "stop"
-        const val CH_ONGOING = "verbindung"
+        private const val CH_ONGOING = "verbindung"
         private const val CH_ALERT = "warnung"
         private const val ONGOING_ID = 1
         private const val ALERT_ID = 100
@@ -139,31 +152,6 @@ class DjService : Service() {
                     enableVibration(true)
                 },
             )
-        }
-
-        /** Ereignis vom Mixer (PC oder Handy) als Benachrichtigung, z. B. "Playlist fast vorbei". */
-        fun notifyEvent(ctx: Context, e: org.json.JSONObject) {
-            when (e.optString("type")) {
-                "playlistLow" -> {
-                    createChannels(ctx)
-                    val open = PendingIntent.getActivity(
-                        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE,
-                    )
-                    val n = NotificationCompat.Builder(ctx, CH_ALERT)
-                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                        .setContentTitle("AI-DJ: Playlist fast vorbei")
-                        .setContentText(e.optString("text", "Playlist fast vorbei"))
-                        .setPriority(NotificationCompat.PRIORITY_HIGH)
-                        .setCategory(NotificationCompat.CATEGORY_ALARM)
-                        .setAutoCancel(true)
-                        .setContentIntent(open)
-                        .build()
-                    try {
-                        (ctx.getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(ALERT_ID + e.optInt("remaining", 0), n)
-                    } catch (_: SecurityException) {
-                    }
-                }
-            }
         }
 
         fun start(ctx: Context) {
