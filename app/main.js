@@ -596,7 +596,7 @@ Online: ${[t.webInfo.itunes, ...(t.webInfo.tags || []).slice(0, 4).map((x) => x.
       const label = document.createElement('span');
       label.className = 'trans-fixed';
       label.textContent = preview?.label ?? '';
-      label.title = preview?.reason || '';
+      label.title = [preview?.label, preview?.reason].filter(Boolean).join('\n');
       trans.appendChild(label);
     }
 

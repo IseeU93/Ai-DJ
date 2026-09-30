@@ -312,7 +312,8 @@ select.sel:disabled { opacity: 0.5; }
 .qrow.drop-before { box-shadow: inset 0 2px 0 var(--text); }
 .qrow select.sel { height: 24px; font-size: 12px; width: 100%; }
 .qrow .genre select.sel { color: var(--muted); }
-.qrow .trans-fixed { color: var(--muted); font-size: 12px; }
+.qrow .trans { min-width: 0; overflow: hidden; }
+.qrow .trans-fixed { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .removed { padding: 8px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
 .removed button { margin-left: 6px; }

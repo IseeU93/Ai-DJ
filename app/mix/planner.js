@@ -85,7 +85,7 @@ export function localBpm(a, bar) {
 // ------------------------------------------------------------------ Track-Ansicht
 
 /** Lesehilfen auf die Analyse eines Tracks (pro Takt). */
-class TrackView {
+export class TrackView {
   constructor(a) {
     this.a = a;
     this.end = a.points.lastBar + 1;
@@ -112,6 +112,24 @@ class TrackView {
     return v === undefined ? null : v;
   }
   get hasBeats() { return !!this.a.vocalBeats; }
+
+  /**
+   * Ohne Songtext-Scan schätzt die Gesangserkennung manche Songs durchgehend als "singt" (dichte
+   * Synths, Chor-Pads). Dann zählt als Zeile nur, was über dem üblichen Pegel des Songs liegt:
+   * Zuschlag auf die Gesangs-Schwellen (0 bei normalen Songs).
+   */
+  get vocalBase() {
+    if (this._vocalBase === undefined) {
+      const xs = [];
+      for (let b = Math.floor(this.end * 0.45); b < this.end; b++) xs.push(this.vocal(b));
+      xs.sort((x, y) => x - y);
+      const med = xs.length ? xs[xs.length >> 1] : 0;
+      // (klebt die Kurve fast überall am Anschlag, trägt sie keine Zeilen-Information mehr –
+      // Zeilengrenzen sind dann nicht erkennbar, gewechselt wird auf der Phrase)
+      this._vocalBase = this.hasBeats ? 0 : med >= 0.97 ? 0.65 : Math.max(0, Math.min(0.6, med - 0.3));
+    }
+    return this._vocalBase;
+  }
   drums(bar) { return this._at(this.a.barDrums, bar, 0.5); }
   bass(bar) { return this._at(this.a.barBass, bar, -6); }
   energy(bar) { return this._at(this.a.barEnergy, bar, -6); }
@@ -243,7 +261,7 @@ function outBarAt(ctx, t) {
  * neuen Tracks abgesenkt, danach der des alten.
  */
 // ab hier gilt ein Takt als "singt" (wie im Selbstcheck – sonst hört man zwei Stimmen, die der Schutz übersieht)
-const VOICE = 0.35;
+const VOICE = 0.3;
 
 function vocalGuard(ctx, steps, L, sw) {
   const { va, vb, m } = ctx;
@@ -357,7 +375,7 @@ function lastExit(va) {
 function lineSafe(va, bar) {
   // in diesem Takt wird nicht gesungen (auch nicht leise) und im nächsten beginnt keine neue Zeile –
   // das Ausblenden dauert etwa einen Takt, sonst würde die nächste Passage angeschnitten
-  if (va.vocal(bar) < 0.35 && va.vocal(bar + 1) < 0.5) return true;
+  if (va.vocal(bar) < 0.35 + va.vocalBase && va.vocal(bar + 1) < 0.5 + va.vocalBase) return true;
   // Mit Songtext-Scan genauer: die Zeile endet vor der Eins (letzter Schlag davor frei) und die
   // nächste beginnt frühestens auf Schlag 3 – dort atmet der Song, ein Ausstieg schneidet nichts ab
   if (!va.hasBeats) return false;
@@ -374,7 +392,8 @@ function safeExit(va, bar, maxLater = 8) {
   const last = va.a.points.lastBar ?? va.end - 1;
   // 1. nächste Phrasengrenze (4er-Raster) ohne Gesang – kurz danach, notfalls 16 Takte früher
   for (let d = 4; d <= maxLater; d += 4) if (bar + d <= last && lineSafe(va, bar + d)) return bar + d;
-  for (let d = 4; d <= 16; d += 4) if (bar - d > 0 && lineSafe(va, bar - d)) return bar - d;
+  // (früher nur, solange der Song danach nicht vor seiner Hälfte endet)
+  for (let d = 4; d <= 16; d += 4) if (bar - d > 0 && (d <= 4 || bar - d >= va.end * 0.45) && lineSafe(va, bar - d)) return bar - d;
   // 2. Gesang bis kurz vor Schluss: auf dem Raster nach der letzten Zeile (auch im Ausklingen)
   for (let d = maxLater + 4; bar + d <= last; d += 4) if (lineSafe(va, bar + d)) return bar + d;
   // 3. notfalls der erste Takt nach der Zeile
@@ -420,6 +439,13 @@ function choosePoints(ctx, lengths, allowFull = false) {
   const E = va.end;
   const drops = a.points.drops?.length ? a.points.drops : [a.points.dropBar];
   const arrivals = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).slice(0, 2);
+  // Liegt der erste Drop ganz am Anfang (kein Vorlauf) oder erst weit hinten, zusätzlich an einer
+  // frühen Phrasengrenze ankommen – sonst würde der neue Song zur Hälfte übersprungen
+  const st = b.points.startBar ?? 0;
+  for (const k of [16, 32]) {
+    const ar = vb.grid(st + k * m, 4);
+    if (ar < vb.end * 0.4 && !arrivals.includes(ar)) arrivals.push(ar);
+  }
   const earliest = ctx.earliestBar !== null ? ctx.earliestBar : 0;
   const minOut = Math.max(va.grid(earliest, 4), va.grid(E * 0.45, 4), Math.min(va.grid(ctx.minExit ?? 0, 4), va.grid(E - 8, 4, 'floor')));
   let lastMainEnd = 0;
@@ -486,6 +512,8 @@ function choosePoints(ctx, lengths, allowFull = false) {
         if (outEnd > E) sc -= 0.25 + (outEnd - E) * 0.03; // bräuchte Loop-Verlängerung
         // neuer Track: lieber zum ersten Drop ankommen
         if (arrival !== arrivals[0]) sc -= 0.35;
+        // … aber nicht so spät, dass vom neuen Song kaum etwas übrig bleibt
+        sc -= Math.max(0, inBar / vb.end - 0.3) * 4;
         // während des Überlappens soll der neue Track noch "aufbauen" (kein Hauptteil)
         let inMain = 0;
         for (let t = 0; t < L; t++) if (vb.label(inBar + t * m) === 'main') inMain++;
@@ -738,7 +766,7 @@ function composeRamp(ctx) {
   const { va, vb, b, rel, masterBpm } = ctx;
   if (ctx.instant || rel.m !== 1) return null;
   const r = b.bpm / masterBpm; // Zieltempo des alten Tracks (relativ)
-  if (Math.abs(r - 1) <= BEATMATCH_LIMIT || Math.abs(r - 1) > 0.13) return null;
+  if (rel.diff <= BEATMATCH_LIMIT || Math.abs(r - 1) > 0.13) return null;
   const K = 8; // Takte des alten Tracks, über die das Tempo gleitet
   const R = (2 * K) / (1 + r); // Dauer der Rampe in Takten des Anfangstempos (linear -> endet auf der Eins)
   const L = 8; // Blend nach der Rampe (Takte im neuen Tempo)
@@ -766,6 +794,14 @@ function composeRamp(ctx) {
     p(A(6), 'out', 'fader', 0, A(L) - A(6)),
     act(A(L), 'out', 'stop'),
   ];
+  // singt der alte im Blend noch (einzelne Zeilen), bleibt die Stimme des neuen bis danach zurückgenommen
+  let jLast = -1;
+  for (let j = 0; j < L; j++) if (va.vocalSmooth(start + K + j) >= VOICE - 0.05) jLast = j;
+  if (jLast >= 0) {
+    const open = Math.min(A(L) - 0.5, A(jLast + 1));
+    steps.push(p(A(0), 'in', 'vocal', 1), p(open, 'in', 'vocal', 0, 0.5));
+    ctx.notes.push('Stimme des neuen Tracks zurückgenommen, bis der alte seine Zeile zu Ende gesungen hat');
+  }
   const pct = Math.round((r - 1) * 100);
   ctx.notes.unshift(
     `Tempo-Rampe: der alte Track gleitet über ${K} Takte ${pct > 0 ? '+' : ''}${pct} % auf ${b.bpm.toFixed(0)} BPM`,
@@ -797,6 +833,8 @@ function composeBreakdown(ctx) {
   let L = 8;
   for (const len of [8, 4]) {
     for (let x = va.grid(E - len, 4, 'floor'); x >= from; x -= 4) {
+      // (nicht vor der Mindest-Spielzeit – sonst wäre der Song nach einer halben Minute wieder weg)
+      if (ctx.minExit != null && x + len / 2 < ctx.minExit - 0.5) break;
       if (calmAt(x, len)) {
         bar = x;
         break;
@@ -844,12 +882,19 @@ function composeEndFade(ctx) {
   if (len < 1.5) return null;
   ctx.outBar = outBar;
   ctx.inBar = b.points.startBar ?? 0;
+  // Bass-Tausch auf der Eins (4er-Raster des alten), wenn eine im mittleren Teil liegt
+  let tSw = len * 0.5;
+  for (let t = Math.ceil(len * 0.3); t <= len * 0.8; t++) if (va.grid(outBar + t, 4, 'round') === outBar + t) { tSw = t; break; }
+  // singt der alte bis kurz vor Schluss, bleibt er offen, bis die letzte Zeile zu Ende ist
+  const vEnd = (va.a.points.vocalLast ?? -1) + 1 - outBar;
+  const hold = vEnd > 0 ? Math.min(len - 0.75, vEnd) : 0;
   const steps = [
     p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.45), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1),
     act(0, 'in', 'play'),
     p(0, 'in', 'fader', 0.9, len * 0.8), p(len * 0.2, 'in', 'filter', 0, len * 0.6),
-    p(0, 'out', 'fader', 0, len), p(len * 0.3, 'out', 'low', KILL, len * 0.4),
-    p(len * 0.5, 'in', 'low', 0, len * 0.4), p(len * 0.6, 'in', 'vocal', 0, len * 0.4),
+    ...(hold > 0 ? [p(hold, 'out', 'fader', 0, len - hold)] : [p(0, 'out', 'fader', 0, len)]),
+    p(Math.max(0, tSw - 0.5), 'out', 'low', KILL, 0.5),
+    p(tSw, 'in', 'low', 0, 0.25), p(Math.max(tSw, hold), 'in', 'vocal', 0, 0.5),
     p(len - 0.5, 'in', 'fader', 1, 0.5),
     act(len, 'out', 'stop'),
   ];
@@ -882,16 +927,30 @@ function composeBlend(ctx) {
     ctx.outBar = exitBar(ctx, L);
     ctx.inBar = Math.max(inStart, Math.round(inDrop - L * m));
   }
+  const L0 = L;
   L = extendWithLoop(ctx, steps, L);
+  // Übergang verkürzt (altes Outro zu kurz): der neue steigt entsprechend später ein, damit er am
+  // Ende dort steht, wo es geplant war (z. B. Drop-Swap) – nicht mitten in seinem leisen Intro
+  if (L < L0) ctx.inBar += Math.round((L0 - L) * m);
 
   // Bass-Swap dort, wo der Bass des neuen Tracks einsetzt – sonst auf der Phrasenmitte
   const entry = vb.bassEntry(ctx.inBar, ctx.inBar + L * m);
   const entryT = entry === null ? null : (entry - ctx.inBar) / m;
   let sw = L / 2;
   if (entryT !== null && entryT >= L * 0.25 && entryT <= L * 0.75) sw = L >= 8 ? r4(entryT) : entryT;
+  // kommt sein Bass erst am Ende (leises Intro bis kurz vor dem Drop), trägt der alte bis dahin:
+  // Tausch am Ende des Blends statt Bass-Übergabe an ein Intro, das noch keinen hat
+  else if (entryT !== null && entryT > L * 0.75) sw = L;
   // kurzer Blend (4 Takte): Tausch auf der nächsten Phrasengrenze, nicht mitten drin auf Takt 2
   if (L < 8) sw = L;
   sw = Math.min(L, sw);
+  // (liegt der neue beim Tausch gerade in einem leisen Moment, übernähme er den Raum nicht – dann auf
+  // eine andere 4er-Grenze, an der er trägt)
+  const inE = (t) => vb.mean(vb.energy, ctx.inBar + t * m, ctx.inBar + (t + 2) * m);
+  if (L >= 8 && sw < L && inE(sw) < -8) {
+    const alt = [4, 8, 12, 16, 20, 24, 28].filter((t) => t < L && t !== sw && inE(t) >= -6).sort((x, y) => Math.abs(x - sw) - Math.abs(y - sw))[0];
+    if (alt !== undefined) sw = alt;
+  }
   const inDrums = vb.mean(vb.drums, ctx.inBar, ctx.inBar + L * m);
   const outHasBass = va.mean(va.bass, outBarAt(ctx, sw), outBarAt(ctx, sw) + 4) > -14
     || va.mean(va.drums, outBarAt(ctx, sw), outBarAt(ctx, sw) + 4) > 0.3;
@@ -917,19 +976,28 @@ function composeBlend(ctx) {
   steps.push(p(midStart, 'in', 'mid', clash ? -4 : -1, Math.max(0.5, sw - midStart)));
   // Bass-Swap: kurz (1 Beat bis ½ Takt), damit sich die Bässe nicht vermatschen
   const swapDur = inDrums > 0.4 ? ctx.profile.swap : Math.max(0.5, ctx.profile.swap);
-  if (outHasBass) steps.push(p(sw, 'out', 'low', KILL, swapDur));
-  steps.push(p(sw, 'in', 'low', 0, swapDur));
+  // (ist der neue genau auf dem Tausch-Takt leise – Atempause vor seinem Drop –, behält der alte noch
+  // einen Takt halben Bass, sonst sackt alles zusammen)
+  const inDip = vb.energy(Math.floor(ctx.inBar + sw * m)) < -8 && sw + 1 < L;
+  if (outHasBass && inDip) steps.push(p(sw, 'out', 'low', -12.5, swapDur), p(sw + 1, 'out', 'low', KILL, 0.25));
+  else if (outHasBass) steps.push(p(sw, 'out', 'low', KILL, swapDur));
+  // (Tausch am Ende: der alte ist zur Eins schlagartig weg – der neue muss dann schon voll offen sein,
+  // sonst fehlen einen halben Takt lang Bass und Mitten)
+  const endSwap = sw >= L;
+  steps.push(endSwap ? p(L - 0.1, 'in', 'low', 0, 0.1) : p(sw, 'in', 'low', 0, swapDur));
   // Tausch am Ende (kurzer Blend): der neue ist zur Eins schon voll da, sonst fehlt kurz die Kick
   if (sw >= L) steps.push(p(L - 0.5, 'in', 'fader', 1, 0.5));
-  else steps.push(p(sw, 'in', 'fader', 1, Math.max(0.5, Math.min(2, q / 2))));
-  steps.push(p(sw + 0.5, 'in', 'high', 0, Math.max(0.5, q / 2)));
+  // (lief der neue stark abgesenkt, kommt er beim Tausch schneller hoch – der alte verliert ja gerade
+  // seinen Bass, sonst sackt der Pegel für einen Takt ab)
+  else steps.push(p(sw, 'in', 'fader', 1, inTarget < 0.6 && outHasBass ? 0.5 : Math.max(0.5, Math.min(2, q / 2))));
+  steps.push(endSwap ? p(L - 0.5, 'in', 'high', 0, 0.5) : p(sw + 0.5, 'in', 'high', 0, Math.max(0.5, q / 2)));
   // Singt der alte Track noch, bleiben Mitten/Lautstärke bis zum Ende seiner Zeile stehen
   let vEnd = -1;
   for (let t = 0; t < L; t++) if (va.vocalSmooth(outBarAt(ctx, t)) >= 0.45) vEnd = t;
   const holdUntil = Math.min(L - 0.5, Math.max(sw + 0.5, vEnd + 1));
   if (vEnd >= sw) ctx.notes.push(`alter Track singt seine Zeile bis Takt ${vEnd + 1} zu Ende, erst dann raus`);
   steps.push(p(holdUntil, 'out', 'mid', clash ? -14 : -9, Math.max(0.5, (L - holdUntil) * 0.6)));
-  steps.push(p(sw + Math.max(1, q / 2), 'in', 'mid', 0, Math.max(0.5, q / 2)));
+  steps.push(endSwap ? p(L - 0.5, 'in', 'mid', 0, 0.5) : p(sw + Math.max(1, q / 2), 'in', 'mid', 0, Math.max(0.5, q / 2)));
   steps.push(p(Math.max(holdUntil, L - q * 1.5), 'out', 'high', -14, Math.max(0.5, Math.min(q, L - Math.max(holdUntil, L - q * 1.5)))));
   const fadeFrom = Math.min(L - (sw >= L ? 0.25 : 0.5), Math.max(holdUntil, sw + 1, L - q * 1.25));
   applyFlavors(ctx, steps, { L, sw, q, fadeFrom });
@@ -1029,18 +1097,27 @@ function composeVocal(ctx) {
   }
   const inRun = vb.vocalRuns(8)[0];
   if (!inRun) return null;
+  // (liegt die erste lange Gesangsstrecke erst weit hinten, würde der halbe Song übersprungen)
+  if (inRun.from > vb.end * 0.35) return null;
   const vIn = vb.grid(inRun.from, 4, 'floor');
   ctx.outBar = outFrom;
   ctx.inBar = Math.max(b.points.startBar, Math.round(vIn - pre * m));
+  // (am Songanfang abgeschnitten: der Wechsel läge dann neben seiner Phrase – auf die nächste Eins)
+  if (vIn - pre * m < b.points.startBar) ctx.inBar = Math.max(b.points.startBar, Math.round(vb.grid(ctx.inBar + pre * m, 4, 'ceil') - pre * m));
 
   // Wechsel so oft, wie beide Stimmen haben (max. 4), Ende immer beim neuen Track
   const singers = [];
   // Wechsel nur vor dem ersten Drop des neuen Tracks (danach laufen nie zwei Tracks im Drop)
   const inNextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > ctx.inBar);
-  const limit = inNextDrop === undefined ? Infinity : (inNextDrop - ctx.inBar) / m;
+  // (hat er davor einen Build-up, ist der alte schon zu dessen Beginn weg – wie im Planer oben)
+  const inBuild = inNextDrop === undefined ? null : b.phrases.find((ph) => ph.label === 'build' && ph.bar + ph.bars === inNextDrop && ph.bar > ctx.inBar);
+  const limitBar = inBuild && (inBuild.bar - ctx.inBar) / m >= 4 ? inBuild.bar : inNextDrop;
+  const limit = limitBar === undefined ? Infinity : (limitBar - ctx.inBar) / m;
   for (let j = 0; j < 4; j++) {
     const t = pre + j * u;
     if (t + u > limit) break;
+    // (der alte muss den Wechsel noch tragen: kein Umschalten erst, wenn sein Song schon aus ist)
+    if (outFrom + t + u > va.end) break;
     const who = j % 2 === 0 ? 'in' : 'out';
     const has = who === 'in'
       ? vb.mean(vb.vocal, ctx.inBar + t * m, ctx.inBar + (t + u) * m) >= 0.3
@@ -1061,6 +1138,7 @@ function composeVocal(ctx) {
     steps.push(p(t, who === 'in' ? 'out' : 'in', 'vocal', 1, 0.5));
   });
   const sw = singers.length > 2 ? pre + 2 * u : pre;
+  ctx.swapAt = sw; // (bis dahin trägt der alte Bass und Beat – er spielt noch)
   steps.push(p(sw, 'out', 'low', KILL, 1), p(sw, 'in', 'low', 0, 1), p(sw, 'in', 'fader', 1, 1));
   steps.push(p(L - u, 'out', 'high', -8, u - 1));
   steps.push(p(L - u, 'out', 'fader', 0, u));
@@ -1095,7 +1173,11 @@ function composeFilter(ctx) {
   // mitten im Übergang eine Pause – beide müssen zusammen immer den Raum füllen)
   const depth = down ? -0.45 : 0.3 + Math.min(0.1, Math.max(0, (ctx.a.brightness ?? 0) + 12) / 96);
   // Bass-Wechsel auf einer 4-Takt-Grenze (vorher landete er bei 8 Takten auf Takt 7 – mitten in der Phrase)
-  const sw = L >= 16 ? L - 4 : L >= 8 ? 4 : L;
+  let sw = L >= 16 ? L - 4 : L >= 8 ? 4 : L;
+  // (läuft der neue in halbem Tempo, liegt Takt 4 des alten mitten in seiner Phrase – dann auf die
+  // nächste gemeinsame 4er-Grenze)
+  const inOnGrid = (t) => { const ib = ctx.inBar + t * m; return Math.abs(ib - vb.grid(ib, 4, 'round')) < 0.3; };
+  if (!inOnGrid(sw)) for (let t = sw + 4; t <= L; t += 4) if (inOnGrid(t)) { sw = t; break; }
 
   // Neuer Track: leise und im Tiefpass rein, Filter ist vor dem Bass-Tausch offen und er hat Lautstärke
   steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.8), p(0, 'in', 'low', KILL));
@@ -1105,10 +1187,16 @@ function composeFilter(ctx) {
   steps.push(p(L * 0.05, 'in', 'filter', 0, Math.max(1, Math.min(L * 0.5, sw - 0.5))));
   // Bass tauschen: der neue Bass kommt zuerst, der alte geht einen Takt später – so ist immer Bass da
   const swapDur = Math.min(1, Math.max(0.5, L / 4));
-  steps.push(p(sw, 'in', 'low', 0, swapDur), p(sw + swapDur * 0.5, 'out', 'low', KILL, swapDur));
-  // alter Track bleibt voll, bis der neue Bass steht, und geht dann über die Restzeit
-  const fadeFrom = Math.min(sw + swapDur, L - 1);
-  steps.push(p(fadeFrom, 'out', 'fader', 0, L - fadeFrom));
+  if (sw >= L) {
+    // Tausch genau am Ende (kurzer Filter-Blend): der neue Bass steht auf der Eins, der alte bleibt
+    // bis kurz davor voll – sonst fällt der Pegel vor der Eins ins Loch
+    steps.push(p(L - 0.25, 'in', 'low', 0, 0.25), p(L - 0.25, 'out', 'fader', 0, 0.25));
+  } else {
+    steps.push(p(sw, 'in', 'low', 0, swapDur), p(sw + swapDur * 0.5, 'out', 'low', KILL, swapDur));
+    // alter Track bleibt voll, bis der neue Bass steht, und geht dann über die Restzeit
+    const fadeFrom = Math.min(sw + swapDur, L - 1);
+    steps.push(p(fadeFrom, 'out', 'fader', 0, L - fadeFrom));
+  }
   steps.push(act(L, 'out', 'stop'));
   vocalGuard(ctx, steps, L, sw);
   ctx.notes.unshift(
@@ -1136,6 +1224,12 @@ function composeCut(ctx) {
   if (!ctx.instant) {
     steps.push(p(-4, 'out', 'filter', 0.45, 3.75), p(-2, 'out', 'low', -10, 1.75), p(-0.25, 'out', 'echo', 0.4, 0.25), p(-0.5, 'out', 'reverb', 0.5, 0.5));
     ctx.notes.unshift('4 Takte wird der alte Track dünner, sein letzter Schlag verhallt – dann der Drop des neuen');
+    // (singt der Drop sofort, schwillt die Stimme ab dem zweiten Schlag über einen Takt an – der Beat
+    // knallt, die Zeile nicht)
+    if (ctx.vb.vocal(ctx.inBar) >= 0.3) {
+      steps.push(p(0, 'in', 'vocal', 1), p(0.5, 'in', 'vocal', 0, 1));
+      ctx.notes.push('Stimme im Drop kommt über einen Takt hoch');
+    }
   } else {
     ctx.notes.unshift('Wechsel auf dem Takt in den Drop');
   }
@@ -1201,7 +1295,13 @@ function realDrop(v, t) {
   const drops = t.points.drops?.length ? t.points.drops : [t.points.dropBar];
   for (const d of drops) {
     if (d === undefined || d === null) continue;
-    if (v.label(d) === 'main' && v.mean(v.drums, d, d + 4) >= 0.55 && v.mean(v.energy, d, d + 8) > -3) return d;
+    // (ein Drop weit hinten im Song hieße, den halben neuen Song zu überspringen)
+    if (d !== drops[0] && d > v.end * 0.4) break;
+    // (die Analyse setzt den Drop manchmal eine Phrase zu früh an – dann zählt die Phrase danach,
+    // statt gleich in den letzten Drop des Songs zu springen)
+    for (const x of [d, d + 4]) {
+      if (v.label(x) === 'main' && v.mean(v.drums, x, x + 4) >= 0.55 && v.mean(v.energy, x, x + 8) > -3) return x;
+    }
   }
   return null;
 }
@@ -1225,7 +1325,8 @@ function softVocalEntry(ctx, steps, dur) {
   }
   steps.push(
     p(0, 'in', 'filter', -0.6), p(0.25, 'in', 'filter', 0, 1.75),
-    p(0, 'in', 'fader', 0.8, 1.75), p(1.75, 'in', 'fader', 1, 0.5),
+    // (Pegel schneller oben als der Filter offen – die Stimme kommt trotzdem weich, aber ohne Delle)
+    p(0, 'in', 'fader', 0.8, 1.5), p(1.5, 'in', 'fader', 1, 0.5),
   );
   ctx.notes.push('neuer Song singt sofort – er kommt über zwei Takte weich aus dem Tiefpass hoch, statt hart auf die Eins zu knallen');
 }
@@ -1238,9 +1339,16 @@ function softVocalEntry(ctx, steps, dur) {
 function kurzBlend(ctx, nextLine = false) {
   ctx.forceBeatmatch = true;
   ctx.label = 'Kurz-Blend';
+  // beide laufen ein paar Takte synchron – der neue muss auf seiner Phrasengrenze starten, sonst
+  // liegen seine Phrasen versetzt zu denen des alten (kurzes Intro ohne Gesang wird übersprungen)
+  const onGrid = ctx.vb.grid(ctx.inBar, 4, 'ceil');
+  if (onGrid !== ctx.inBar && onGrid - ctx.inBar < 4 && ctx.vb.mean(ctx.vb.vocalSmooth, ctx.inBar, onGrid) < 0.3) ctx.inBar = onGrid;
   const hard = ctx.profile.hard;
   const f = FEEL[ctx.feel]?.fade ?? 1;
-  const out = (nextLine ? 0.75 : hard ? 1.25 : 1.75) * f;
+  // (liegt der Einstieg neben der Phrase – Auftakt-Gesang –, ist der alte nach knapp zwei Takten weg,
+  // bevor die versetzten Phrasen hörbar werden)
+  const offGrid = ctx.vb.grid(ctx.inBar, 4, 'ceil') !== ctx.inBar;
+  const out = Math.min(offGrid ? 1.75 : Infinity, (nextLine ? 0.75 : hard ? 1.25 : 1.75) * f);
   const swap = hard ? 0.25 : 0.5;
   const steps = [
     p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1), act(0, 'in', 'play'),
@@ -1290,6 +1398,9 @@ function composeSongCut(ctx) {
   const start = b.points.startBar ?? 0;
   const firstLine = b.points.vocalFirst ?? start;
   ctx.inBar = firstLine - start > 8 ? vb.grid(firstLine - 4, 4, 'floor') : start;
+  // (singt er erst nach seinem ersten Drop, nicht den halben Song überspringen – dann vor dem Drop rein)
+  const firstDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d >= start + 4);
+  if (firstDrop !== undefined && ctx.inBar > firstDrop) ctx.inBar = Math.max(start, vb.grid(firstDrop - 8, 4, 'floor'));
   const beatless = vb.mean(vb.drums, ctx.inBar, ctx.inBar + 2) < 0.3;
   // beginnt im alten Track gleich nach der Eins schon die nächste Zeile, schneller weg
   const va = ctx.va;
@@ -1325,7 +1436,11 @@ function composeEcho(ctx) {
     if (r) return r;
   }
   if (ctx.earliestBar !== null) ctx.outBar = safeExit(va, afterFullEnergy(va, cutPoint(ctx)));
-  else ctx.outBar = outroStart(va) ?? safeExit(va, va.grid(va.end - 8, 8, 'floor'));
+  else {
+    // (ein "Outro", das vor der Hälfte beginnt, ist eine Fehlerkennung – z. B. ein früher Break)
+    const outro = outroStart(va);
+    ctx.outBar = outro !== null && outro !== undefined && outro >= va.end * 0.45 ? outro : safeExit(va, va.grid(va.end - 8, 8, 'floor'));
+  }
   ctx.outBar = Math.min(ctx.outBar, lastExit(va));
   ctx.inBar = b.points.startBar;
   // gleiches Tempo: statt Echo mit Loch ein kurzer Blend im Takt
@@ -1345,7 +1460,11 @@ function composeEcho(ctx) {
     steps.push(p(0, 'in', 'fader', 0), p(start, 'in', 'fader', 1, 0.25));
     steps.push(p(0.5, 'out', 'echo', 0), act(start, 'in', 'play'), act(1, 'out', 'stop'));
   } else {
-    steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'filter', -0.6), p(0.25, 'in', 'filter', 0, 1.75), p(0, 'in', 'fader', 1, beatless ? 1 : 1.5));
+    steps.push(p(0, 'in', 'fader', 0));
+    // (singt der neue sofort, kommt seine Stimme langsamer aus dem Tiefpass – sonst knallt sie rein)
+    const sings = vb.vocal(ctx.inBar) >= 0.3 || vb.vocal(ctx.inBar + 1) >= 0.4;
+    if (sings) softVocalEntry(ctx, steps, 1.5);
+    else steps.push(p(0, 'in', 'filter', -0.6), p(0.25, 'in', 'filter', 0, 1.75), p(0, 'in', 'fader', 1, beatless ? 1 : 1.5));
     steps.push(p(1.5, 'out', 'echo', 0, 0.25), act(0, 'in', 'play'), act(2, 'out', 'stop'));
   }
   ctx.notes.unshift(
@@ -1365,7 +1484,9 @@ function composeEcho(ctx) {
 function chorusExit(ctx) {
   const { va } = ctx;
   const E = va.end;
-  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(Math.max(E * 0.4, Math.min(ctx.minExit ?? 0, E * 0.8)), 4);
+  // (die Hälfte zählt bis zum letzten Takt, nicht nur bis zum Outro-Beginn – sonst ist ein Song mit
+  // langem Outro nach 50 s schon wieder weg)
+  const from = ctx.earliestBar !== null ? va.grid(ctx.earliestBar + (ctx.instant ? 0 : 4), 4) : va.grid(Math.max(Math.max(E, va.a.points?.lastBar ?? 0) * 0.45, Math.min(ctx.minExit ?? 0, E * 0.8)), 4, 'ceil');
   // Nicht bis ins leere Ende: spätestens, solange noch Musik/Gesang da ist
   const vocalEnd = (va.a.points.vocalLast ?? E) + 1;
   // (Gesangserkennung verpasst manchmal späte Zeilen/Samples – bis 80 % darf es immer gehen)
@@ -1391,7 +1512,7 @@ function chorusExit(ctx) {
     // Pop/Rap auf der Party: frühestens nach dem zweiten Refrain (~60 %) – nach dem ersten Refrain
     // raus klingt, als würde der Song abgewürgt
     const minFrac = ctx.profile.shortForm ? 0.58 : 0.5;
-    if (frac < minFrac && ctx.earliestBar === null) sc -= (minFrac - frac) * (ctx.profile.shortForm ? 8 : 2);
+    if (frac < minFrac && ctx.earliestBar === null) sc -= (minFrac - frac) * (ctx.profile.shortForm ? 8 : 5);
     // danach nur noch Leerlauf? Für einen kurzen Refrain-Wechsel reichen ein paar Takte Outro
     const tail = E - bar;
     if (tail <= 4) sc -= 0.6;
@@ -1426,6 +1547,30 @@ function composeChorus(ctx) {
     }
     if (best !== null) pre = best;
   }
+  // Der neue Track muss beim Wechsel tragen: ist er genau dort noch in seinem leisen Intro, während
+  // der alte Refrain laut endet, fällt die Lautstärke ins Loch. Dann den Vorlauf verlängern, bis der
+  // Wechsel auf seinen ersten lauten Teil fällt (wie ein DJ, der das Intro früher startet).
+  if (!ctx.instant && introBars > 0) {
+    const eEnd = va.mean(va.energy, exit.bar - 4, exit.bar);
+    const eAt = (k) => vb.mean(vb.energy, start + k * m, start + k * m + 2);
+    const offB = b.phraseOffset || 0;
+    const onGrid = (bar) => ((((bar - offB) % 4) + 4) % 4) === 0;
+    if (eAt(pre) < eEnd - 6) {
+      for (let k = pre + 1; k <= 16; k++) {
+        if (!onGrid(start + k * m) || eAt(k) < eEnd - 5) continue;
+        pre = k;
+        ctx.notes.push('Vorlauf verlängert: der Wechsel fällt auf den ersten lauten Teil des neuen Tracks');
+        break;
+      }
+    }
+  }
+  // Setzt die erste Zeile des neuen Tracks schon vor dem Wechsel ein (Auftakt), darf sie hörbar
+  // sein, solange im alten Track dann niemand singt – sonst würde ihr Anfang abgeschnitten
+  ctx.chorusVocalAt = null;
+  if (pre > 0 && b.points.vocalFirst !== undefined) {
+    const vfAt = (b.points.vocalFirst - start) / m;
+    if (vfAt > 0 && vfAt < pre + 0.25 && va.mean(va.vocalSmooth, exit.bar - pre + vfAt - 1, exit.bar) < 0.3) ctx.chorusVocalAt = Math.max(0, vfAt - 0.5);
+  }
   // Einstieg frei wie ein DJ: meist am Anfang des neuen Songs – soll die Energie hoch (oder zur
   // Abwechslung), direkt in seinen Refrain/Hook. Dann läuft der Takt davor ohne Gesang/Bass an.
   const hook = hookBar(vb, b);
@@ -1438,10 +1583,14 @@ function composeChorus(ctx) {
   // springen fühlt sich sonst schnell hart an)
   if (!ctx.instant && hook !== null && ctx.energyUp > 0.15 && (dip || dice < 0.5)) {
     const hp = 4;
+    ctx.chorusVocalAt = null;
     ctx.outBar = exit.bar - hp;
     ctx.inBar = Math.max(start, Math.round(hook - hp * m));
     return chorusSteps(ctx, exit, hp, `neuer Track steigt direkt vor seinem Refrain ein (Takt ${hook}) – der Hook kommt genau beim Wechsel`);
   }
+  // (ohne Vorlauf aus einem lauten Refrain in ein sehr leises Intro: das fällt wie ein Loch ab –
+  // dann passt eine andere Technik besser)
+  if (pre === 0 && !ctx.instant && ((eOld - eNew > 6 && eNew < -9) || (eOld - eNew > 3 && eNew < -12))) return null;
   ctx.outBar = exit.bar - pre;
   ctx.inBar = start;
   return chorusSteps(ctx, exit, pre, pre > 0
@@ -1453,7 +1602,7 @@ function composeChorus(ctx) {
 function hookBar(v, t) {
   const start = t.points.startBar ?? 0;
   for (const ph of t.phrases) {
-    if (ph.bar < start + 8 || ph.bar > v.end * 0.6) continue;
+    if (ph.bar < start + 8 || ph.bar > v.end * 0.4) continue;
     if (ph.label === 'main' && ph.vocal >= 0.4 && ph.energy > -3) return ph.bar;
   }
   return null;
@@ -1461,6 +1610,7 @@ function hookBar(v, t) {
 
 function chorusSteps(ctx, exit, pre, entryNote) {
   const { va } = ctx;
+  ctx.swapAt = pre;
   const steps = [];
   if (pre > 0) {
     steps.push(p(0, 'in', 'fader', 0), p(0, 'in', 'low', KILL), p(0, 'in', 'vocal', 1));
@@ -1485,9 +1635,16 @@ function chorusSteps(ctx, exit, pre, entryNote) {
   // darunter (kein Loch), seine nächste Zeile hört man darin nicht
   const cf = FEEL[ctx.feel]?.fade ?? 1;
   // (der alte Bass geht erst, wenn der neue steht – sonst ist zwischen beiden ein Loch)
-  if (pre > 0) steps.push(p(pre, 'out', 'filter', -0.45, cf), p(pre + 0.25, 'out', 'fader', 0, cf), p(pre + 0.25, 'out', 'low', KILL, 0.5));
-  else steps.push(p(0, 'out', 'filter', -0.55, 0.75), p(0.25, 'out', 'fader', 0, 1.75), p(0.5, 'out', 'low', KILL, 0.75));
-  steps.push(p(pre, 'in', 'low', 0, 0.5), p(pre + 0.25, 'in', 'vocal', 0, 0.5));
+  // (Stimme des alten raus, sobald der neue singt – seine nächste Zeile soll nicht mehr durchklingen)
+  if (pre > 0) steps.push(p(pre, 'out', 'filter', -0.45, cf), p(pre + 0.25, 'out', 'fader', 0, cf), p(pre + 0.25, 'out', 'low', KILL, 0.5), p(pre, 'out', 'vocal', 1, 0.5));
+  // (der alte hält gedämpft mit – halber Bass, Gesang raus, leichter Tiefpass –, bis der neue steht;
+  // ein harter Bass-Kill auf der Eins riss sonst ein Loch, weil der neue erst hochkommt)
+  // (ist der alte dort ohnehin leise und fast ohne Bass – Break nach dem Refrain – oder kommt der
+  // neue selbst leise herein, kein Tiefpass: gedämpft würde er zum Loch)
+  else if ((ctx.va.mean(ctx.va.bass, ctx.outBar, ctx.outBar + 2) < -14 && ctx.va.mean(ctx.va.energy, ctx.outBar, ctx.outBar + 2) < -6) || ctx.vb.mean(ctx.vb.energy, ctx.inBar, ctx.inBar + 2) < -8) steps.push(p(1.25, 'out', 'fader', 0, 0.75), p(0.5, 'out', 'low', -12.5, 0.5), p(1.75, 'out', 'low', KILL, 0.25), p(0.25, 'out', 'vocal', 1, 0.5));
+  else steps.push(p(0, 'out', 'filter', -0.25, 1), p(1.25, 'out', 'fader', 0, 0.75), p(0.5, 'out', 'low', -12.5, 0.5), p(1.75, 'out', 'low', KILL, 0.25), p(0.25, 'out', 'vocal', 1, 0.5));
+  const vAt = ctx.chorusVocalAt ?? null;
+  steps.push(p(pre, 'in', 'low', 0, 0.5), vAt !== null && vAt < pre ? p(vAt, 'in', 'vocal', 0, 0.5) : p(pre + 0.25, 'in', 'vocal', 0, 0.5));
   if (pre > 0) steps.push(p(pre, 'in', 'fader', 1, 0.5)); // ohne Vorlauf blendet softVocalEntry selbst ein
   // Echo fängt nur den letzten Schlag des Refrains ein (danach Send zu, die Fahne klingt aus)
   steps.push(p(pre + 0.05, 'out', 'echo', 0, 0.1), act(pre + Math.max(pre > 0 ? 1.75 : 2.25, cf + 0.5), 'out', 'stop'));
@@ -1696,9 +1853,14 @@ function composeHandoff(ctx) {
   const vIn = vb.grid(inRuns[0].from, 4, 'floor');
   const inBar = Math.round(vIn - u * m);
   if (inBar < b.points.startBar) return null;
+  // (sein Bass setzt gleich ein – das muss auf seiner Phrasen-Eins sein; bei halbem Tempo liegt
+  // der Einstieg sonst mitten in der Phrase)
+  if (Math.abs(inBar - vb.grid(inBar, 4, 'round')) >= 0.3) return null;
   // Übergabe muss vor dem ersten Drop des neuen Tracks fertig sein
   const drop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > inBar);
   if (drop !== undefined && (drop - inBar) / m < u + 1) return null;
+  // (die Zeile braucht einen tragenden Beat darunter – über einem leisen Intro stünde sie im Loch)
+  if (vb.mean(vb.energy, inBar, inBar + u * m) < -9) return null;
   ctx.outBar = outBar;
   ctx.inBar = inBar;
   const L = u + 1;
@@ -1708,7 +1870,8 @@ function composeHandoff(ctx) {
     act(0, 'in', 'play'),
     p(0, 'in', 'fader', 0.9, 1),
     // alter Track: Beat und Bass weg -> Stimme steht fast a cappella über dem neuen Beat
-    p(0, 'out', 'low', KILL, 0.5),
+    // (erst wenn der neue Beat hörbar steht – sonst fällt dazwischen die Lautstärke ein)
+    p(0.5, 'out', 'low', KILL, 0.5),
     p(0.5, 'out', 'filter', 0.35, 1),
     // Bass des neuen Tracks ab der Eins der Phrase (über einen Takt hochgezogen)
     p(0, 'in', 'low', 0, 1),
@@ -1784,7 +1947,7 @@ function scoreStyles(ctx) {
     if (dropOk && !ctx.profile.shortForm) c.build = 0.5 + (energyUp > 0.1 ? 0.35 : 0) + (inLead < 8 ? 0.2 : 0);
   } else {
     // Tempo-Rampe: der DJ-Weg für 8–13 % Unterschied (statt Echo-Schnitt)
-    if (rel.m === 1 && rel.diff <= 0.13) c.ramp = ctx.profile.shortForm ? 2.7 : 1.8;
+    if (rel.m === 1 && rel.diff <= 0.15) c.ramp = ctx.profile.shortForm ? 2.7 : 1.8;
     // Break-Übergang: im Teil ohne Drums wechseln – klingt natürlicher als ein Echo-Schnitt
     c.breakdown = ctx.profile.shortForm ? 2.75 : 1.7;
     // ohne Beatmatch: Cut nur in einen echten Drop, sonst sauber per Echo
@@ -1850,22 +2013,104 @@ function mergeTune(g, t) {
  * zwei Basslines, Lautstärke-Loch, Wechsel neben der Eins, abgeschnittene Zeile) und nimmt die
  * beste. Erzwungene Techniken und "Jetzt mixen" werden nur geprüft, nicht ersetzt.
  */
+const HARD_RESCUE = new Set(['cut', 'roll', 'mashin', 'build', 'pingpong']);
+
 function addEarlyPenalty(plan, opts, va) {
-  if (!plan.minExit || plan.outBar >= plan.minExit - 0.5) return;
-  const early = plan.minExit - plan.outBar;
+  // (gespielt ist der alte bis in die Überblendung hinein – gezählt wird ihre Mitte)
+  // (Refrain-Wechsel: bis zum Umschalten spielt der alte voll, der neue ist nur ein Bett darunter)
+  const exit = plan.outBar + Math.max((plan.bars || 0) / 2, plan.swapAt ?? 0);
+  if (!plan.minExit || exit >= plan.minExit - 0.5) return;
+  const early = plan.minExit - exit;
   plan.audit.penalty += Math.min(3, early * 0.08);
   plan.audit.issues.push('Song würde zu kurz gespielt');
 }
 
+/** Selbstcheck eines Plans (inkl. Reparatur eines Lautstärke-Lochs). */
+function checked(plan, opts, va, vb) {
+  plan.audit = auditPlan(plan, va, vb);
+  addEarlyPenalty(plan, opts, va);
+  return repairGap(plan, opts, va, vb);
+}
+
+/**
+ * Lautstärke-Loch reparieren wie ein DJ: Der alte Track bleibt stehen, bis der neue trägt (typisch:
+ * leises Intro des neuen, während der alte schon weggedreht ist). Die Ausblend-Schritte des alten
+ * Decks ab kurz vor dem Loch werden bis zu 4 Takte später gelegt – nie über den nächsten Drop des
+ * neuen Tracks oder das nutzbare Ende des alten hinaus. Übernommen wird nur, was der Selbstcheck
+ * danach besser findet.
+ */
+function repairGap(plan, opts, va, vb) {
+  const a0 = plan.audit;
+  if (!(a0.gap >= 0.5) || a0.gapAt === null || SELF_TIMED.has(plan.type)) return plan;
+  const b = opts.inc.analysis;
+  const m = plan.m || 1;
+  const play = plan.steps.find((s) => s.deck === 'in' && s.action === 'play');
+  const inOffset = play?.barOffset || 0;
+  const tPlay = play?.at || 0;
+  const nextDrop = (b.points.drops?.length ? b.points.drops : [b.points.dropBar]).find((d) => d > plan.inBar + inOffset + 0.5);
+  const tDrop = nextDrop !== undefined ? tPlay + (nextDrop - plan.inBar - inOffset) / m : Infinity;
+  const tLimit = Math.min(tDrop, va.end - plan.outBar);
+  const tS = a0.gapAt - 2;
+  let best = plan;
+  for (const d of [0.5, 1, 1.5, 2, 3, 4]) {
+    // (der Bass-Tausch bleibt auf seiner Eins – nur Pegel, Filter und Höhen/Mitten des alten warten)
+    let steps = plan.steps.map((s) => (s.deck === 'out' && s.at >= tS && s.param !== 'low' ? { ...s, at: s.at + d } : s));
+    // (spätestens an der Grenze ist der alte weg – das Ausblenden wird dann kürzer)
+    if (Number.isFinite(tLimit)) {
+      if (a0.gapAt + d * 0.5 > tLimit - 0.5) continue;
+      steps = clampOutBefore(steps, tLimit);
+    }
+    // (öffnet der neue seinen Bass, während der alte jetzt länger steht, nimmt der alte seinen Bass
+    // zurück – Körper bleibt, aber keine zwei Basslines)
+    const inBass = steps.find((s) => s.deck === 'in' && s.param === 'low' && s.to > -3);
+    const outEnd = Math.max(...steps.filter((s) => s.deck === 'out' && s.param === 'fader').map((s) => s.at + (s.dur || 0)), -Infinity);
+    if (inBass && outEnd > inBass.at + 0.5 && !steps.some((s) => s.deck === 'out' && s.param === 'low' && s.at <= inBass.at + 0.5)) {
+      steps.push(p(inBass.at, 'out', 'low', -12.5, Math.max(0.25, inBass.dur || 0)));
+    }
+    steps.sort((x, y) => x.at - y.at);
+    const cand = { ...plan, steps, notes: [...plan.notes], endBars: Math.max(...steps.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0))) };
+    cand.audit = auditPlan(cand, va, vb);
+    addEarlyPenalty(cand, opts, va);
+    const au = cand.audit;
+    if (au.lineCut > a0.lineCut || au.hardEntry > a0.hardEntry || au.misaligned > a0.misaligned) continue;
+    if (au.penalty < best.audit.penalty - 0.1) {
+      best = cand;
+      cand.notes.push(`Selbstcheck: alter Track bleibt ${d} Takt${d === 1 ? '' : 'e'} länger stehen, bis der neue trägt`);
+    }
+    if (au.gap < 0.5) break;
+  }
+  // Geht der alte nicht länger (Songende), setzt der neue weiter hinten ein – sein leises Intro wird
+  // übersprungen, wie ein DJ, der den Cue auf die erste volle Phrase legt (nur ganze 4er-Phrasen)
+  if (best.audit.gap >= 0.5) {
+    const stopAt = plan.steps.find((s) => s.deck === 'out' && s.action === 'stop')?.at ?? plan.bars;
+    for (const k of [4, 8]) {
+      const inBar = plan.inBar + k * m;
+      if (nextDrop !== undefined && tPlay + (nextDrop - inBar - inOffset) / m < stopAt) break;
+      const cand = { ...plan, inBar, notes: [...plan.notes] };
+      cand.audit = auditPlan(cand, va, vb);
+      addEarlyPenalty(cand, opts, va);
+      const au = cand.audit;
+      if (au.lineCut > a0.lineCut || au.hardEntry > a0.hardEntry || au.misaligned > a0.misaligned || au.vocalClash > a0.vocalClash + 0.5) continue;
+      if (au.penalty < best.audit.penalty - 0.1) {
+        best = cand;
+        cand.notes.push(`Selbstcheck: neuer Track startet ${k} Takte weiter – sein leises Intro hätte ein Loch gelassen`);
+        if (au.gap < 0.5) break;
+      }
+    }
+  }
+  return best;
+}
+
 export function planTransition(opts) {
-  const first = planSingle(opts);
   const va = new TrackView(opts.out.analysis);
   const vb = new TrackView(opts.inc.analysis);
-  first.audit = auditPlan(first, va, vb);
-  addEarlyPenalty(first, opts, va);
+  const first = checked(planSingle(opts), opts, va, vb);
   const forced = opts.type && opts.type !== 'auto' && opts.type in TRANSITIONS;
   let best = first;
   if (!forced && !opts.instant && first.ranked) {
+    // (Pop/Rap: die Rettungsrunden greifen nicht zu harten Club-Techniken – Schnitt, Mash-In, Build)
+    const softPair = !opts.freestyle && [opts.out?.genre, opts.inc?.genre].some((g) => g === 'pop' || g === 'rap');
+    const rescueOk = (k) => !(softPair && HARD_RESCUE.has(k));
     let bestTotal = first.score - first.audit.penalty;
     const tried = new Set([first.type]);
     let usable = 1;
@@ -1873,14 +2118,13 @@ export function planTransition(opts) {
     for (const [k] of first.ranked) {
       // bis zu 3 echte Alternativen; Techniken, die hier gar nicht passen, zählen nicht mit
       if (usable >= 4 || attempts >= 10) break;
-      if (tried.has(k)) continue;
+      if (tried.has(k) || !rescueOk(k)) continue;
       tried.add(k);
       attempts++;
-      const alt = planSingle(opts, k);
+      let alt = planSingle(opts, k);
       if (alt.type !== k) continue; // Technik passte nicht (Rückfall auf Blend)
       usable++;
-      alt.audit = auditPlan(alt, va, vb);
-      addEarlyPenalty(alt, opts, va);
+      alt = checked(alt, opts, va, vb);
       const total = alt.score - alt.audit.penalty;
       if (total > bestTotal + 0.05) {
         best = alt;
@@ -1891,19 +2135,17 @@ export function planTransition(opts) {
     if (best.audit.lineCut) {
       let clean = null;
       for (const [k] of first.ranked) {
-        if (k === best.type) continue;
-        const alt = planSingle(opts, k);
+        if (k === best.type || !rescueOk(k)) continue;
+        let alt = planSingle(opts, k);
         if (alt.type !== k) continue;
-        alt.audit = auditPlan(alt, va, vb);
-        addEarlyPenalty(alt, opts, va);
+        alt = checked(alt, opts, va, vb);
         if (alt.audit.lineCut) continue;
         const total = alt.score - alt.audit.penalty;
         if (!clean || total > clean.total) clean = { plan: alt, total };
       }
       // notfalls: Echo-Out am Ende des Gesangsblocks (der Ausstieg wartet, bis die Zeile vorbei ist)
       if (!clean) {
-        const echo = planSingle({ ...opts, type: 'echo' });
-        echo.audit = auditPlan(echo, va, vb);
+        const echo = checked(planSingle({ ...opts, type: 'echo' }), opts, va, vb);
         if (!echo.audit.lineCut) clean = { plan: echo };
       }
       if (clean) {
@@ -1915,14 +2157,31 @@ export function planTransition(opts) {
     // Dann lieber die weiche End-Überblendung am Songende
     const a0 = best.audit;
     if (a0.lineCut || a0.hardEntry || a0.misaligned >= 1 || a0.penalty >= 1.2) {
-      const end = planSingle(opts, 'endfade');
+      let end = planSingle(opts, 'endfade');
       if (end.type === 'endfade') {
-        end.audit = auditPlan(end, va, vb);
+        end = checked(end, opts, va, vb);
         if (end.audit.penalty < a0.penalty) {
           end.notes.push(`Selbstcheck: statt ${TRANSITIONS[best.type]} (${a0.issues.join(', ') || 'zu hart'})`);
           best = end;
         }
       }
+    }
+    // Immer noch hörbare Probleme? Dann jede übrige Technik prüfen – ein sauberer Übergang geht vor
+    // der Stil-Vorliebe (Planen kostet nur Millisekunden)
+    // (hörbare Fehler wie Loch, zwei Stimmen, neben der Eins zählen dabei vor jeder Stil-Vorliebe)
+    const flaws = (pl) => pl.audit.issues.filter((i) => !i.includes('Hauptteil')).length;
+    if (best.audit.penalty >= 0.3 || flaws(best)) {
+      const cost = (pl) => (flaws(pl) ? 100 : 0) + pl.audit.penalty * 3 - pl.score;
+      const before = best;
+      for (const k of new Set([...first.ranked.map(([k]) => k), 'endfade', 'echo', 'breakdown'])) {
+        if (k === best.type || !rescueOk(k)) continue;
+        let alt = planSingle(opts, k);
+        if (alt.type !== k) continue;
+        alt = checked(alt, opts, va, vb);
+        if (alt.audit.lineCut > best.audit.lineCut) continue;
+        if (cost(alt) < cost(best) - 0.1) best = alt;
+      }
+      if (best !== before) best.notes.push(`Selbstcheck: statt ${TRANSITIONS[before.type]} (${before.audit.issues.join(', ') || 'knapp schlechter'})`);
     }
     if (best !== first && !best.notes.some((n) => n.startsWith('Selbstcheck: statt'))) {
       best.notes.push(`Selbstcheck: statt ${TRANSITIONS[first.type]} (${first.audit.issues.join(', ') || 'knapp schlechter'})`);
@@ -2055,7 +2314,10 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   // Bei schwankendem Tempo zählt das Tempo genau an den Übergangsstellen, nicht der Schnitt
   const outLocal = a.beats ? localBpm(a, ctx.outBar) * outRate : masterBpm;
   const inLocal = b.beats ? localBpm(b, ctx.inBar) : b.bpm;
-  const inRate = beatmatch ? (ctx.m * outLocal) / inLocal : 1;
+  let inRate = beatmatch ? (ctx.m * outLocal) / inLocal : 1;
+  // (lokale Messung verrauscht und weiter weg als erlaubt: dann das Durchschnittstempo nehmen)
+  const avgRate = (ctx.m * a.bpm * outRate) / b.bpm;
+  if (beatmatch && Math.abs(inRate - 1) > BEATMATCH_LIMIT && Math.abs(avgRate - 1) < Math.abs(inRate - 1)) inRate = avgRate;
   if (beatmatch && Math.abs(inRate - 1) > 0.001) {
     // danach unmerklich zurück aufs Originaltempo (länger bei größerer Abweichung)
     steps.push(act(Math.max(L, 1) + 0.5, 'in', 'rate', { to: 1, dur: Math.abs(inRate - 1) > 0.03 ? 32 : 16 }));
@@ -2093,6 +2355,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     score: chosenScore,
     ranked,
     minExit: ctx.minExit,
+    swapAt: ctx.swapAt ?? null,
   };
 }
 
@@ -2194,7 +2457,18 @@ function clampOutBefore(steps, tEnd) {
     if (!conflicting) out.push(p(from, 'out', 'fader', 0, tEnd - from));
   }
   if (!out.some((s) => s.deck === 'out' && s.action === 'stop')) out.push(act(tEnd, 'out', 'stop'));
-  return out;
+  // (ist der alte genau beim Bass-Tausch weg, kommt der neue Bass sofort – kein Loch dazwischen)
+  // (endet das Ausblenden genau an der Grenze, bleibt der alte bis kurz davor oben: über einen ganzen
+  // Takt ausgeblendet, fehlt ihm schon vor dem Bass-Tausch die Wucht)
+  const inSwap = out.find((s) => s.deck === 'in' && s.param === 'low' && s.to > -3 && s.at >= tEnd - 0.5);
+  if (inSwap) {
+    for (let i = 0; i < out.length; i++) {
+      const s = out[i];
+      if (s.deck === 'out' && s.param === 'fader' && s.to <= 0.001 && s.dur >= 1 && Math.abs(s.at + s.dur - tEnd) < 1e-6) out[i] = { ...s, at: tEnd - 0.5, dur: 0.5 };
+    }
+  }
+  // (und ein Bass-Tausch, der erst nach dem Ende des alten käme, rückt auf dieses Ende vor)
+  return out.map((s) => (s.deck === 'in' && s.param === 'low' && s.to > -3 && s.at >= tEnd - 0.5 ? { ...s, at: Math.min(s.at, tEnd), dur: Math.min(s.dur || 0, 0.25) } : s));
 }
 
 function describe(outKey, inKey, inBpm, rel, keyDist, masterBpm) {

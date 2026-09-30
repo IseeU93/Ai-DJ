@@ -3,7 +3,7 @@
 // übereinander, ein Loch in der Lautstärke, ein Wechsel neben der Eins, eine abgeschnittene Zeile.
 // Der Planer probiert mehrere Techniken, und die mit den wenigsten Problemen gewinnt.
 
-const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0 };
+const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0, reverb: 0 };
 const STEP = 0.125;
 
 /** Wert eines Reglers zum Zeitpunkt t (Takte) aus der Schrittliste eines Decks. */
@@ -32,7 +32,7 @@ function bodyOf(val, deck, t) {
  * @param plan  Ergebnis des Planers (steps, outBar, inBar, m, type)
  * @param va,vb TrackViews (vocalSmooth, energy, drums, isPhraseStart, end)
  */
-export function auditPlan(plan, va, vb) {
+export function auditPlan(plan, va, vb, trace = null) {
   const steps = plan.steps;
   const params = { out: {}, in: {} };
   for (const s of steps) {
@@ -46,22 +46,35 @@ export function auditPlan(plan, va, vb) {
   const tPlay = play ? play.at : 0;
   const inOffset = play?.barOffset || 0;
   const stopOut = steps.find((s) => s.deck === 'out' && s.action === 'stop')?.at ?? Infinity;
-  const loopFrom = steps.find((s) => s.deck === 'out' && s.action === 'loop')?.at ?? Infinity;
+  const loopStep = steps.find((s) => s.deck === 'out' && s.action === 'loop');
+  const loopFrom = loopStep?.at ?? Infinity;
+  // Takt im alten Track: ein Loop spielt bis zu seinem Ende durch und springt dann zurück
+  // (ohne Loop-Länge: so tun, als stünde der Track ab dem Loop still)
+  const outAt = (t) => {
+    if (!loopStep?.bars) return plan.outBar + Math.min(t, loopFrom);
+    const start = loopStep.anchor ?? loopFrom;
+    const rel = t - start;
+    return plan.outBar + (rel < loopStep.bars ? t : start + (rel % loopStep.bars));
+  };
   const t0 = Math.min(0, ...steps.map((s) => s.at));
   const t1 = Math.max(...steps.filter((s) => s.action !== 'rate').map((s) => s.at + (s.dur || 0)));
   const m = plan.m || 1;
   const quietStyle = plan.type === 'echo' || plan.type === 'cut' || plan.type === 'breakdown';
 
+  // Noise-Riser: schwillt über seine Takte an und trägt am Ende eines Build-ups den Raum mit
+  const risers = steps.filter((s) => s.deck === 'fx' && s.action === 'riser').map((s) => ({ at: s.at, bars: s.bars || 4, amp: 0.45 * (s.level ?? 0.1) / 0.13 }));
+  const riserAt = (t) => Math.max(0, ...risers.map((r) => (t >= r.at && t < r.at + r.bars ? r.amp * (t - r.at) / r.bars : 0)));
   const outGoneAt = steps.filter((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05).map((s) => s.at + (s.dur || 0));
   const tOutGone = outGoneAt.length ? Math.min(...outGoneAt) : null;
   let vocalClash = 0;
   let bassBoth = 0;
   let gap = 0;
+  let gapAt = null; // wo das (erste) Lautstärke-Loch beginnt
   let sw = null;
   for (let t = t0; t <= t1 + 1e-9; t += STEP) {
     const outOn = t < stopOut;
     const inOn = t >= tPlay;
-    const ob = plan.outBar + Math.min(t, loopFrom);
+    const ob = outAt(t);
     const ib = plan.inBar + inOffset + (t - tPlay) * m;
     const fo = outOn ? val('out', 'fader', t) : 0;
     const fi = inOn ? val('in', 'fader', t) : 0;
@@ -86,8 +99,22 @@ export function auditPlan(plan, va, vb) {
       const send = Math.max(val('out', 'echo', tOutGone - 0.1), val('out', 'reverb', tOutGone - 0.1));
       tail = 0.6 * send * Math.exp(-(t - tOutGone) / 0.75) * (10 ** (va.energy(Math.floor(plan.outBar + tOutGone - 0.5)) / 20));
     }
-    const level = fo * fo * lo * lo + fi * fi * li * li + tail * tail;
-    if (!quietStyle && t > t0 + 0.5 && t < t1 - 0.5 && level < 0.12) gap += STEP;
+    const rz = riserAt(t);
+    const level = fo * fo * lo * lo + fi * fi * li * li + tail * tail + rz * rz;
+    // (ein Loch ist nur, was das Mischen verursacht: ist der alte Song an dieser Stelle selbst leise –
+    // Break, ruhige Strophe – oder schon zu Ende und der neue dort von sich aus ruhig, klänge es ohne
+    // Mix genauso)
+    const natOut = ob < va.end ? 10 ** (va.energy(Math.floor(ob)) / 10) : 0;
+    const natIn = inOn ? 10 ** (vb.energy(Math.floor(ib)) / 10) : 0;
+    // (läuft der neue schon voll offen und hat selbst eine Pause – Atempause vor seinem Drop –, ist
+    // das seine Musik, kein Loch vom Mischen)
+    const inFull = inOn && fi >= 0.9 && bodyOf(val, 'in', t) >= 0.9;
+    const natural = ob < va.end ? (inFull ? Math.min(natOut, natIn) : natOut) : natIn;
+    if (!quietStyle && t > t0 + 0.5 && t < t1 - 0.5 && level < 0.12 && level < 0.5 * natural) {
+      gap += STEP;
+      gapAt ??= t;
+    }
+    trace?.push({ t, ob, ib, fo, fi, lo, li, tail, level });
   }
   // Der hörbare Wechsel ist der Bass-Tausch (neuer Bass geht auf) – ohne Bass-Tausch der Moment,
   // in dem der alte Track verschwindet. Der muss auf der Eins liegen, nicht die Mitte eines Fades.
@@ -95,7 +122,7 @@ export function auditPlan(plan, va, vb) {
     || steps.find((s) => s.deck === 'out' && s.param === 'fader' && s.to <= 0.05);
   if (swapStep) {
     const t = swapStep.at;
-    sw = { t, ob: plan.outBar + Math.min(t, loopFrom), ib: plan.inBar + inOffset + (t - tPlay) * m };
+    sw = { t, ob: outAt(t), ib: plan.inBar + inOffset + (t - tPlay) * m };
   }
 
   // Wechsel auf der Eins – in beiden Tracks auf einer 4-Takt-Grenze
@@ -119,7 +146,7 @@ export function auditPlan(plan, va, vb) {
   // während er gerade singt und weitersingen würde – beim Mitsingen das Schlimmste. Gilt für alle
   // Techniken, auch Echo-Out und Drop-Cut.
   let lineCut = 0;
-  const sung = (bar) => va.vocal(bar) >= 0.4;
+  const sung = (bar) => va.vocal(bar) >= 0.4 + (va.vocalBase || 0);
   const audible = (t) => {
     if (t >= stopOut) return 0;
     const f = val('out', 'filter', t);
@@ -157,7 +184,7 @@ export function auditPlan(plan, va, vb) {
         const kk = Math.floor((x - bb) * 4);
         if (audible(t + k * 0.25) >= 0.5 && va.beatVocal(bb, kk) >= 0.5 && va.beatVocal(bb, kk - 1) < 0.3 && plan.outBar + tEnd - x > 0.5) lineCut = 1;
       }
-    } else if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 && va.vocal(bar - 1) < 0.3 && plan.outBar + tEnd - bar < 3) lineCut = 1;
+    } else if (audible(t) >= 0.5 && va.vocal(bar) >= 0.5 + (va.vocalBase || 0) && va.vocal(bar - 1) < 0.3 + (va.vocalBase || 0) && plan.outBar + tEnd - bar < 3) lineCut = 1;
   }
 
   // Neuer Gesang setzt hart ein: der neue Track ist eben noch kaum zu hören und einen Takt später
@@ -192,7 +219,10 @@ export function auditPlan(plan, va, vb) {
   const shortForm = (plan.genres || []).slice(0, 1).some((g) => g === 'pop' || g === 'rap');
   const skipCost = skippedMain * (shortForm ? 0.004 : 0.02);
 
-  const penalty = vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 2 + hardEntry * 0.9 + skipCost;
+  // Tempo stark gezogen: bis ~5 % unhörbar, ab ~7 % hört man den Keylock (Stimmen klingen gepresst)
+  const stretch = plan.beatmatch && plan.inRate ? Math.abs(plan.inRate - 1) : 0;
+  const stretchCost = Math.max(0, stretch - 0.05) * 25;
+  const penalty = stretchCost + vocalClash * 0.35 + Math.max(0, bassBoth - 1) * 0.25 + gap * 0.8 + misaligned * 1.2 + lineCut * 2 + hardEntry * 0.9 + skipCost;
   const issues = [];
   if (vocalClash >= 1) issues.push(`${vocalClash.toFixed(1)} Takte zwei Stimmen gleichzeitig`);
   if (bassBoth > 1) issues.push(`${bassBoth.toFixed(1)} Takte zwei Basslines übereinander`);
@@ -200,6 +230,7 @@ export function auditPlan(plan, va, vb) {
   if (misaligned) issues.push('Wechsel nicht auf der Eins');
   if (lineCut) issues.push('alte Gesangszeile wird abgeschnitten');
   if (hardEntry) issues.push('neuer Gesang setzt hart ein');
+  if (stretch > 0.07) issues.push(`Tempo um ${(stretch * 100).toFixed(1)} % angeglichen`);
   if (!shortForm && skippedMain >= 8) issues.push(`${skippedMain} Takte Hauptteil des alten Tracks übersprungen`);
-  return { vocalClash, bassBoth, gap, misaligned, lineCut, hardEntry, skippedMain, penalty, issues };
+  return { vocalClash, bassBoth, gap, gapAt, stretch, misaligned, lineCut, hardEntry, skippedMain, penalty, issues };
 }

@@ -51,7 +51,8 @@ export function camelotDistance(a, b) {
 export function tempoRelation(bpmOut, bpmIn) {
   let best = { m: 1, diff: Infinity, pen: Infinity };
   for (const m of [1, 2, 0.5]) {
-    const diff = Math.abs((bpmIn / m) / bpmOut - 1);
+    const r = (bpmIn / m) / bpmOut;
+    const diff = Math.max(r, 1 / r) - 1; // symmetrisch: schneller wie langsamer gleich weit
     // Halb/Doppel nur, wenn es klar besser passt (sonst bleibt der Groove zu verschieden)
     const pen = m === 1 ? diff : diff + 0.02;
     if (pen < best.pen) best = { m, diff, pen };
@@ -59,7 +60,7 @@ export function tempoRelation(bpmOut, bpmIn) {
   return { m: best.m, diff: best.diff };
 }
 
-export const BEATMATCH_LIMIT = 0.08; // bis ±8 % wird per Keylock-Tempo angeglichen
+export const BEATMATCH_LIMIT = 0.07; // bis ±7 % wird per Keylock-Tempo angeglichen
 
 export function transitionCost(a, b, w = null) {
   const A = a.analysis;
