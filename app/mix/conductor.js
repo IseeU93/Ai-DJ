@@ -398,14 +398,7 @@ export class Conductor extends EventTarget {
    */
   feelFor(out, inc) {
     if (this.feel && this.feel !== 'auto') return this.feel; // (nur noch für Tests/alte Einstellung)
-    const done = this.history.length;
-    if (done < 3 || !out || !inc) return 'soft';
-    const dance = (g) => g === 'edm' || g === 'hardstyle' || g === 'uptempo';
-    const eo = out.energy ?? 0.5;
-    const ei = inc.energy ?? 0.5;
-    const peak = eo >= 0.65 && ei >= 0.65;
-    if (peak && dance(out.genre) && dance(inc.genre) && ei - eo >= 0.12 && done >= 5) return 'crisp';
-    if (peak && (dance(out.genre) || dance(inc.genre)) && ei >= eo) return 'normal';
+    // immer weich: lange Blends im Takt – knackige Umschnitte klangen im Set zu hart
     return 'soft';
   }
 
@@ -539,6 +532,7 @@ export class Conductor extends EventTarget {
     const od = this.decks[other];
 
     if (this.plan?.committed && now >= this.plan.tDone) this.finishPlan();
+    if (this.plan?.committed) this.phaseLock(now);
 
     // Master stoppt, anderes Deck läuft (manuell gemixt) -> Rollen tauschen
     if (!this.plan?.committed && !md.status.playing && od.status.playing && od.track) {
@@ -973,6 +967,8 @@ export class Conductor extends EventTarget {
     this.decks[p.outDeck].resetParams();
     this.decks[p.outDeck].setNow('fader', 0);
     if (p.braked) this.decks[p.outDeck].rateAt(this.engine.now + 0.05, p.outRate, 0);
+    // Nachführung beendet: wieder exakt das geplante Tempo
+    if (p.lockRate !== undefined && this.engine.now < p.lockEnd) this.decks[p.inDeck].rateAt(this.engine.now, p.inRate, 0);
     this.plan = null;
     this.forceSoon = false;
     this.soonWindow = false;
@@ -983,6 +979,44 @@ export class Conductor extends EventTarget {
     }
     this.emit('queue');
     this.emit('plan');
+  }
+
+  /**
+   * Während beide Tracks laufen wie ein DJ am Jogwheel nachführen: Ein festes Tempo reicht nicht,
+   * weil viele Songs (echtes Schlagzeug) leicht schwanken – dann laufen die Beats auseinander.
+   * Laut Beatgrid wird die Abweichung gemessen und das Tempo des neuen Tracks kurz minimal angepasst.
+   * Endet, sobald der Plan selbst am Tempo dreht (Tempo-Rückfahrt, Bremse).
+   */
+  phaseLock(now) {
+    const p = this.plan;
+    if (p.lockEnd === undefined) {
+      const r = (p.steps || []).filter((s) => s.action === 'rate').map((s) => p.T0 + s.at * p.barSec);
+      p.lockEnd = r.length ? Math.min(...r) : Infinity;
+    }
+    if (!p.beatmatch || p.egg || now < p.T0 + 0.1 || now >= p.lockEnd) return;
+    const out = this.decks[p.outDeck];
+    const inn = this.decks[p.inDeck];
+    if (!out.status.playing || !inn.status.playing || out.track?.id !== p.outId || inn.track?.id !== p.inId) return;
+    const a = out.track.analysis;
+    const b = inn.track.analysis;
+    const sr = this.engine.sr;
+    const tOut = out.realAt(now) / sr;
+    const tIn = inn.realAt(now) / sr;
+    const bpmIn = localBpm(b, secondsToBar(b, tIn));
+    // Schläge des neuen Tracks pro Schlag des alten (1, bei Half-/Double-Time 0.5 oder 2)
+    const ratio = (p.inRate * bpmIn) / (p.outRate * localBpm(a, secondsToBar(a, tOut)));
+    const m = [0.5, 1, 2].reduce((x, y) => (Math.abs(Math.log(y / ratio)) < Math.abs(Math.log(x / ratio)) ? y : x));
+    // Abweichung in Schlägen des schnelleren Rasters, auf ±0,5 gefaltet
+    const unit = Math.min(1, m);
+    let e = (secondsToBeat(b, tIn) - m * secondsToBeat(a, tOut)) / unit;
+    e = (e - Math.round(e)) * unit;
+    const errSec = (e * 60) / bpmIn; // Track-Zeit, die der neue Track voraus ist
+    // in ~1,5 s aufholen, höchstens 2 % Tempo (mit Keylock unhörbar); Reste unter 4 ms ignorieren
+    const corr = Math.abs(errSec) < 0.004 ? 0 : Math.max(-0.02, Math.min(0.02, -errSec / 1.5));
+    const rate = p.inRate + corr;
+    if (Math.abs(rate - (p.lockRate ?? p.inRate)) < 0.0005) return;
+    p.lockRate = rate;
+    inn.rateAt(now, rate, 0);
   }
 
   /** Bricht einen laufenden/eingeplanten Übergang ab (z. B. bei Pause). */

@@ -182,6 +182,41 @@ function trackWith(id, bpm, sections, root = 57) {
   return { id, analysis: analyzeTrack(s.L, s.R, s.sr, SYNTH), energy: 0.5, genre: 'edm' };
 }
 
+test('Vocal-Ride: singt der alte noch und ist das neue Intro reiner Beat, wird früh der Beat getauscht', () => {
+  const out = trackWith('vr', 128, [...SECTIONS.slice(0, 4), { bars: 16, kick: true, bass: true, vocal: true }]);
+  const inc = track('b', 128);
+  out.genre = 'pop';
+  inc.genre = 'pop';
+  const plan = planTransition({ out, inc, type: 'blend' });
+  assert.equal(plan.type, 'blend');
+  assert.ok(plan.notes.some((n) => n.includes('Vocal-Ride')), plan.notes.join(' | '));
+  // Beat (Bass) wechselt auf der ersten Phrasen-Eins, die Stimme (Mitten) des alten bleibt danach offen
+  const outLow = plan.steps.find((s) => s.deck === 'out' && s.param === 'low' && s.to < -20);
+  assert.equal(outLow.at, 4);
+  assert.ok(!plan.steps.some((s) => s.deck === 'out' && s.param === 'mid' && s.at < outLow.at + 0.5));
+});
+
+test('Pegel reiten: fällt der alte mitten im Blend von selbst ab, übernimmt der neue genau dort', () => {
+  const out = track('a', 128);
+  const inc = track('b', 128);
+  const base = planTransition({ out, inc, type: 'blend' });
+  assert.ok(!base.notes.some((n) => n.includes('von selbst ab')), base.notes.join(' | '));
+  // der alte Track wird ab Takt 4 des Übergangs für eine Phrase sehr leise (Break im Outro)
+  const e = Array.from(out.analysis.barEnergy);
+  for (let i = base.outBar + 4; i < base.outBar + 12; i++) e[i] = -22;
+  const quiet = { ...out, id: 'q', analysis: { ...out.analysis, barEnergy: e } };
+  const plan = planTransition({ out: quiet, inc, type: 'blend' });
+  assert.equal(plan.type, 'blend');
+  assert.ok(plan.notes.some((n) => n.includes('von selbst ab')), plan.notes.join(' | '));
+  // der neue ist zur Eins von Takt 4 voll da (Fader, Mitten, Höhen, kein Filter mehr) – kein Loch
+  const full = (param, to) => plan.steps.some((s) => s.deck === 'in' && s.param === param && s.to === to && s.at + s.dur <= 4 + 1e-6 && s.at >= 3);
+  assert.ok(full('fader', 1) && full('mid', 0) && full('high', 0), JSON.stringify(plan.steps.filter((s) => s.deck === 'in')));
+  assert.ok(!plan.steps.some((s) => s.deck === 'in' && ['fader', 'mid', 'high', 'filter'].includes(s.param) && s.at >= 4 && (s.param === 'fader' ? s.to < 1 : s.to !== 0)));
+  // der Bass wechselt weiterhin nur auf einer 4er-Eins
+  const low = plan.steps.find((s) => s.deck === 'in' && s.param === 'low' && s.to === 0);
+  assert.equal(low.at % 4, 0);
+});
+
 test('Blend verlängert ein zu kurzes Outro per Loop auf gesangsfreien Takten', () => {
   const out = trackWith('s', 128, SHORT_OUTRO);
   const plan = planTransition({ out, inc: track('b', 128), type: 'blend' });
@@ -364,13 +399,15 @@ test('Vocal-Übergabe: letzte Zeile des alten, dann erste Zeile des neuen', () =
   assert.ok(hand && outFade && Math.abs(hand.at - outFade.at) < 0.01, 'Übergabe nicht gleichzeitig');
 });
 
-test('Teaser: neuer Track startet zwei Takte vorher hörbar, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
+test('Teaser: bei kurzem Blend startet der neue zwei Takte vorher hörbar, ohne Bass und Gesang, ohne Lautstärke-Loch', () => {
   const longIntro = [
     { bars: 24, kick: true },
     { bars: 32, kick: true, bass: true, pad: true },
     { bars: 16, kick: true },
   ];
-  const plan = planTransition({ out: track('a', 128), inc: trackWith('li', 127, longIntro), type: 'blend' });
+  // Rap: kurze Blends (höchstens 8 Takte) – da hilft der Auftakt
+  const plan = planTransition({ out: { ...track('a', 128), genre: 'rap' }, inc: { ...trackWith('li', 127, longIntro), genre: 'rap' }, type: 'blend' });
+  assert.ok(plan.bars <= 8, `Blend ${plan.bars} Takte`);
   const play = plan.steps.find((s) => s.action === 'play');
   assert.equal(play.at, -2);
   assert.equal(play.barOffset, -2 * plan.m);
@@ -390,9 +427,20 @@ test('Langes ereignisloses Outro wird nicht komplett ausgespielt', () => {
   assert.ok(plan.outBar <= 48 + 8, `wartet bis Takt ${plan.outBar} (Hauptteil endet bei 48, Track bei 80)`);
 });
 
+test('Langer Blend braucht keinen Teaser – er holt den neuen selbst langsam herein', () => {
+  const longIntro = [
+    { bars: 24, kick: true },
+    { bars: 32, kick: true, bass: true, pad: true },
+    { bars: 16, kick: true },
+  ];
+  const plan = planTransition({ out: track('a', 128), inc: trackWith('li', 127, longIntro), type: 'blend' });
+  assert.ok(plan.bars >= 16, `Blend ${plan.bars} Takte`);
+  assert.ok(plan.steps.every((s) => s.at >= 0), 'Auftakt vor einem langen Blend');
+});
+
 test('Teaser ohne Vorlauf-Material: erster Takt wird leise angeteasert', () => {
-  const plan = planTransition({ out: track('a', 128), inc: track('b', 127), type: 'blend' });
-  if (plan.inBar - plan.m >= 0) return; // hier gibt es doch Vorlauf
+  const plan = planTransition({ out: { ...track('a', 128), genre: 'rap' }, inc: { ...track('b', 127), genre: 'rap' }, type: 'blend' });
+  if (plan.inBar - plan.m >= 0 || plan.bars > 8) return; // hier gibt es doch Vorlauf
   const f = plan.steps.filter((s) => s.deck === 'in' && s.param === 'fader' && s.dur);
   assert.ok(f.some((s) => s.at === 0 && s.to <= 0.45), 'kein leiser erster Takt');
 });
@@ -685,11 +733,12 @@ test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der B
   assert.ok(plan.steps.some((s) => s.action === 'gate' && s.deck === 'out'), 'Gate fehlt');
   assert.ok(plan.steps.some((s) => s.param === 'reverb' && s.deck === 'out'), 'Hall fehlt');
   assert.ok(plan.steps.some((s) => s.action === 'play' && s.at === 0));
-  // Bausteine werden frei kombiniert: über viele Paare mehrere Zusatz-Effekte, nie zwei Flanger
+  // Bausteine werden frei kombiniert (Gefühl „normal“; „weich“ bleibt bewusst sparsam): über viele
+  // Paare mehrere Zusatz-Effekte, nie zwei Flanger
   const seen = new Set();
   let multi = 0;
   for (let i = 0; i < 40; i++) {
-    const p = planTransition({ out: { ...out, id: `o${i}` }, inc: { ...inc, id: `i${i}` } });
+    const p = planTransition({ out: { ...out, id: `o${i}` }, inc: { ...inc, id: `i${i}` }, feel: 'normal' });
     if (!p.flavors) continue;
     p.flavors.extras.forEach((k) => seen.add(k));
     if (p.flavors.extras.length >= 2) multi++;
@@ -700,7 +749,7 @@ test('Effekte: Build-up & Drop mit Riser, Gate und Hall; freie Kombination der B
   // auch Techniken außer dem Blend bekommen Effekte (frei kombiniert)
   let fxOther = 0;
   for (let i = 0; i < 40; i++) {
-    const p = planTransition({ out: { ...out, id: `x${i}` }, inc: { ...inc, id: `y${i}` }, type: i % 2 ? 'filter' : 'loop' });
+    const p = planTransition({ out: { ...out, id: `x${i}` }, inc: { ...inc, id: `y${i}` }, type: i % 2 ? 'filter' : 'loop', feel: 'normal' });
     if (p.flavors?.extras?.length) fxOther++;
   }
   assert.ok(fxOther >= 8, `nur ${fxOther}x Effekte bei Filter/Loop`);

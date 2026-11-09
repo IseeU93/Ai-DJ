@@ -1,7 +1,7 @@
 import { Engine } from './audio/engine.js';
 import { Conductor } from './mix/conductor.js';
 import { AnalysisService } from './analysis/service.js';
-import { TRANSITIONS, KILL, barToSeconds, beatToSeconds, secondsToBeat } from './mix/planner.js';
+import { TRANSITIONS, KILL, barToSeconds, beatToSeconds, secondsToBeat, songSections } from './mix/planner.js';
 import { parseCamelot, shiftCamelot, orderFeatures } from './mix/order.js';
 import { Knob, Slider } from './ui/controls.js';
 import { DeckWaveform, drawOverview } from './ui/waveform.js';
@@ -451,15 +451,21 @@ function renderPlanInfo() {
 
 // ------------------------------------------------------------------ Queue
 
-function drawStructure(canvas, a) {
+// Song-Aufbau in der Liste: Refrain/Drop hell, Strophe/Groove mittel, Breakdown grün, Build-up ocker
+const STRUCT_COLORS = { chorus: '#7a7c82', drop: '#7a7c82', verse: '#55575d', groove: '#4d4f55', breakdown: '#34463c', break: '#34463c', build: '#4a4536' };
+
+function drawStructure(canvas, t) {
+  const a = t.analysis;
   const w = (canvas.width = 240);
   const h = (canvas.height = 28);
   const c = canvas.getContext('2d');
   const dur = a.duration;
-  for (const ph of a.phrases) {
+  let secs;
+  try { secs = songSections(t); } catch { secs = a.phrases.map((ph) => ({ ...ph, label: ph.label === 'main' ? 'groove' : ph.label })); }
+  for (const ph of secs) {
     const x1 = (barToSeconds(a, ph.bar) / dur) * w;
     const x2 = (barToSeconds(a, ph.bar + ph.bars) / dur) * w;
-    c.fillStyle = ph.label === 'main' ? '#5c5e64' : ph.label === 'break' ? '#34463c' : ph.label === 'build' ? '#4a4536' : '#34363c';
+    c.fillStyle = STRUCT_COLORS[ph.label] ?? '#34363c';
     c.fillRect(x1, 10, Math.max(1, x2 - x1 - 1), 12);
   }
   a.vocals.forEach((v, bar) => {
@@ -564,7 +570,7 @@ function renderQueue() {
     $('.a', row).textContent = t.artist || '';
     row.title = t.path;
     keyChip($('.key', row), a.key.camelot);
-    drawStructure($('.struct', row), a);
+    drawStructure($('.struct', row), t);
     const gsel = document.createElement('select');
     gsel.className = 'sel';
     // "Auto" = was ohne eigene Einstellung gilt: die Playlist-Richtung, sonst online/Audio

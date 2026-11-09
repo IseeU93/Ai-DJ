@@ -82,6 +82,9 @@ export function transitionCost(a, b, w = null) {
   // Publikum: andere Musikfamilie (Pop -> Rock-Hymne) und andere Epoche (2014 -> 1977)
   const audience = 1.2 * familyDistance(family(a), family(b))
     + (a.year && b.year ? Math.min(0.9, Math.max(0, Math.abs(a.year - b.year) - 10) * 0.035) : 0);
+  // Groove: durchgehende Bassdrum (Four-on-the-floor) gegen synkopierten Beat greift nicht
+  // ineinander – auch bei gleichem Tempo klingt der Übergang dann wie zwei Songs gleichzeitig
+  const groove = 0.6 * Math.max(0, Math.abs((A.fourFloor ?? 0.5) - (B.fourFloor ?? 0.5)) - 0.25);
   // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
   const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);
   const introCost = intro >= 16 ? 0 : intro >= 8 ? 0.1 : 0.25;
@@ -96,7 +99,7 @@ export function transitionCost(a, b, w = null) {
   // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
   const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
     + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
-  return (w?.tempo ?? 1) * tempo + 1.1 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost;
+  return (w?.tempo ?? 1) * tempo + 1.1 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost + groove;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)

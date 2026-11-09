@@ -1,8 +1,9 @@
 // Track-Analyse für DJ-Mixing: Beatgrid, Downbeats, Phrasen/Sektionen, Tonart, Gesang, Lautheit.
 // Reines JS ohne DOM – läuft im Web Worker und in Node-Tests.
 import { stft } from './fft.js';
+import { gridFromBeats } from './beatnet.js';
 
-export const ANALYSIS_VERSION = 13;
+export const ANALYSIS_VERSION = 18;
 export const ANALYSIS_SR = 22050;
 
 const ONSET_N = 1024;
@@ -642,6 +643,63 @@ function envelope(x, sr, tau) {
 }
 
 /**
+ * Four-on-the-floor-Prüfung: Liegt die Bassdrum auf (fast) jedem Schlag – aber einen halben Schlag
+ * neben dem Raster? Dann hat der Tracker den Offbeat erwischt (Hi-Hats/Offbeat-Bass, Clap-Muster),
+ * und jeder Mix mit einem richtig erkannten Track klappert Kick gegen Kick. Die Bass-Energie wird
+ * über alle Schläge gefaltet; nur bei einem klaren Puls pro Schlag (hoher Kontrast) zählt die Lage
+ * seines Anstiegs. Synkopierte Kicks (Rap/Pop) verschmieren das Profil und bleiben unangetastet. Liefert die Verschiebung in Schlägen (0, wenn das Raster stimmt).
+ */
+function fourFloorShift(lowSig, sr, beatTime, count) {
+  const J = 96;
+  const prof = new Float64Array(J);
+  const byPos = Array.from({ length: 4 }, () => new Float64Array(J));
+  let used = 0;
+  for (let k = 1; k < count - 2; k++) {
+    const t0 = beatTime(k);
+    const t1 = beatTime(k + 1);
+    if (t0 < 0 || t1 * sr >= lowSig.length) continue;
+    for (let j = 0; j < J; j++) {
+      const i0 = Math.round((t0 + ((t1 - t0) * j) / J) * sr);
+      const i1 = Math.max(i0 + 1, Math.round((t0 + ((t1 - t0) * (j + 1)) / J) * sr));
+      let v = 0;
+      for (let i = i0; i < i1; i++) v += lowSig[i] * lowSig[i];
+      prof[j] += v / (i1 - i0);
+      byPos[k % 4][j] += v / (i1 - i0);
+    }
+    used++;
+  }
+  if (used < 32) return 0;
+  // steilster Anstieg (zyklisch, über 2 Bins geglättet)
+  const rise = (p) => {
+    const P = (j) => p[((j % J) + J) % J];
+    let best = -Infinity;
+    let bj = 0;
+    for (let j = 0; j < J; j++) {
+      const d = P(j + 1) + P(j + 2) - P(j - 1) - P(j - 2);
+      if (d > best) { best = d; bj = j + 0.5; }
+    }
+    return bj;
+  };
+  const bj = rise(prof);
+  let mx = 0;
+  let mn = Infinity;
+  for (const v of prof) { mx = Math.max(mx, v); mn = Math.min(mn, v); }
+  // Kontrast: zwischen den Kicks fast Stille im Bass – nur dann ist es ein klarer Puls auf jedem Schlag
+  const contrast = mx / (mn + 1e-12);
+  let ph = bj / J;
+  if (ph >= 0.5) ph -= 1;
+  // kleine Versätze erledigt die Feinausrichtung – hier geht es nur um grob falsche Phasen
+  if (contrast < 15 || Math.abs(ph) < 0.35) return 0;
+  // Four-on-the-floor heißt: Kick auf jedem Schlag des Takts. Rap mit Kicks auf einzelnen Offbeats
+  // (Snare 2+4 auf dem Raster) hat sie nur auf manchen Taktpositionen – dann bleibt das Raster.
+  for (const p of byPos) {
+    const d = Math.abs(rise(p) - bj) / J;
+    if (Math.min(d, 1 - d) > 0.08) return 0;
+  }
+  return ph;
+}
+
+/**
  * Verfeinert die Beat-Phase sample-genau an den echten Anschlägen (Kick, sonst Gesamtsignal):
  * pro Beat wird der steilste Anstieg der Hüllkurve gesucht; der Median der Abweichungen
  * korrigiert das Raster. Streuung und Drift ergeben die Zuverlässigkeit des Grids.
@@ -677,8 +735,9 @@ function refinePhase(sig, sr, firstBeat, beatInterval, duration) {
 
 /**
  * @param override optional { bpmFactor, shiftSec, downbeatSec, bpm (getappt), bpmMin (Uptempo-Playlist) }
+ * @param nn optional { beats, downbeats } vom neuronalen Beat-Tracker (beatnet.js) – liefert dann Raster und Eins
  */
-export function analyzeTrack(L, R, sr, override = null) {
+export function analyzeTrack(L, R, sr, override = null, nn = null) {
   const n = L.length;
   const mid = new Float32Array(n);
   const side = new Float32Array(n);
@@ -701,6 +760,9 @@ export function analyzeTrack(L, R, sr, override = null) {
     phase = resolveHalfBeat(low, grid.P, grid.phase, snare);
   }
   const P = grid.P;
+  // Netz-Schläge (Beat This!) sind viel genauer als die eigene Onset-Suche – die eigene Schätzung
+  // entscheidet dann nur noch die Tempo-Oktave
+  const nnGrid = nn && !(override?.bpm > 0) ? gridFromBeats(nn, { hintBpm: (60 * fr) / P, bpmMin: override?.bpmMin, bpmFactor: override?.bpmFactor }) : null;
   let beatInterval = (P * ONSET_HOP) / sr;
   if (override?.bpmFactor) beatInterval /= override.bpmFactor;
   let bpm = 60 / beatInterval;
@@ -712,16 +774,37 @@ export function analyzeTrack(L, R, sr, override = null) {
 
   // Phase sample-genau an den Kick-Anschlägen ausrichten (ohne Kick: Gesamtsignal)
   const kickShare = rmsRange(lowSig, 0, n) / (rmsRange(mid, 0, n) + 1e-12);
-  const refine = refinePhase(kickShare > 0.15 ? lowSig : mid, sr, ((firstBeat % beatInterval) + beatInterval) % beatInterval, beatInterval, duration);
-  firstBeat += refine.shift;
-  if (override?.shiftSec) firstBeat += override.shiftSec;
-  firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
-  let gridConfidence = Math.max(0, Math.min(1, 1 - (refine.jitterMs * 1.5 + Math.abs(refine.driftMs)) / 30));
+  let gridConfidence;
+  let beatMap = null;
+  let nnVotes = null;
+  if (nnGrid) {
+    ({ beatInterval, firstBeat, beatMap } = nnGrid);
+    bpm = 60 / beatInterval;
+    nnVotes = nnGrid.downbeatVotes;
+    if (beatMap) {
+      if (override?.shiftSec) for (let k = 0; k < beatMap.length; k++) beatMap[k] += override.shiftSec;
+      firstBeat = beatMap[0];
+    } else {
+      // das Netz rechnet in 20-ms-Frames: sample-genau an den Kick-Anschlägen nachziehen
+      const r = refinePhase(kickShare > 0.15 ? lowSig : mid, sr, ((firstBeat % beatInterval) + beatInterval) % beatInterval, beatInterval, duration);
+      const before = firstBeat + (Math.abs(r.shift) < 0.015 ? r.shift : 0) + (override?.shiftSec || 0);
+      firstBeat = ((before % beatInterval) + beatInterval) % beatInterval;
+      // Schlag-Nummern verschieben sich, wenn der erste Schlag über die Null rutscht
+      const dk = Math.round((before - firstBeat) / beatInterval);
+      nnVotes = [0, 1, 2, 3].map((i) => nnGrid.downbeatVotes[(((i - dk) % 4) + 4) % 4]);
+    }
+    gridConfidence = Math.max(0.6, Math.min(1, 1 - nnGrid.jitterMs / 40));
+  } else {
+    const refine = refinePhase(kickShare > 0.15 ? lowSig : mid, sr, ((firstBeat % beatInterval) + beatInterval) % beatInterval, beatInterval, duration);
+    firstBeat += refine.shift;
+    if (override?.shiftSec) firstBeat += override.shiftSec;
+    firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
+    gridConfidence = Math.max(0, Math.min(1, 1 - (refine.jitterMs * 1.5 + Math.abs(refine.driftMs)) / 30));
+  }
 
   // Schwankendes Tempo (live gespielt): festes Raster läuft weg -> jedem Schlag einzeln folgen.
   // Nur übernehmen, wenn die Beat-Map die Anschläge klar besser trifft als das feste Raster.
-  let beatMap = null;
-  if (gridConfidence < 0.7 && !(override?.bpm > 0) && !override?.bpmFactor) {
+  if (!nnGrid && gridConfidence < 0.7 && !(override?.bpm > 0) && !override?.bpmFactor) {
     const raw = trackBeats(env, beatInterval * fr); // Beat-Abstand in Frames
     if (raw.length > 32) {
       let map = smoothBeats(raw);
@@ -776,6 +859,26 @@ export function analyzeTrack(L, R, sr, override = null) {
         bpm = 60 / beatInterval;
         firstBeat = beatMap[0];
         gridConfidence = Math.max(gridConfidence, 0.75); // folgt jetzt jedem Schlag
+      }
+    }
+  }
+  // Raster auf dem Offbeat? (Four-on-the-floor: die Kick muss auf dem Schlag liegen)
+  if (!nnGrid && kickShare > 0.15 && !override?.shiftSec) {
+    const bt = beatMap ? (k) => beatMap[k] : (k) => firstBeat + k * beatInterval;
+    const cnt = beatMap ? beatMap.length : Math.floor((duration - firstBeat) / beatInterval) + 1;
+    const ph = fourFloorShift(lowSig, sr, bt, cnt);
+    if (ph) {
+      if (beatMap) {
+        const shifted = Float64Array.from(beatMap, (t, k) => t + ph * ((beatMap[k + 1] ?? t + beatInterval) - t));
+        // sample-genau an den Kick-Anschlägen ausrichten (gemeinsamer Versatz)
+        const r = refinePhase(lowSig, sr, shifted[0], beatInterval, Math.min(duration, shifted[shifted.length - 1] + beatInterval));
+        for (let k = 0; k < shifted.length; k++) beatMap[k] = shifted[k] + (Math.abs(r.shift) < 0.03 ? r.shift : 0);
+        firstBeat = beatMap[0];
+      } else {
+        firstBeat += ph * beatInterval;
+        firstBeat = ((firstBeat % beatInterval) + beatInterval) % beatInterval;
+        const r = refinePhase(lowSig, sr, firstBeat, beatInterval, duration);
+        if (Math.abs(r.shift) < 0.03) firstBeat = (((firstBeat + r.shift) % beatInterval) + beatInterval) % beatInterval;
       }
     }
   }
@@ -835,6 +938,13 @@ export function analyzeTrack(L, R, sr, override = null) {
     phaseScore[(k + 2) % 4] -= 0.3 * zSnare[k];
   }
   let downbeat = phaseScore.indexOf(Math.max(...phaseScore));
+  // Eins vom Netz: klare Mehrheit gilt; sind zwei Lagen fast gleich oft erkannt (z. B. nach
+  // halbiertem Tempo), entscheidet zwischen diesen beiden die eigene Takt-Analyse
+  if (nnVotes && nnVotes.reduce((a, b) => a + b, 0) >= 8) {
+    const order = [0, 1, 2, 3].sort((a, b) => nnVotes[b] - nnVotes[a]);
+    const [p1, p2] = order;
+    downbeat = nnVotes[p1] >= 1.5 * nnVotes[p2] ? p1 : phaseScore[p1] >= phaseScore[p2] ? p1 : p2;
+  }
   // Four-on-the-floor: Anteil der Beats (in kräftigen Passagen) mit deutlichem Kick
   const strongLow = percentile(beatLow, 0.9) || 1;
   const loud = percentile(beatEnergy, 0.5);
@@ -939,9 +1049,18 @@ export function analyzeTrack(L, R, sr, override = null) {
       const bt = t0 + k * beatInterval;
       sub += rmsRange(lowSig, (bt + Math.min(0.15, beatInterval * 0.3)) * sr, (bt + beatInterval) * sr) / 4;
     }
+    // Mitten-Band (150 Hz – 3 kHz): Stimme, Akkorde, Leads – dort überlagern sich zwei Songs am hörbarsten
+    let ms = 0;
+    const s0 = Math.max(0, Math.floor(t0 * sr));
+    const s1 = Math.min(n, Math.floor(t1 * sr));
+    for (let i = s0; i < s1; i++) {
+      const r = mid[i] - lowSig[i] - highSig[i];
+      ms += r * r;
+    }
     bars.push({
       ...vs,
       low: db(sub),
+      midBand: db(s1 > s0 ? ms / (s1 - s0) : 0),
       // Stimme = mittig + tonal + melodisch; stehende Akkorde (Pads) bewegen sich kaum
       vocalRaw: vs.vPlain * Math.min(1, 0.15 + 4 * vs.melody),
       chroma: Array.from(chroma, (x) => x / cn),
@@ -1021,6 +1140,13 @@ export function analyzeTrack(L, R, sr, override = null) {
   };
   const barEnergy = bars.map((b) => b.rms - p90rms);
   const barBass = bars.map((b) => b.low - p90low);
+  // Höhen (Hi-Hats, Becken) und Mitten relativ zu den lautesten Takten; Kick 0..1 relativ zu den kräftigsten
+  const p90high = percentile(bars.map((b) => b.high), 0.9);
+  const p90mid = percentile(bars.map((b) => b.midBand), 0.9);
+  const p90kick = percentile(bars.map((b) => b.kick), 0.9) || 1;
+  const barHigh = bars.map((b) => b.high - p90high);
+  const barMid = bars.map((b) => b.midBand - p90mid);
+  const barKick = bars.map((b) => Math.min(1, b.kick / p90kick));
   for (const ph of phrases) {
     ph.energy = avg(barEnergy, ph.bar, ph.bars);
     ph.bass = avg(barBass, ph.bar, ph.bars);
@@ -1148,6 +1274,7 @@ export function analyzeTrack(L, R, sr, override = null) {
     beats: beatMap, // nur bei schwankendem Tempo: exakte Zeit jedes Schlags
     gridConfidence,
     gridOverride: override || null,
+    gridSource: nnGrid ? 'nn' : 'dsp',
     fourFloor,
     beatCount,
     downbeat,
@@ -1163,7 +1290,12 @@ export function analyzeTrack(L, R, sr, override = null) {
     barEnergy: Float32Array.from(barEnergy),
     barBass: Float32Array.from(barBass),
     barDrums: Float32Array.from(drums),
+    barHigh: Float32Array.from(barHigh),
+    barMid: Float32Array.from(barMid),
+    barKick: Float32Array.from(barKick),
     barRepeat: Float32Array.from(repeat),
+    // Harmonie pro Takt (12 Halbtöne, 0–255): erkennt wiederkehrende Teile wie den Refrain
+    barChroma: Uint8Array.from(bars.flatMap((b) => b.chroma.map((x) => Math.round(Math.max(0, Math.min(1, x)) * 255)))),
     points: {
       startBar: firstBar,
       dropBar,

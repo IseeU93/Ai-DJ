@@ -8,7 +8,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(root, 'app/vendor');
 await mkdir(out, { recursive: true });
 
-const files = [['node_modules/@huggingface/transformers/dist/transformers.min.js', 'transformers.min.js']];
+const files = [
+  ['node_modules/@huggingface/transformers/dist/transformers.min.js', 'transformers.min.js'],
+  // direkte ONNX-Runtime-API für den Beat-Tracker (app/analysis/worker.js)
+  ['node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs', 'ort.webgpu.min.mjs'],
+];
 // alle WASM-Varianten der ONNX-Runtime (je nach Browser-Fähigkeiten wird eine davon geladen)
 for (const v of ['', '.jsep', '.asyncify', '.jspi']) {
   for (const ext of ['mjs', 'wasm']) {

@@ -1,14 +1,32 @@
 // Wellenformen: gezoomte Deck-Ansicht mit Beatgrid/Phrasen und Track-Übersicht.
-import { barToSeconds, beatToSeconds, secondsToBeat } from '../mix/planner.js';
+import { barToSeconds, beatToSeconds, secondsToBeat, songSections } from '../mix/planner.js';
+import { ROLE_NAMES } from '../analysis/structure.js';
 
+// Abschnitte wie ein DJ sie hört (siehe analysis/structure.js); Höhepunkte in Deck-Farbe
 const SECTION_COLORS = {
   intro: '#3a3d44',
-  main: null, // Deck-Farbe
+  verse: '#55585f',
+  groove: '#4b4e55',
+  chorus: null, // Deck-Farbe
+  drop: null,
   break: '#2b3a33',
+  breakdown: '#2b3a33',
   build: '#4a4536',
   outro: '#3a3d44',
 };
-const SECTION_NAMES = { intro: 'Intro', main: 'Main', break: 'Break', build: 'Build-up', outro: 'Outro' };
+const SECTION_NAMES = ROLE_NAMES;
+const PEAK = new Set(['chorus', 'drop']);
+
+/** Abschnitte pro Track nur einmal berechnen (die Wellenform wird bei jedem Frame gezeichnet). */
+const sectionCache = new WeakMap();
+function sections(track) {
+  let s = sectionCache.get(track.analysis);
+  if (!s) {
+    try { s = songSections(track); } catch { s = track.analysis.phrases; }
+    sectionCache.set(track.analysis, s);
+  }
+  return s;
+}
 
 function fit(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -106,20 +124,20 @@ export class DeckWaveform {
     // Phrasen + Sektionsband + Gesang
     c.font = `${10 * dpr}px "Segoe UI", sans-serif`;
     c.textBaseline = 'top';
-    for (const ph of a.phrases) {
+    for (const ph of sections(track)) {
       const ts = barToSeconds(a, ph.bar);
       const te = barToSeconds(a, ph.bar + ph.bars);
       const x1 = (ts - t0) * pps;
       const x2 = (te - t0) * pps;
       if (x2 < 0 || x1 > w) continue;
       c.fillStyle = SECTION_COLORS[ph.label] || this.color;
-      c.globalAlpha = ph.label === 'main' ? 0.7 : 1;
+      c.globalAlpha = PEAK.has(ph.label) ? 0.7 : 1;
       c.fillRect(x1, h - 3 * dpr, x2 - x1, 3 * dpr);
       c.globalAlpha = 1;
       c.fillStyle = 'rgba(255,255,255,0.55)';
       c.fillRect(Math.round(x1), 0, dpr, h);
       c.fillStyle = 'rgba(220,218,213,0.7)';
-      c.fillText(SECTION_NAMES[ph.label], x1 + 4 * dpr, 4 * dpr);
+      c.fillText(SECTION_NAMES[ph.label] ?? ph.label, x1 + 4 * dpr, 4 * dpr);
     }
     const vox = a.vocals;
     for (let bar = 0; bar < vox.length; bar++) {
@@ -165,11 +183,11 @@ export function drawOverview(canvas, track, pos, color, marks) {
     c.fillStyle = x / w < px ? '#4a4c52' : color;
     c.fillRect(x, h / 2 - 1.5 * dpr - hh, dpr, hh * 2);
   }
-  for (const ph of a.phrases) {
+  for (const ph of sections(track)) {
     const x1 = (barToSeconds(a, ph.bar) / dur) * w;
     const x2 = (barToSeconds(a, ph.bar + ph.bars) / dur) * w;
     c.fillStyle = SECTION_COLORS[ph.label] || color;
-    c.globalAlpha = ph.label === 'main' ? 0.6 : 1;
+    c.globalAlpha = PEAK.has(ph.label) ? 0.6 : 1;
     c.fillRect(x1, h - 3 * dpr, x2 - x1, 3 * dpr);
     c.globalAlpha = 1;
   }
