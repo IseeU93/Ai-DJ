@@ -10,6 +10,7 @@ import { planTeaser } from './teaser.js';
 import { pairEasterEggs, planEasterEgg, versionPriority } from './eastereggs.js';
 import { parseWish, pickWish } from './wish.js';
 import { looseKey } from './dedupe.js';
+import { mixCostOf } from './dj.js';
 import { KILL } from './planner.js';
 
 const COMMIT_MARGIN = 1.5; // s: so früh vor dem ersten Schritt wird der Plan fest eingeplant
@@ -102,12 +103,24 @@ export class Conductor extends EventTarget {
     const playing = this.queue.slice(0, this.pos + 1).filter((id) => this.tracks.has(id));
     const fixed = playing.map((id) => this.tracks.get(id));
     const rest = list.filter((t) => !playing.includes(t.id));
-    this.queue = this.pairEggs(buildSetOrder([...fixed, ...rest], fixed).map((t) => t.id), fixed.length);
+    this.queue = this.pairEggs(buildSetOrder([...fixed, ...rest], fixed, 0, null, this.djMix).map((t) => t.id), fixed.length);
     this.removed = [];
     this.pinned = [];
     this.pos = playing.length - 1;
     this.invalidatePlan();
     this.emit('queue');
+  }
+
+  /**
+   * Urteil des zentralen DJs über den echten Übergang a → b, für die Reihenfolge: 0 = klingt gut,
+   * größer = schwach. Der Übergang wird dafür wirklich geplant und abgehört (wenige Millisekunden).
+   */
+  get djMix() {
+    return (a, b) => {
+      if (!a?.analysis || !b?.analysis) return 0;
+      const p = planTransition({ out: a, inc: b, type: 'auto', freestyle: this.freestyle, feel: this.feelFor(a, b), bias: this.learned?.bias, tune: this.learned?.tune, trackTune: this.learned?.trackTune });
+      return mixCostOf(p);
+    };
   }
 
   /** Erste Position, die noch verschoben werden darf. */
@@ -122,7 +135,7 @@ export class Conductor extends EventTarget {
     this.pinned = this.pinned.filter((id) => this.queue.indexOf(id) >= from);
     const fixed = [...this.queue.slice(0, from), ...this.pinned].map((id) => this.track(id));
     const all = this.queue.map((id) => this.track(id));
-    this.queue = this.pairEggs(buildSetOrder(all, fixed, seed, this.learned.order).map((t) => t.id), from);
+    this.queue = this.pairEggs(buildSetOrder(all, fixed, seed, this.learned.order, this.djMix).map((t) => t.id), from);
     this.invalidatePlan();
     this.emit('queue');
   }
@@ -333,7 +346,7 @@ export class Conductor extends EventTarget {
       if (!keep.includes(s.id)) fixed.push(s);
     }
     const pool = tracks.filter((t) => !fixed.includes(t));
-    this.queue = this.pairEggs(buildSetOrder([...fixed, ...pool], fixed).map((t) => t.id), fixed.length);
+    this.queue = this.pairEggs(buildSetOrder([...fixed, ...pool], fixed, 0, null, this.djMix).map((t) => t.id), fixed.length);
     this.removed = [];
     this.pinned = [];
     this.invalidatePlan();

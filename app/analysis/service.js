@@ -60,11 +60,26 @@ export class AnalysisService {
    * @param onProgress (done, total, file)
    */
   async analyzeAll(files, { onTrack, onProgress, onError } = {}) {
-    let done = 0;
     const total = files.length;
-    const queue = [...files];
+    // 1) Schon analysierte Songs in einem Rutsch aus dem Speicher holen (parallel, ohne Rechnen) –
+    //    sonst sieht das Laden wie ein kompletter Neu-Scan aus und dauert unnötig
+    const queue = [];
+    let done = 0;
+    for (let i = 0; i < files.length; i += 48) {
+      const chunk = files.slice(i, i + 48);
+      const hits = await Promise.all(chunk.map((f) => this.fromCache(f).catch(() => null)));
+      chunk.forEach((f, j) => {
+        if (hits[j]) {
+          onTrack?.(hits[j]);
+          done++;
+        } else queue.push(f);
+      });
+      onProgress?.(done, total, null, { cached: true, fresh: queue.length });
+    }
+    // 2) Nur neue oder geänderte Dateien wirklich analysieren
+    const fresh = queue.length;
+    let freshDone = 0;
     const decodeSlots = 2; // Dekodieren + Worker parallel, aber RAM im Rahmen halten
-
     const workerLoop = async () => {
       while (queue.length) {
         const file = queue.shift();
@@ -75,10 +90,26 @@ export class AnalysisService {
           onError?.(file, err);
         }
         done++;
-        onProgress?.(done, total, file);
+        freshDone++;
+        onProgress?.(done, total, file, { cached: false, fresh, freshDone });
       }
     };
     await Promise.all(Array.from({ length: decodeSlots + 1 }, workerLoop));
+  }
+
+  /** Track aus dem Speicher (oder null, wenn die Datei neu/geändert ist). */
+  async fromCache(file, override = gridOverride(file.path)) {
+    const hint = this.hintFor?.(file);
+    if (hint && !(override?.bpm > 0)) override = { ...hint, ...(override || {}) };
+    const cached = await cacheGet(cacheKey(file, override));
+    if (!cached) return null;
+    const meta = tidyMeta(cached);
+    // ältere Cache-Einträge ohne Merker: stimmt der Name mit dem Dateinamen überein, gab es keine Tags
+    if (meta.tagged === undefined) {
+      const f = tidyMeta(fromFilename(file.name));
+      meta.tagged = !(f.title === meta.title && f.artist === meta.artist);
+    }
+    return { ...file, id: file.path, ...meta };
   }
 
   async analyzeOne(file, override = gridOverride(file.path)) {

@@ -1,5 +1,7 @@
 // Set-Reihenfolge: harmonisch (Camelot), tempo-kompatibel, mit Energie-Bogen über das Set.
 
+import { globalPattern, similarity } from './rhythm.js';
+
 export function parseCamelot(code) {
   const m = /^(\d{1,2})([AB])$/.exec(code || '');
   return m ? { n: +m[1], letter: m[2] } : null;
@@ -67,7 +69,7 @@ export function transitionCost(a, b, w = null) {
   const B = b.analysis;
   const rel = tempoRelation(A.bpm, B.bpm);
   const d = rel.diff;
-  const tempo = d <= 0.02 ? d * 5 : d <= BEATMATCH_LIMIT ? 0.1 + (d - 0.02) * 8 : 0.7 + (d - BEATMATCH_LIMIT) * 4;
+  const tempo = d <= 0.02 ? d * 5 : d <= BEATMATCH_LIMIT ? 0.1 + (d - 0.02) * 8 + Math.max(0, d - 0.035) * 8 : 1.6 + (d - BEATMATCH_LIMIT) * 4; // (nicht angleichbar: ein DJ kann nur abbrechen – teurer als jeder Tonart-Clash)
   // Tonart: Key-Sync kann bis ±2 Halbtöne angleichen (klingt aber nicht ganz so natürlich)
   // (wie im Planer: Songs mit Gesang werden nie verschoben – Stimmen klängen sonst falsch)
   const vocalB = B.vocals?.length ? B.vocals.reduce((x, v) => x + v, 0) / B.vocals.length : 0;
@@ -85,6 +87,9 @@ export function transitionCost(a, b, w = null) {
   // Groove: durchgehende Bassdrum (Four-on-the-floor) gegen synkopierten Beat greift nicht
   // ineinander – auch bei gleichem Tempo klingt der Übergang dann wie zwei Songs gleichzeitig
   const groove = 0.6 * Math.max(0, Math.abs((A.fourFloor ?? 0.5) - (B.fourFloor ?? 0.5)) - 0.25);
+  // Kick-Muster im Takt: sehr unterschiedliche Muster (Viertel gegen Synkopen) stolpern ineinander
+  const sim = similarity(globalPattern(A), globalPattern(B));
+  const rhythmCost = sim === null ? 0 : 0.6 * Math.max(0, 0.55 - sim);
   // Mix-Tauglichkeit: langes Intro beim neuen, sauberes (gesangsfreies) Ende beim alten
   const intro = (B.points?.dropBar ?? 16) - (B.points?.startBar ?? 0);
   const introCost = intro >= 16 ? 0 : intro >= 8 ? 0.1 : 0.25;
@@ -99,7 +104,7 @@ export function transitionCost(a, b, w = null) {
   // Richtung hält der feinere Stil (online, z. B. Schlager vs. Pop-Rock) zusammen
   const genreCost = (a.genre && b.genre && a.genre !== b.genre ? 0.35 : 0) + 1.2 * genreDistance(a.genre, b.genre)
     + (a.style && b.style && a.style !== b.style ? 0.15 : 0);
-  return (w?.tempo ?? 1) * tempo + 1.1 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost + groove;
+  return (w?.tempo ?? 1) * tempo + 1.1 * key + 0.5 * (w?.energy ?? 1) * energy + (w?.energy ?? 1) * mood + (w?.genre ?? 1) * audience + introCost + tailCost + vocalCost + (w?.genre ?? 1) * genreCost + groove + rhythmCost;
 }
 
 // Wie weit Musikrichtungen auseinanderliegen (Pop↔Rap geht gut, Pop↔Uptempo ist ein Bruch)
@@ -277,8 +282,10 @@ function totalCost(order, fixedPrefix, costCache, arc = ARC_WEIGHT) {
  * `seed` = 0 liefert die rechnerisch beste Reihenfolge (Tests); jeder andere Wert eine eigene,
  * ebenfalls gute Variante – mit etwas "Geschmack" pro Paar, damit nicht immer dasselbe herauskommt.
  * `learned` = { pairs, weights } aus deinen Reihenfolge-Bewertungen.
+ * `mix(a, b)` (optional) = Urteil des zentralen DJs über den echten Übergang a → b (0 = klingt gut,
+ * größer = schwach): damit werden schwache Stellen im Set durch Umstellen in der Nähe ersetzt.
  */
-export function buildSetOrder(tracks, fixed = [], seed = 0, learned = null) {
+export function buildSetOrder(tracks, fixed = [], seed = 0, learned = null, mix = null) {
   const pool = tracks.filter((t) => !fixed.includes(t));
   if (pool.length <= 1) return [...fixed, ...pool];
 
@@ -367,7 +374,89 @@ export function buildSetOrder(tracks, fixed = [], seed = 0, learned = null) {
       }
     }
   }
+  if (mix) refineWithDj(order, fixed.length, cost, arc, mix, +(globalThis.process?.env?.DJ_BUDGET || 0) || 1000);
   return order;
+}
+
+/**
+ * Feinschliff mit dem DJ: Die Reihenfolge oben rechnet nur mit Eckdaten (Tempo, Tonart, Stil …).
+ * Ob zwei Songs an ihren konkreten Stellen wirklich gut ineinander gehen, weiß erst der DJ, der den
+ * Übergang plant und abhört. Hier werden die schwächsten Übergänge des Sets gesucht und durch
+ * Tauschen oder Verschieben eines Nachbarn ersetzt – nur, wenn das Set insgesamt besser wird
+ * (Eckdaten-Kosten + DJ-Urteil aller Übergänge). Zeitlich begrenzt, damit der Knopf sofort reagiert.
+ */
+function refineWithDj(order, fixedLen, cost, arc, mix, budgetMs) {
+  const lock = Math.max(1, fixedLen);
+  const n = order.length;
+  if (n - lock < 3) return;
+  const now = () => globalThis.performance?.now() ?? Date.now();
+  const deadline = now() + budgetMs;
+  const late = () => now() > deadline;
+  const mc = new Map();
+  const m = (a, b) => {
+    const k = `${a.id}|${b.id}`;
+    let v = mc.get(k);
+    if (v === undefined) {
+      try {
+        v = mix(a, b);
+      } catch {
+        v = 0;
+      }
+      mc.set(k, Number.isFinite(v) ? v : 0);
+    }
+    return mc.get(k);
+  };
+  // (gemessen wird ab dem laufenden Song; reicht die Zeit nicht für alle, zählt der Anfang des Sets)
+  const upTo = Math.min(n - 1, lock - 1 + 120);
+  const mixSum = () => {
+    let s = 0;
+    for (let i = lock - 1; i < upTo; i++) s += m(order[i], order[i + 1]);
+    return s;
+  };
+  const weak = [];
+  for (let i = lock - 1; i < upTo; i++) {
+    if (late()) return; // nicht einmal die Bestandsaufnahme geschafft: Reihenfolge bleibt
+    const w = m(order[i], order[i + 1]);
+    if (w >= 0.3) weak.push([w, order[i + 1].id]);
+  }
+  weak.sort((x, y) => y[0] - x[0]);
+  let base = totalCost(order, fixedLen, cost, arc);
+  let current = base + mixSum();
+  const R = 4; // nur in der Nähe umstellen – der Energie-Bogen des Sets bleibt
+  for (const [, id] of weak) {
+    if (late()) break;
+    const at = order.findIndex((t) => t.id === id);
+    if (at < lock) continue;
+    const w = m(order[at - 1], order[at]);
+    if (w < 0.3) continue; // schon behoben
+    let best = null;
+    const tryMove = (apply, undo) => {
+      apply();
+      const h = totalCost(order, fixedLen, cost, arc);
+      // (den DJ nur fragen, wenn die Eckdaten nicht schon mehr verlieren, als hier zu holen ist)
+      if (h - base < w + 0.3) {
+        const c = h + mixSum();
+        if (c < current - 0.05 && (!best || c < best.c)) best = { c, h, apply };
+      }
+      undo();
+    };
+    for (let j = Math.max(lock, at - R); j <= Math.min(upTo, at + R) && !late(); j++) {
+      if (j === at) continue;
+      const swap = () => {
+        const t = order[at];
+        order[at] = order[j];
+        order[j] = t;
+      };
+      tryMove(swap, swap);
+      // den Song davor/dahinter woanders einfügen
+      tryMove(() => order.splice(j, 0, order.splice(at, 1)[0]), () => order.splice(at, 0, order.splice(j, 1)[0]));
+    }
+    if (best) {
+      best.apply();
+      current = best.c;
+      base = best.h;
+    }
+  }
 }
 
 function reverse(a, i, j) {

@@ -856,10 +856,15 @@ async function loadPlaylist(names) {
   showPlaylistGenre();
   const files = folderFiles.filter((f) => names.includes(playlistOf(f.path)));
   const prog = $('#progress');
-  const setProgress = (done, total, fname) => {
+  const setProgress = (done, total, fname, info) => {
     prog.hidden = false;
     $('i', prog).style.width = `${(done / total) * 100}%`;
-    $('span', prog).textContent = `Analyse ${done}/${total}${fname ? ` · ${fname}` : ''}`;
+    // (Gespeichertes wird nur geladen – analysiert werden nur neue oder geänderte Songs)
+    $('span', prog).textContent = info?.cached
+      ? `Lade gespeicherte Analysen ${done}/${total}`
+      : info?.fresh
+        ? `Analyse neuer Songs ${info.freshDone}/${info.fresh}${fname ? ` · ${fname}` : ''}`
+        : `Analyse ${done}/${total}${fname ? ` · ${fname}` : ''}`;
   };
   try {
     renderQueue();
@@ -868,7 +873,7 @@ async function loadPlaylist(names) {
     let failed = 0;
     await analysis.analyzeAll(files, {
       onTrack: (t) => found.push(t),
-      onProgress: (d, n, f) => setProgress(d, n, f.name),
+      onProgress: (d, n, f, info) => setProgress(d, n, f?.name, info),
       onError: (f, err) => {
         failed++;
         console.error('Analyse fehlgeschlagen:', f.path, err);
@@ -1044,9 +1049,11 @@ async function showLibPlaylist(names) {
   let lastDraw = 0;
   await analysis.analyzeAll(todo, {
     onTrack: (t) => found.push(t),
-    onProgress: (d, n) => {
+    onProgress: (d, n, f, info) => {
       if (token !== lib.loading) return;
-      $('#lib-status').textContent = d < n ? `${known.length} Tracks bereit · analysiere neue ${d}/${n} … (einfügen geht schon)` : '';
+      $('#lib-status').textContent = d >= n ? ''
+        : info?.cached ? `${known.length + d} Tracks bereit · lade gespeicherte ${d}/${n} …`
+          : `${known.length + d} Tracks bereit · analysiere neue ${info?.freshDone ?? d}/${info?.fresh ?? n} … (einfügen geht schon)`;
       // selten neu zeichnen, sonst verschwinden Knöpfe unter dem Mauszeiger
       if (Date.now() - lastDraw < 2000) return;
       lastDraw = Date.now();

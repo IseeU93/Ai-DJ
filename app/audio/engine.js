@@ -7,8 +7,8 @@
 // Alle Regler sind "logische" Parameter (EQ in dB, Filter -1..1, Vocal 0..1, ...), die auf
 // AudioParams abgebildet und sample-genau automatisiert werden können.
 
-export const PARAMS = ['fader', 'low', 'mid', 'high', 'filter', 'vocal', 'echo', 'reverb', 'flanger'];
-export const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0, reverb: 0, flanger: 0 };
+export const PARAMS = ['fader', 'low', 'mid', 'high', 'filter', 'vocal', 'echo', 'reverb', 'flanger', 'trim'];
+export const NEUTRAL = { fader: 1, low: 0, mid: 0, high: 0, filter: 0, vocal: 0, echo: 0, reverb: 0, flanger: 0, trim: 0 };
 
 /** Künstlicher Hallraum (Impulsantwort aus abklingendem Rauschen, links/rechts verschieden). */
 function makeImpulse(ctx, sec = 2.8, decay = 3.2) {
@@ -425,6 +425,8 @@ export class Deck {
       echo: [[this.echoSend.gain, (v) => v]],
       reverb: [[this.reverbSend.gain, (v) => v]],
       flanger: [[this.flWet.gain, (v) => 0.8 * v]],
+      // Pegel-Ausgleich des DJs in dB (zusätzlich zur Lautheits-Anpassung des Tracks)
+      trim: [[this.trim.gain, (v) => 10 ** (((this.track?.analysis?.loudness?.gainDb ?? 0) + this.trimOffsetDb + v) / 20)]],
     };
   }
 

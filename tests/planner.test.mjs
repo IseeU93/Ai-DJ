@@ -303,7 +303,9 @@ test('Key-Sync: Tonart-Clash wird per Halbton-Verschiebung harmonisch', () => {
 test('Mittlerer Tempo-Sprung (12 %) -> Tempo-Rampe wie am Pitch-Fader (sonst Drop-Cut)', () => {
   const out = track('a', 128);
   const plan = planTransition({ out, inc: track('d', 113) });
-  assert.ok(['ramp', 'cut'].includes(plan.type), plan.type);
+  // (der DJ darf stattdessen auch den Teil ohne Schlagzeug nutzen – nie Beat gegen Beat)
+  assert.ok(['ramp', 'cut', 'breakdown'].includes(plan.type), plan.type);
+  assert.equal(plan.beatmatch, false);
   const ramp = planTransition({ out, inc: track('d', 113), type: 'ramp' });
   assert.equal(ramp.type, 'ramp');
   const r = ramp.steps.find((x) => x.action === 'rate' && x.deck === 'out');
@@ -869,4 +871,88 @@ test('Break-Übergang: neuer Track startet im ruhigen Teil des alten, Wechsel au
   const bassIn = plan.steps.find((x) => x.deck === 'in' && x.param === 'low' && x.to === 0);
   const outGone = plan.steps.find((x) => x.deck === 'out' && x.param === 'fader' && x.to === 0);
   assert.ok(bassIn.at >= outGone.at + outGone.dur, 'zwei Basslines');
+});
+
+import { listen, mixCostOf } from '../app/mix/dj.js';
+import { TrackView } from '../app/mix/planner.js';
+
+test('Zentraler DJ: hört alle Kandidaten ab, begründet die Wahl und erkennt schlechtes Mischen', () => {
+  const out = track('a', 128);
+  const inc = track('b', 128, 64);
+  const plan = planTransition({ out, inc });
+  // er hat mehrere Übergänge für genau dieses Paar gebaut und abgehört, nicht eine Rangliste abgelesen
+  assert.ok(plan.considered.length >= 3, `nur ${plan.considered.length} Kandidaten`);
+  assert.equal(plan.considered[0].type, plan.type);
+  assert.ok(plan.considered.every((c, i, l) => i === 0 || c.total <= l[i - 1].total));
+  assert.ok(plan.notes.some((n) => n.startsWith('DJ hört:')), 'keine Begründung');
+  assert.ok(plan.notes.some((n) => n.startsWith('DJ verwirft:')), 'nennt nicht, was verworfen wurde');
+  assert.ok(Math.abs(mixCostOf(plan) - Math.max(0, (2.3 - plan.djScore) * 0.8 + Math.max(0, 1.2 - plan.djScore) * 0.8)) < 1e-9);
+  assert.ok(mixCostOf({ ...plan, djScore: 0.5, beatmatch: false, type: 'echo' }) > mixCostOf({ ...plan, djScore: 0.5 }) + 1);
+  // derselbe Plan, aber der neue Track kommt ohne Bass-Kill dazu: zwei Bässe übereinander – das hört er
+  const va = new TrackView(out.analysis, 'edm');
+  const vb = new TrackView(inc.analysis, 'edm');
+  const good = listen(plan, va, vb);
+  const sloppy = { ...plan, steps: plan.steps.filter((s) => !(s.param === 'low' || (s.deck === 'in' && s.param === 'filter'))).map((s) => (s.deck === 'in' && s.param === 'fader' ? { ...s, at: 0, to: 1, dur: 0 } : s)) };
+  const bad = listen(sloppy, va, vb);
+  assert.ok(bad.lowMud > good.lowMud + 0.15, `Bass-Überlagerung nicht gehört: ${good.lowMud} -> ${bad.lowMud} (${plan.type} ${plan.bars}, ${plan.notes.join(" | ")})`);
+  assert.ok(bad.score < good.score - 0.3, `schlechtes Mischen nicht schlechter bewertet: ${good.score} -> ${bad.score}`);
+});
+
+test('Reihenfolge mit DJ-Urteil: ein schwacher Übergang wird durch Umstellen in der Nähe ersetzt', () => {
+  const list = [120, 121, 122, 123, 124, 125].map((bpm, i) => ({ ...track(`t${i}`, bpm), id: `t${i}`, artist: `x${i}` }));
+  assignEnergy(list);
+  const plain = buildSetOrder(list, []);
+  // der DJ findet genau einen Übergang der Eckdaten-Reihenfolge schwach
+  const badA = plain[2].id;
+  const badB = plain[3].id;
+  const mix = (a, b) => (a.id === badA && b.id === badB ? 2 : 0);
+  const order = buildSetOrder(list, [], 0, null, mix);
+  assert.equal(order.length, list.length);
+  assert.deepEqual([...order].map((t) => t.id).sort(), list.map((t) => t.id).sort());
+  const i = order.findIndex((t) => t.id === badA);
+  assert.notEqual(order[i + 1]?.id, badB, 'schwaches Paar steht noch nebeneinander');
+  // ohne Einwand des DJs bleibt die Reihenfolge, wie sie war
+  assert.deepEqual(buildSetOrder(list, [], 0, null, () => 0).map((t) => t.id), plain.map((t) => t.id));
+});
+
+import { patternAt, similarity, globalPattern } from '../app/mix/rhythm.js';
+
+// Tiefband-Wellenform mit Kicks an den gewünschten Schritten (16 pro Takt, 120 BPM = 2 s pro Takt)
+function kickTrack(steps, bars = 16) {
+  const rate = 100;
+  const low = new Uint8Array(bars * 2 * rate + 200);
+  for (let b = 0; b < bars; b++) for (const k of steps) {
+    const c = Math.round((b * 2 + (k * 2) / 16) * rate);
+    for (let d = 0; d < 6; d++) low[c + d] = 200;
+  }
+  return { beatInterval: 0.5, firstBeat: 0, downbeat: 0, waveform: { rate, low }, points: { dropBar: 2, startBar: 0, lastBar: bars - 1 } };
+}
+
+test('Rhythmus: gleiche Kick-Muster sind ähnlich, Viertel gegen Achtel-Synkopen nicht', () => {
+  const four = kickTrack([0, 4, 8, 12]);
+  const four2 = kickTrack([0, 4, 8, 12]);
+  const off = kickTrack([2, 6, 10, 14]);
+  const half = kickTrack([0, 8]);
+  assert.ok(similarity(patternAt(four, 2, 8), patternAt(four2, 2, 8)) > 0.95);
+  assert.ok(similarity(patternAt(four, 2, 8), patternAt(off, 2, 8)) < 0.2, 'Viertel gegen Offbeat');
+  const s = similarity(patternAt(four, 2, 8), patternAt(half, 2, 8));
+  assert.ok(s > 0.5 && s < 0.9, `Viertel gegen halbe Noten: ${s}`);
+  assert.equal(similarity(null, patternAt(four, 2, 8)), null);
+  assert.ok(globalPattern(four) && globalPattern(four) === globalPattern(four), 'Muster wird je Song nur einmal gerechnet');
+  assert.equal(globalPattern({ beatInterval: 0.5, points: {} }), null, 'ohne Wellenform kein Muster, aber auch kein Absturz');
+});
+
+test('Pegel-Ausgleich: der DJ hebt ein Loch im Übergang an, ohne den Sprung zwischen den Songs zu glätten', () => {
+  const out = track('a', 128);
+  const inc = track('b', 128, 64);
+  const plan = planTransition({ out, inc });
+  const va = new TrackView(out.analysis, 'edm');
+  const vb = new TrackView(inc.analysis, 'edm');
+  // künstliches Loch: der alte geht weg, der neue kommt erst später
+  const holey = { ...plan, audit: undefined, dj: undefined, steps: plan.steps.map((s) => (s.deck === 'in' && s.param === 'fader' ? { ...s, at: s.at + 3 } : { ...s })) };
+  const ear = listen(holey, va, vb);
+  assert.ok(Array.isArray(ear.rows) && ear.rows.length > 4, 'keine Messwerte pro Zeile');
+  const trimmed = { ...holey, steps: [...holey.steps, { at: 0, deck: 'out', param: 'trim', to: 3, dur: 0.25 }] };
+  const ear2 = listen(trimmed, va, vb);
+  assert.ok(ear2.rows[0].lvl > ear.rows[0].lvl + 1.0, `Trim wirkt nicht: ${ear.rows[0].lvl} -> ${ear2.rows[0].lvl}`);
 });

@@ -5,6 +5,7 @@
 import { BEATMATCH_LIMIT, camelotDistance, keySync, shiftCamelot, tempoRelation } from './order.js';
 import { GENRES, combineProfiles, detectGenre } from './genre.js';
 import { auditPlan } from './audit.js';
+import { decide, adapt } from './dj.js';
 import { trackStructure } from '../analysis/structure.js';
 
 export const TRANSITIONS = {
@@ -2557,90 +2558,53 @@ export function planTransition(opts) {
   const forced = opts.type && opts.type !== 'auto' && opts.type in TRANSITIONS;
   let best = first;
   if (!forced && !opts.instant && first.ranked) {
-    // (Pop/Rap: die Rettungsrunden greifen nicht zu harten Club-Techniken – Schnitt, Mash-In, Build)
+    // Der zentrale DJ entscheidet: Jede Technik, die hier überhaupt geht, wird für genau dieses Paar
+    // gebaut (die verwobenen auch in kürzeren Fassungen), abgehört und nach demselben Maßstab
+    // beurteilt (dj.js). Die Rangliste der Techniken ist dabei nur noch schwacher Geschmack.
+    // (Pop/Rap: keine harten Club-Techniken – Schnitt, Mash-In, Build)
     const softPair = !opts.freestyle && [opts.out?.genre, opts.inc?.genre].some((g) => g === 'pop' || g === 'rap');
     const rescueOk = (k) => !(softPair && HARD_RESCUE.has(k));
-    let bestTotal = first.score - first.audit.penalty;
-    const tried = new Set([first.type]);
-    let usable = 1;
-    let attempts = 0;
-    for (const [k] of first.ranked) {
-      // bis zu 3 echte Alternativen; Techniken, die hier gar nicht passen, zählen nicht mit
-      if (usable >= 4 || attempts >= 10) break;
-      if (tried.has(k) || !rescueOk(k)) continue;
-      tried.add(k);
-      attempts++;
-      let alt = planSingle(opts, k);
-      if (alt.type !== k) continue; // Technik passte nicht (Rückfall auf Blend)
-      usable++;
-      alt = checked(alt, opts, va, vb);
-      const total = alt.score - alt.audit.penalty;
-      if (total > bestTotal + 0.05) {
-        best = alt;
-        bestTotal = total;
-      }
+    const sig = (pl) => `${pl.type}|${pl.bars}|${pl.outBar}|${pl.inBar}`;
+    const cands = [first];
+    const seen = new Set([sig(first)]);
+    const add = (k, maxBars = null) => {
+      const alt = planSingle(maxBars ? { ...opts, maxBars } : opts, k);
+      if (alt.type !== k || seen.has(sig(alt))) return;
+      seen.add(sig(alt));
+      cands.push(checked(alt, opts, va, vb));
+    };
+    for (const k of new Set([...first.ranked.map(([k]) => k), 'endfade', 'echo', 'breakdown'])) {
+      if (!rescueOk(k)) continue;
+      add(k);
+      if (BLENDS.has(k)) for (const mb of [16, 8, 4]) add(k, mb);
     }
-    // Mitsingen hat Vorrang: schneidet der Beste eine Zeile ab, alle Techniken durchprobieren
-    if (best.audit.lineCut) {
-      let clean = null;
-      for (const [k] of first.ranked) {
-        if (k === best.type || !rescueOk(k)) continue;
-        let alt = planSingle(opts, k);
-        if (alt.type !== k) continue;
-        alt = checked(alt, opts, va, vb);
-        if (alt.audit.lineCut) continue;
-        const total = alt.score - alt.audit.penalty;
-        if (!clean || total > clean.total) clean = { plan: alt, total };
-      }
-      // notfalls: Echo-Out am Ende des Gesangsblocks (der Ausstieg wartet, bis die Zeile vorbei ist)
-      if (!clean) {
-        const echo = checked(planSingle({ ...opts, type: 'echo' }), opts, va, vb);
-        if (!echo.audit.lineCut) clean = { plan: echo };
-      }
-      if (clean) {
-        clean.plan.notes.push(`Selbstcheck: statt ${TRANSITIONS[best.type]} – die hätte eine Gesangszeile abgeschnitten`);
-        best = clean.plan;
-      }
+    // (Freestyle ist ausdrücklich gewünschte Abwechslung: dort zählt der Geschmack voll mit)
+    best = decide(cands, va, vb, (k) => TRANSITIONS[k], opts.freestyle ? 1 : 0.35) || first;
+    // … und stellt den gewählten Übergang selbst nach, wo der neue Song sonst untergeht
+    const chosen = best;
+    Object.defineProperty(chosen, 'candidates', { value: cands, enumerable: false });
+    // (auch die knapp unterlegenen: ein langer Blend, dem nur der Griff auf die Eins fehlte, kann so gewinnen)
+    const tw = opts.freestyle ? 1 : 0.35;
+    // (Freestyle will Abwechslung: dort wird nur der gewählte Übergang nachgestellt)
+    const top = opts.freestyle ? [] : cands.filter((c) => c.dj && c !== chosen && c.dj.total > chosen.dj.total - 1.5).sort((x, y) => y.dj.total - x.dj.total).slice(0, 3);
+    for (const c of [chosen, ...top]) {
+      const alt = adapt(c, va, vb, (pl) => checked(pl, opts, va, vb), tw);
+      if (alt !== c && alt.dj.total > best.dj.total + 0.05) best = alt;
+      else if (c === chosen) best = alt;
     }
-    // Nichts Sauberes dabei (Zeile abgeschnitten, harter Einsatz, neben der Eins, viele Probleme)?
-    // Dann lieber die weiche End-Überblendung am Songende
-    const a0 = best.audit;
-    if (a0.lineCut || a0.hardEntry || a0.misaligned >= 1 || a0.penalty >= 1.2) {
-      let end = planSingle(opts, 'endfade');
-      if (end.type === 'endfade') {
-        end = checked(end, opts, va, vb);
-        if (end.audit.penalty < a0.penalty) {
-          end.notes.push(`Selbstcheck: statt ${TRANSITIONS[best.type]} (${a0.issues.join(', ') || 'zu hart'})`);
-          best = end;
-        }
-      }
+    if (best.adapted && best.considered === undefined) best.considered = chosen.considered;
+    if (best !== chosen && !best.candidates) Object.defineProperty(best, 'candidates', { value: cands, enumerable: false });
+    if (best.adapted && !best.notes.some((n) => n.startsWith('DJ verwirft:'))) {
+      const rej = chosen.notes.find((n) => n.startsWith('DJ verwirft:'));
+      best.notes.push(rej || `DJ verwirft: ${TRANSITIONS[chosen.type]}`);
     }
-    // Immer noch hörbare Probleme? Dann jede übrige Technik prüfen – ein sauberer Übergang geht vor
-    // der Stil-Vorliebe (Planen kostet nur Millisekunden)
-    // (hörbare Fehler wie Loch, zwei Stimmen, neben der Eins zählen dabei vor jeder Stil-Vorliebe)
-    const flaws = (pl) => pl.audit.issues.filter((i) => !i.includes('Hauptteil')).length;
-    if (best.audit.penalty >= 0.3 || flaws(best)) {
-      const cost = (pl) => (flaws(pl) ? 100 : 0) + pl.audit.penalty * 3 - pl.score;
-      const before = best;
-      for (const k of new Set([...first.ranked.map(([k]) => k), 'endfade', 'echo', 'breakdown'])) {
-        if (k === best.type || !rescueOk(k)) continue;
-        let alt = planSingle(opts, k);
-        if (alt.type !== k) continue;
-        alt = checked(alt, opts, va, vb);
-        if (alt.audit.lineCut > best.audit.lineCut) continue;
-        if (cost(alt) < cost(best) - 0.1) best = alt;
-      }
-      if (best !== before) best.notes.push(`Selbstcheck: statt ${TRANSITIONS[before.type]} (${before.audit.issues.join(', ') || 'knapp schlechter'})`);
-    }
-    if (best !== first && !best.notes.some((n) => n.startsWith('Selbstcheck: statt'))) {
-      best.notes.push(`Selbstcheck: statt ${TRANSITIONS[first.type]} (${first.audit.issues.join(', ') || 'knapp schlechter'})`);
-    }
+    if (chosen !== first) best.notes.push(`Selbstcheck: statt ${TRANSITIONS[first.type]} (${first.audit.issues.join(', ') || first.dj?.ear.bad[0] || 'klingt hier weniger nach DJ'})`);
   }
   if (best.audit.issues.length) best.notes.push(`Selbstcheck: ${best.audit.issues.join(', ')}`);
   return best;
 }
 
-function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, entryBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null, feel = 'soft' }, pick = null) {
+function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earliestBar = null, latestBar = null, entryBar = null, instant = false, flavorHistory = [], outKeyShift = 0, freestyle = false, keylock = true, bias = null, tune = null, trackTune = null, feel = 'soft', maxBars = null }, pick = null) {
   const a = out.analysis;
   const b = inc.analysis;
   const masterBpm = a.bpm * outRate;
@@ -2671,6 +2635,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   ctx.profile = combineProfiles(ctx.genreOut, ctx.genreIn);
   ctx.minExit = minExitBar(ctx, entryBar);
   ctx.maxL = Math.min(ctx.maxL, Math.max(...ctx.profile.lengths));
+  if (maxBars) ctx.maxL = Math.min(ctx.maxL, maxBars);
   if (ks.semis) {
     ctx.notes.push(`Key-Sync: neuer Track um ${ks.semis > 0 ? '+' : ''}${ks.semis} Halbton${Math.abs(ks.semis) > 1 ? 'e' : ''} angeglichen (${b.key.camelot} → ${shiftCamelot(b.key.camelot, ks.semis)} passt zu ${outKey})`);
   }
@@ -2679,6 +2644,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
   let chosen = type;
   let ranked = null;
   let chosenScore = 0;
+  const learned = {};
   if (!forced) {
     const c = scoreStyles(ctx);
     const last = history[history.length - 1];
@@ -2687,19 +2653,26 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     const pair = `${ctx.genreOut}>${ctx.genreIn}`;
     // + was du genau bei diesen beiden Songs bewertet hast (zählt am stärksten)
     for (const k of Object.keys(c)) {
-      c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0)
-        + (bias?.[`${k}#out:${ctx.outId}`] ?? 0) + (bias?.[`${k}#in:${ctx.inId}`] ?? 0)
+      // (allgemeine Vorlieben zählen beim DJ wie Geschmack, Bewertungen genau dieser Songs voll)
+      c[k] += (bias?.[k] ?? 0) + (bias?.[`${k}@${pair}`] ?? 0);
+      learned[k] = (bias?.[`${k}#out:${ctx.outId}`] ?? 0) + (bias?.[`${k}#in:${ctx.inId}`] ?? 0)
         + (bias?.[`${k}#pair:${ctx.outId}>${ctx.inId}`] ?? 0);
+      c[k] += learned[k];
     }
+    // (ab hier: deine Einstellungen – weich/hart, "zu hart"-Bewertungen. Der DJ zählt sie voll mit.)
+    const beforePrefs = { ...c };
     // harte Techniken: grundsätzlich zurückhaltend (bei Pop/Rap noch mehr), plus was du als "zu hart" bewertet hast
     // (harte Tanzmusik: Drop-Cut, Build-up und Roll sind dort normales Handwerk)
     const soft = (ctx.profile.hard ? 0.3 : 0.5 + (ctx.profile.shortForm ? 0.4 : 0)) + FEEL[ctx.feel].hardPenalty;
     for (const k of ['cut', 'roll', 'mashin', 'build', 'pingpong']) if (k in c) c[k] -= soft + 1.5 * ctx.tune.hardness;
     // Echo-Wurf und Refrain-Wechsel sind kurze Umschnitte – wer "zu hart" bewertet, will auch die seltener
     for (const k of ['echo', 'chorus']) if (k in c) c[k] -= 0.5 * ctx.tune.hardness;
+    for (const k of Object.keys(c)) learned[k] += c[k] - beforePrefs[k];
     // weich: lange Blends bevorzugen
     for (const k of ['blend', 'loop']) if (k in c) c[k] += FEEL[ctx.feel].blendBonus;
     if ('chorus' in c) c.chorus -= FEEL[ctx.feel].blendBonus * 4; // Refrain-Wechsel ist ein schneller Umschnitt
+    // (die Hälfte davon zählt beim DJ voll – "weich" heißt: Songs nicht reihenweise früh umschneiden)
+    if ('chorus' in c) learned.chorus -= FEEL[ctx.feel].blendBonus * 2;
     // Echo-Out ist ein Abbruch statt eines Übergangs – nur, wenn sich die Beats nicht angleichen lassen
     if ('echo' in c && rel.diff <= BEATMATCH_LIMIT) c.echo -= FEEL[ctx.feel].blendBonus * 2;
     // ebenso der Drop-Cut: lassen sich die Beats angleichen, wird weich verwoben statt geschnitten
@@ -2799,6 +2772,8 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     flavors: ctx.flavors || null,
     reason: (note ? `${note} · ` : '') + describe(outKey, shiftCamelot(b.key.camelot, ks.semis), b.bpm, rel, keyDist, masterBpm),
     keyShift: ks.semis,
+    keyDist,
+    canMatch: rel.diff <= BEATMATCH_LIMIT, // Tempo ließe sich angleichen
     genres: [ctx.genreOut, ctx.genreIn],
     notes: ctx.notes,
     bars: L,
@@ -2812,6 +2787,7 @@ function planSingle({ out, inc, outRate = 1, type = 'auto', history = [], earlie
     echoBeats: 1, // Wiederholungen immer genau auf dem Beat
     steps: cleaned,
     score: chosenScore,
+    learned: learned[chosen] ?? 0,
     ranked,
     minExit: ctx.minExit,
     swapAt: ctx.swapAt ?? null,
